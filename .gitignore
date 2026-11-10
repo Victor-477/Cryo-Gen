@@ -1,0 +1,5 @@
+target/
+.DS_Store
+# projeto de exemplo criado na primeira execução
+/ProjetoExemplo/
+teste-log.txt

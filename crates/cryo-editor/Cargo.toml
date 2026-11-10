@@ -1,0 +1,23 @@
+[package]
+name = "cryo-editor"
+version = "0.2.0"
+edition = "2021"
+license = "GPL-3.0-only"
+repository = "https://github.com/Victor-477/Cryo-Gen"
+description = "Cryo Engine: editor e runtime 3D"
+
+[[bin]]
+name = "cryo"
+path = "src/main.rs"
+
+[dependencies]
+cryo-lang = { path = "../cryo-lang" }
+eframe = { version = "=0.36.2", default-features = false, features = ["glow", "default_fonts", "x11", "wayland"] }
+egui_dock = "0.21"
+glam = { version = "0.34", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+gltf = "1.4"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+rodio = { version = "0.23", default-features = false, features = ["playback", "wav", "vorbis", "mp3"] }
+rfd = "0.18"

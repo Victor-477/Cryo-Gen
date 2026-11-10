@@ -1,0 +1,9 @@
+[package]
+name = "cryo-lang"
+version = "0.2.0"
+edition = "2021"
+license = "GPL-3.0-only"
+repository = "https://github.com/Victor-477/Cryo-Gen"
+description = "Linguagem de script Cryo: lexer, parser e interpretador"
+
+[dependencies]

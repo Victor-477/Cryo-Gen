@@ -1,0 +1,29 @@
+// Câmera orbital: segure o botão direito do mouse e arraste para girar
+// em volta do alvo; a roda do mouse aproxima e afasta.
+script CameraOrbital {
+    prop alvo: text = "Jogador"
+    prop distancia: num = 10
+    prop sensibilidade: num = 0.25
+    prop altura_alvo: num = 1
+    var giro = 0
+    var inclinacao = 25
+
+    on update(dt) {
+        let t = scene.find(alvo)
+        if t == nil {
+            return
+        }
+        if input.down("mouse_right") {
+            giro -= input.mouse_dx * sensibilidade
+            inclinacao = clamp(inclinacao + input.mouse_dy * sensibilidade, -10, 85)
+        }
+        distancia = clamp(distancia - input.scroll * 0.02, 2, 60)
+
+        let a = giro * PI / 180
+        let b = inclinacao * PI / 180
+        let foco = t.position + vec3(0, altura_alvo, 0)
+        let fora = vec3(sin(a) * cos(b), sin(b), cos(a) * cos(b))
+        self.position = foco + fora * distancia
+        self.look_at(foco)
+    }
+}

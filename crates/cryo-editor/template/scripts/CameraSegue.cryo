@@ -1,0 +1,16 @@
+// Faz a câmera seguir suavemente uma entidade pelo nome.
+script CameraSegue {
+    prop alvo: text = "Jogador"
+    prop deslocamento: vec3 = vec3(0, 5, 9)
+    prop suavidade: num = 5
+
+    on update(dt) {
+        let t = scene.find(alvo)
+        if t == nil {
+            return
+        }
+        let destino = t.position + deslocamento
+        self.position = lerp(self.position, destino, clamp(suavidade * dt, 0, 1))
+        self.look_at(t.position)
+    }
+}

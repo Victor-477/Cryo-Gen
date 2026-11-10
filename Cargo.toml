@@ -1,0 +1,9 @@
+[workspace]
+resolver = "2"
+members = ["crates/cryo-lang", "crates/cryo-editor"]
+
+[profile.dev]
+opt-level = 1
+
+[profile.release]
+opt-level = 3
