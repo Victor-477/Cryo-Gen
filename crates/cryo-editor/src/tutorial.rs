@@ -1,0 +1,412 @@
+//! Built-in tutorials: short guided tours that explain the editor step by step and point
+//! at the part of the interface each step talks about.
+
+use crate::app::Tab;
+
+/// The part of the interface a step refers to (it gets highlighted).
+#[derive(Clone, Copy, PartialEq)]
+pub enum Focus {
+    None,
+    Tab(Tab),
+    MenuBar,
+    Toolbar,
+}
+
+pub struct Step {
+    pub title: String,
+    pub body: String,
+    pub focus: Focus,
+}
+
+pub struct Tutorial {
+    pub id: &'static str,
+    pub title: String,
+    pub summary: String,
+    pub steps: Vec<Step>,
+}
+
+fn step(title: String, body: String, focus: Focus) -> Step {
+    Step { title, body, focus }
+}
+
+/// All tutorials, in the current interface language.
+pub fn all() -> Vec<Tutorial> {
+    vec![
+        Tutorial {
+            id: "welcome",
+            title: tr!("Welcome tour", "Tour de boas-vindas"),
+            summary: tr!("A two-minute walk around the editor.", "Um passeio de dois minutos pelo editor."),
+            steps: vec![
+                step(
+                    tr!("Welcome to Cryo Engine", "Bem-vindo à Cryo Engine"),
+                    tr!(
+                        "This tour shows where everything is. The project that is open is Frostpeak Isles, a small 3D platformer you can play, take apart and change.\n\nUse Next to continue. You can reopen any tutorial from Help > Tutorials (F1).",
+                        "Este tour mostra onde fica cada coisa. O projeto aberto é o Frostpeak Isles, um pequeno jogo de plataforma 3D que você pode jogar, desmontar e modificar.\n\nUse Próximo para continuar. Você pode reabrir qualquer tutorial em Ajuda > Tutoriais (F1)."
+                    ),
+                    Focus::None,
+                ),
+                step(
+                    tr!("Scene: your 3D workspace", "Cena: sua área de trabalho 3D"),
+                    tr!(
+                        "Click an object to select it; drag the coloured arrows to move it. Hold the right mouse button and use WASD to fly around. The 🎥 Camera menu in the corner lists every way to navigate.",
+                        "Clique em um objeto para selecioná-lo; arraste as setas coloridas para movê-lo. Segure o botão direito do mouse e use WASD para voar. O menu 🎥 Câmera no canto lista todas as formas de navegar."
+                    ),
+                    Focus::Tab(Tab::Scene),
+                ),
+                step(
+                    tr!("Hierarchy: everything in the scene", "Hierarquia: tudo o que está na cena"),
+                    tr!(
+                        "Every object (entity) is listed here. Drag one onto another to make it a child, so they move together. Right-click for Duplicate and Delete. Names in blue have a script attached.",
+                        "Todos os objetos (entidades) aparecem aqui. Arraste um sobre outro para torná-lo filho, e eles se movem juntos. Clique com o botão direito para Duplicar e Excluir. Nomes em azul têm um script."
+                    ),
+                    Focus::Tab(Tab::Hierarchy),
+                ),
+                step(
+                    tr!("Inspector: what an object is made of", "Inspetor: do que um objeto é feito"),
+                    tr!(
+                        "Shows the selected object's position, rotation and scale, plus its components: Mesh, Light, Camera, Physics and Cryo Script. Use \"+ Add component\" to give an object new abilities.",
+                        "Mostra posição, rotação e escala do objeto selecionado, além dos componentes: Malha, Luz, Câmera, Física e Script Cryo. Use \"+ Adicionar componente\" para dar novas habilidades a um objeto."
+                    ),
+                    Focus::Tab(Tab::Inspector),
+                ),
+                step(
+                    tr!("Content: your project's files", "Conteúdo: os arquivos do projeto"),
+                    tr!(
+                        "Scenes, scripts, models, textures and sounds live here. Double-click a script to edit it or a model to place it in the scene. Drag files from your computer onto the window to import them.",
+                        "Cenas, scripts, modelos, texturas e sons ficam aqui. Dê um duplo clique em um script para editá-lo ou em um modelo para colocá-lo na cena. Arraste arquivos do computador para a janela para importá-los."
+                    ),
+                    Focus::Tab(Tab::Content),
+                ),
+                step(
+                    tr!("Console: messages and errors", "Console: mensagens e erros"),
+                    tr!(
+                        "Anything your scripts print with log(...) shows up here, and so do script errors, always with the line number.",
+                        "Tudo o que seus scripts imprimem com log(...) aparece aqui, assim como os erros de script, sempre com o número da linha."
+                    ),
+                    Focus::Tab(Tab::Console),
+                ),
+                step(
+                    tr!("Play, Pause and Stop", "Jogar, Pausar e Parar"),
+                    tr!(
+                        "Press ▶ Play (Ctrl+P) to run the game inside the editor and Esc to stop. When you stop, the scene goes back to how it was before, so experimenting is safe.",
+                        "Pressione ▶ Jogar (Ctrl+P) para rodar o jogo dentro do editor e Esc para parar. Ao parar, a cena volta a ser como era antes, então pode experimentar à vontade."
+                    ),
+                    Focus::Toolbar,
+                ),
+                step(
+                    tr!("Try the game", "Experimente o jogo"),
+                    tr!(
+                        "Press ▶ Play now and look for the five Frost Shards.\n\nWASD moves, Space jumps, F throws the cap, Shift crouches, the arrow keys turn the camera.\n\nNext: \"Moving the camera\" and \"Scripting with Cryo\" in Help > Tutorials.",
+                        "Pressione ▶ Jogar agora e procure os cinco Frost Shards.\n\nWASD move, Espaço pula, F lança o boné, Shift agacha, as setas giram a câmera.\n\nDepois: \"Movendo a câmera\" e \"Programando com Cryo\" em Ajuda > Tutoriais."
+                    ),
+                    Focus::Tab(Tab::Game),
+                ),
+            ],
+        },
+        Tutorial {
+            id: "camera",
+            title: tr!("Moving the camera", "Movendo a câmera"),
+            summary: tr!("Fly, orbit, zoom, snap to views and save bookmarks.", "Voar, orbitar, aproximar, vistas alinhadas e marcadores."),
+            steps: vec![
+                step(
+                    tr!("Fly", "Voar"),
+                    tr!(
+                        "In the Scene tab, hold the right mouse button and move the mouse to look around. While holding it, W A S D move, Q and E go down and up, and Shift goes faster. The mouse wheel changes the flight speed.",
+                        "Na aba Cena, segure o botão direito do mouse e mova o mouse para olhar em volta. Enquanto segura, W A S D movem, Q e E descem e sobem, e Shift acelera. A roda do mouse muda a velocidade de voo."
+                    ),
+                    Focus::Tab(Tab::Scene),
+                ),
+                step(
+                    tr!("Orbit, pan and zoom", "Orbitar, deslocar e aproximar"),
+                    tr!(
+                        "Alt + drag orbits around the point you are looking at. The middle button pans. The wheel zooms.\n\nOn a trackpad, turn on \"Trackpad gestures\" in the 🎥 Camera menu: two fingers orbit, Shift + two fingers pan, pinch zooms.",
+                        "Alt + arrastar orbita em volta do ponto para onde você olha. O botão do meio desloca. A roda aproxima.\n\nEm um trackpad, ligue \"Gestos de trackpad\" no menu 🎥 Câmera: dois dedos orbitam, Shift + dois dedos desloca, pinça aproxima."
+                    ),
+                    Focus::Tab(Tab::Scene),
+                ),
+                step(
+                    tr!("Frame what matters", "Enquadre o que importa"),
+                    tr!(
+                        "Select an object and press F to bring it into view (double-clicking it does the same). Home frames the whole scene.",
+                        "Selecione um objeto e pressione F para trazê-lo para a vista (um duplo clique nele faz o mesmo). Home enquadra a cena inteira."
+                    ),
+                    Focus::Tab(Tab::Scene),
+                ),
+                step(
+                    tr!("Aligned views", "Vistas alinhadas"),
+                    tr!(
+                        "Click the X, Y and Z dots of the orientation gizmo in the top-right corner to look from the Front, Right or Top without perspective, which is great for lining things up. Press O to switch between perspective and orthographic.",
+                        "Clique nas bolinhas X, Y e Z do indicador de orientação no canto superior direito para olhar de Frente, da Direita ou do Topo sem perspectiva, ótimo para alinhar objetos. Pressione O para alternar entre perspectiva e ortográfica."
+                    ),
+                    Focus::Tab(Tab::Scene),
+                ),
+                step(
+                    tr!("Bookmarks and the game camera", "Marcadores e a câmera do jogo"),
+                    tr!(
+                        "Ctrl+1 to Ctrl+4 save where the camera is; 1 to 4 fly back there.\n\nTo place the game's camera, look at the scene the way you want it and choose \"Align game camera to view\" in the 🎥 Camera menu.",
+                        "Ctrl+1 a Ctrl+4 salvam onde a câmera está; 1 a 4 voltam para lá.\n\nPara posicionar a câmera do jogo, olhe para a cena do jeito que quiser e escolha \"Alinhar câmera do jogo à vista\" no menu 🎥 Câmera."
+                    ),
+                    Focus::Tab(Tab::Scene),
+                ),
+            ],
+        },
+        Tutorial {
+            id: "scene",
+            title: tr!("Building a scene", "Montando uma cena"),
+            summary: tr!("Create, move, group and save objects.", "Criar, mover, agrupar e salvar objetos."),
+            steps: vec![
+                step(
+                    tr!("Create objects", "Crie objetos"),
+                    tr!(
+                        "Use \"+ Create\" in the toolbar (or the Object menu) to add cubes, spheres, lights and cameras. New objects appear in front of the camera.",
+                        "Use \"+ Criar\" na barra de ferramentas (ou o menu Objeto) para adicionar cubos, esferas, luzes e câmeras. Os novos objetos aparecem à frente da câmera."
+                    ),
+                    Focus::Toolbar,
+                ),
+                step(
+                    tr!("Move, rotate and scale", "Mova, gire e escale"),
+                    tr!(
+                        "Pick a tool: W moves, E rotates, R scales. Then drag one of the coloured handles: red is X, green is Y (up) and blue is Z. For exact values, type them in the Inspector.",
+                        "Escolha uma ferramenta: W move, E gira, R escala. Depois arraste uma das alças coloridas: vermelho é X, verde é Y (para cima) e azul é Z. Para valores exatos, digite no Inspetor."
+                    ),
+                    Focus::Tab(Tab::Scene),
+                ),
+                step(
+                    tr!("Group with parents", "Agrupe com pais e filhos"),
+                    tr!(
+                        "In the Hierarchy, drag an object onto another to make it a child. Children follow their parent, which is how the hero of the example is built: a root with the collider and a model made of several shapes.",
+                        "Na Hierarquia, arraste um objeto sobre outro para torná-lo filho. Os filhos seguem o pai; é assim que o herói do exemplo é montado: uma raiz com o colisor e um modelo feito de várias formas."
+                    ),
+                    Focus::Tab(Tab::Hierarchy),
+                ),
+                step(
+                    tr!("Duplicate, undo and save", "Duplique, desfaça e salve"),
+                    tr!(
+                        "Ctrl+D duplicates the selection, Del deletes it, Ctrl+Z undoes and Ctrl+Shift+Z redoes. Ctrl+S saves the scene; an asterisk in the status bar means there are unsaved changes.",
+                        "Ctrl+D duplica a seleção, Del exclui, Ctrl+Z desfaz e Ctrl+Shift+Z refaz. Ctrl+S salva a cena; um asterisco na barra de status indica alterações não salvas."
+                    ),
+                    Focus::MenuBar,
+                ),
+                step(
+                    tr!("Light and sky", "Luz e céu"),
+                    tr!(
+                        "Click an empty spot of the Scene so nothing is selected: the Inspector then shows the scene settings, with ambient light, sky colours and gravity. The first directional light casts the shadows.",
+                        "Clique em um ponto vazio da Cena para não ter nada selecionado: o Inspetor mostra as configurações da cena, com luz ambiente, cores do céu e gravidade. A primeira luz direcional projeta as sombras."
+                    ),
+                    Focus::Tab(Tab::Inspector),
+                ),
+            ],
+        },
+        Tutorial {
+            id: "import",
+            title: tr!("Importing models, textures and sounds", "Importando modelos, texturas e sons"),
+            summary: tr!("Bring your own .obj, .gltf, .glb, images and audio.", "Traga seus .obj, .gltf, .glb, imagens e áudio."),
+            steps: vec![
+                step(
+                    tr!("Drop files on the window", "Solte arquivos na janela"),
+                    tr!(
+                        "Drag files from your computer onto the editor, or click ⬇ Import in the Content tab. Models (.obj, .gltf, .glb) go to models/, images (.png, .jpg) to textures/ and sounds (.wav, .ogg, .mp3) to sounds/. Materials and textures a model refers to are copied too.",
+                        "Arraste arquivos do computador para o editor, ou clique em ⬇ Importar na aba Conteúdo. Modelos (.obj, .gltf, .glb) vão para models/, imagens (.png, .jpg) para textures/ e sons (.wav, .ogg, .mp3) para sounds/. Materiais e texturas que o modelo usa são copiados junto."
+                    ),
+                    Focus::Tab(Tab::Content),
+                ),
+                step(
+                    tr!("Place a model", "Coloque um modelo"),
+                    tr!(
+                        "An imported model is placed in front of the camera. Later, double-click it in the Content tab to add another copy. If it was made in other units, its scale is adjusted to about 2 m; \"Fit size\" in the Inspector does that again.",
+                        "Um modelo importado entra na cena à frente da câmera. Depois, dê um duplo clique nele na aba Conteúdo para adicionar outra cópia. Se foi feito em outra unidade, a escala é ajustada para cerca de 2 m; \"Ajustar tamanho\" no Inspetor refaz isso."
+                    ),
+                    Focus::Tab(Tab::Scene),
+                ),
+                step(
+                    tr!("Textures and colours", "Texturas e cores"),
+                    tr!(
+                        "In the Mesh component choose a Texture, or select an object and double-click an image in the Content tab. The colour multiplies the texture: keep it white to see the image as it is.",
+                        "No componente Malha escolha uma Textura, ou selecione um objeto e dê um duplo clique em uma imagem na aba Conteúdo. A cor multiplica a textura: deixe branca para ver a imagem como ela é."
+                    ),
+                    Focus::Tab(Tab::Inspector),
+                ),
+                step(
+                    tr!("Play sounds from a script", "Toque sons por script"),
+                    tr!(
+                        "Sounds are played by scripts:\n\naudio.play(\"sounds/coin.wav\")\naudio.music(\"sounds/theme.ogg\")\n\nThe first plays once; the second loops.",
+                        "Os sons são tocados por scripts:\n\naudio.play(\"sounds/coin.wav\")\naudio.music(\"sounds/theme.ogg\")\n\nO primeiro toca uma vez; o segundo fica em repetição."
+                    ),
+                    Focus::Tab(Tab::Script),
+                ),
+            ],
+        },
+        Tutorial {
+            id: "scripting",
+            title: tr!("Scripting with Cryo", "Programando com Cryo"),
+            summary: tr!("Give objects behaviour with the Cryo language.", "Dê comportamento aos objetos com a linguagem Cryo."),
+            steps: vec![
+                step(
+                    tr!("Attach a script", "Anexe um script"),
+                    tr!(
+                        "Select an object, click \"+ Add component\" > Cryo Script, then \"+ New script\". The file is created in scripts/ and opens in the script editor.",
+                        "Selecione um objeto, clique em \"+ Adicionar componente\" > Script Cryo e depois em \"+ Novo script\". O arquivo é criado em scripts/ e abre no editor de scripts."
+                    ),
+                    Focus::Tab(Tab::Inspector),
+                ),
+                step(
+                    tr!("Events", "Eventos"),
+                    tr!(
+                        "A script reacts to events:\n\non start() {{ }}        once, when the game starts\non update(dt) {{ }}     every frame\non collide(other, normal) {{ }}   on contact\n\nInside them, `self` is the object the script is attached to.",
+                        "Um script reage a eventos:\n\non start() {{ }}        uma vez, quando o jogo começa\non update(dt) {{ }}     a cada quadro\non collide(other, normal) {{ }}   ao encostar\n\nDentro deles, `self` é o objeto ao qual o script está anexado."
+                    ),
+                    Focus::Tab(Tab::Script),
+                ),
+                step(
+                    tr!("Make it move", "Faça-o se mover"),
+                    tr!(
+                        "Try this inside update:\n\nself.rotate(vec3(0, 90 * dt, 0))\n\nPress Ctrl+S and then ▶ Play: the object spins 90 degrees per second. Multiplying by dt keeps the speed the same on any computer.",
+                        "Experimente dentro de update:\n\nself.rotate(vec3(0, 90 * dt, 0))\n\nPressione Ctrl+S e depois ▶ Jogar: o objeto gira 90 graus por segundo. Multiplicar por dt mantém a velocidade igual em qualquer computador."
+                    ),
+                    Focus::Tab(Tab::Script),
+                ),
+                step(
+                    tr!("Props show up in the Inspector", "Props aparecem no Inspetor"),
+                    tr!(
+                        "Declare `prop speed: num = 5` at the top of a script and the value becomes editable in the Inspector, per object, with no code changes. Use `var` for internal state.",
+                        "Declare `prop speed: num = 5` no início do script e o valor passa a ser editável no Inspetor, por objeto, sem mexer no código. Use `var` para estado interno."
+                    ),
+                    Focus::Tab(Tab::Inspector),
+                ),
+                step(
+                    tr!("Talk to other objects", "Converse com outros objetos"),
+                    tr!(
+                        "scene.find(\"Player\") returns another entity. Read or set its position, or send it your own event:\n\nplayer.send(\"coin\")\n\nwhich runs `on coin() {{ }}` in that object's script. Coin.cryo and Player.cryo in the example do exactly this.",
+                        "scene.find(\"Player\") devolve outra entidade. Leia ou altere a posição dela, ou envie um evento seu:\n\nplayer.send(\"coin\")\n\nque executa `on coin() {{ }}` no script daquele objeto. Coin.cryo e Player.cryo no exemplo fazem exatamente isso."
+                    ),
+                    Focus::Tab(Tab::Script),
+                ),
+                step(
+                    tr!("When something goes wrong", "Quando algo dá errado"),
+                    tr!(
+                        "The script editor checks the code as you type and shows the first error next to the Save button. Errors while the game runs appear in the Console with the line number; only that script stops, the editor keeps going.",
+                        "O editor de scripts confere o código enquanto você digita e mostra o primeiro erro ao lado do botão Salvar. Erros com o jogo rodando aparecem no Console com o número da linha; só aquele script para, o editor continua."
+                    ),
+                    Focus::Tab(Tab::Console),
+                ),
+            ],
+        },
+        Tutorial {
+            id: "physics",
+            title: tr!("Physics and collisions", "Física e colisões"),
+            summary: tr!("Gravity, solid objects, triggers and contact events.", "Gravidade, objetos sólidos, gatilhos e eventos de contato."),
+            steps: vec![
+                step(
+                    tr!("Add Physics", "Adicione Física"),
+                    tr!(
+                        "Add the Physics component to an object. Static bodies never move (floors, walls). Dynamic bodies fall with gravity and are pushed out of whatever they touch.",
+                        "Adicione o componente Física a um objeto. Corpos estáticos nunca se movem (chão, paredes). Corpos dinâmicos caem com a gravidade e são empurrados para fora do que encostam."
+                    ),
+                    Focus::Tab(Tab::Inspector),
+                ),
+                step(
+                    tr!("Colliders", "Colisores"),
+                    tr!(
+                        "The collider is a box or a sphere sized from the object's scale (for imported models, from the model's bounds). The selected object's box collider is drawn in green in the Scene. Boxes can be rotated, which is how ramps work.",
+                        "O colisor é uma caixa ou uma esfera dimensionada pela escala do objeto (em modelos importados, pelos limites do modelo). O colisor de caixa do objeto selecionado aparece em verde na Cena. Caixas podem ser giradas; é assim que rampas funcionam."
+                    ),
+                    Focus::Tab(Tab::Scene),
+                ),
+                step(
+                    tr!("Triggers", "Gatilhos"),
+                    tr!(
+                        "Tick Trigger to detect contact without blocking: coins, checkpoints and hint areas in the example are triggers.",
+                        "Marque Gatilho para detectar contato sem bloquear: moedas, checkpoints e áreas de dica no exemplo são gatilhos."
+                    ),
+                    Focus::Tab(Tab::Inspector),
+                ),
+                step(
+                    tr!("React in a script", "Reaja em um script"),
+                    tr!(
+                        "on collide(other, normal) runs on both objects. `normal` points from `other` towards you: if normal.y is close to 1 you are standing on it, close to -1 it is on top of you.\n\nIn scripts, move dynamic bodies with self.velocity and check self.grounded before jumping.",
+                        "on collide(other, normal) roda nos dois objetos. `normal` aponta de `other` para você: se normal.y está perto de 1 você está em cima dele; perto de -1, ele está em cima de você.\n\nNos scripts, mova corpos dinâmicos com self.velocity e confira self.grounded antes de pular."
+                    ),
+                    Focus::Tab(Tab::Script),
+                ),
+            ],
+        },
+        Tutorial {
+            id: "platformer",
+            title: tr!("Inside the example platformer", "Por dentro do jogo de exemplo"),
+            summary: tr!("How Frostpeak Isles is put together.", "Como o Frostpeak Isles é montado."),
+            steps: vec![
+                step(
+                    tr!("Controls", "Controles"),
+                    tr!(
+                        "WASD: move · Space: jump · Shift: crouch · F or click: throw the cap · E: leave a captured creature · arrow keys or right-drag: camera.\n\nThree jumps in a row: triple jump. Shift + Space: backflip, or long jump while running. Shift in the air: ground pound. Jump against a wall and press Space: wall jump.",
+                        "WASD: mover · Espaço: pular · Shift: agachar · F ou clique: lançar o boné · E: sair de uma criatura capturada · setas ou arrastar com o botão direito: câmera.\n\nTrês pulos seguidos: pulo triplo. Shift + Espaço: mortal para trás, ou pulo longo correndo. Shift no ar: pisão. Pule contra uma parede e pressione Espaço: pulo na parede."
+                    ),
+                    Focus::Tab(Tab::Game),
+                ),
+                step(
+                    tr!("The hero", "O herói"),
+                    tr!(
+                        "Select Player in the Hierarchy. The root has the Physics box and the Player.cryo script and no mesh; its child KipModel holds the body, head and hat and turns to face where you run, so the collider never rotates.",
+                        "Selecione Player na Hierarquia. A raiz tem a caixa de Física e o script Player.cryo, sem malha; o filho KipModel contém corpo, cabeça e boné e gira para onde você corre, de modo que o colisor nunca gira."
+                    ),
+                    Focus::Tab(Tab::Hierarchy),
+                ),
+                step(
+                    tr!("One script per idea", "Um script por ideia"),
+                    tr!(
+                        "Open the scripts folder: Player, Cap, OrbitCamera, Coin, Shard, Checkpoint, MovingPlatform, BouncePad, Spinner, Spiker, Hopper and HintZone. Each is short and talks to the others with send(...). Start with Coin.cryo, then read Player.cryo.",
+                        "Abra a pasta scripts: Player, Cap, OrbitCamera, Coin, Shard, Checkpoint, MovingPlatform, BouncePad, Spinner, Spiker, Hopper e HintZone. Cada um é curto e conversa com os outros via send(...). Comece por Coin.cryo e depois leia Player.cryo."
+                    ),
+                    Focus::Tab(Tab::Content),
+                ),
+                step(
+                    tr!("Tune it without code", "Ajuste sem código"),
+                    tr!(
+                        "Select Player and change run_speed or jump_speed in the Inspector, or select the Moving Platform and change travel and period. Press ▶ Play to feel the difference; Stop brings everything back.",
+                        "Selecione Player e mude run_speed ou jump_speed no Inspetor, ou selecione a Moving Platform e mude travel e period. Pressione ▶ Jogar para sentir a diferença; Parar traz tudo de volta."
+                    ),
+                    Focus::Tab(Tab::Inspector),
+                ),
+                step(
+                    tr!("Make it yours", "Deixe com a sua cara"),
+                    tr!(
+                        "Duplicate a platform (Ctrl+D), drag it somewhere new, drop a few coins on it and hide a sixth Frost Shard: the Player script counts them by name when the game starts.",
+                        "Duplique uma plataforma (Ctrl+D), arraste para outro lugar, espalhe algumas moedas e esconda um sexto Frost Shard: o script Player conta os shards pelo nome quando o jogo começa."
+                    ),
+                    Focus::Tab(Tab::Scene),
+                ),
+            ],
+        },
+        Tutorial {
+            id: "export",
+            title: tr!("Exporting your game", "Exportando seu jogo"),
+            summary: tr!("Turn the project into something people can run.", "Transforme o projeto em algo que as pessoas possam rodar."),
+            steps: vec![
+                step(
+                    tr!("Check the game camera", "Confira a câmera do jogo"),
+                    tr!(
+                        "The Game tab shows what players will see: the first Camera in the scene. The scene that is open when you export is the one the game starts in.",
+                        "A aba Jogo mostra o que os jogadores vão ver: a primeira Câmera da cena. A cena aberta no momento da exportação é a que o jogo inicia."
+                    ),
+                    Focus::Tab(Tab::Game),
+                ),
+                step(
+                    tr!("Export", "Exporte"),
+                    tr!(
+                        "Choose File > Export game… and pick a folder outside the project. Cryo creates a folder (an .app on macOS) with the executable and your project inside. It opens straight into the game, with no editor; Esc quits.",
+                        "Escolha Arquivo > Exportar jogo… e selecione uma pasta fora do projeto. A Cryo cria uma pasta (um .app no macOS) com o executável e o seu projeto dentro. Ele abre direto no jogo, sem o editor; Esc fecha."
+                    ),
+                    Focus::MenuBar,
+                ),
+                step(
+                    tr!("Share it", "Compartilhe"),
+                    tr!(
+                        "Zip that folder and send it. The export is for the system you are using now: export on Windows for Windows players, on macOS for Mac players, and so on.",
+                        "Compacte essa pasta e envie. A exportação vale para o sistema que você está usando: exporte no Windows para quem joga no Windows, no macOS para quem usa Mac, e assim por diante."
+                    ),
+                    Focus::None,
+                ),
+            ],
+        },
+    ]
+}

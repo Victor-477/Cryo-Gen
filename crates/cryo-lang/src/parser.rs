@@ -1,4 +1,4 @@
-//! Parser descendente recursivo da linguagem Cryo.
+//! Recursive-descent parser for the Cryo language.
 
 use crate::ast::*;
 use crate::lexer::{lex, Tok, Token};
@@ -10,7 +10,7 @@ pub fn parse(src: &str) -> Result<Script, CryoError> {
     let mut p = Parser { toks, pos: 0 };
     let script = p.script()?;
     if p.peek() != &Tok::Eof {
-        return Err(p.err("esperado fim do arquivo depois do bloco `script`"));
+        return Err(p.err("expected end of file after the `script` block"));
     }
     Ok(script)
 }
@@ -53,7 +53,7 @@ impl Parser {
             self.next();
             Ok(())
         } else {
-            Err(self.err(format!("esperado {what}, encontrado {}", describe(self.peek()))))
+            Err(self.err(format!("expected {what}, found {}", describe(self.peek()))))
         }
     }
     fn ident(&mut self, what: &str) -> Result<String, CryoError> {
@@ -62,12 +62,12 @@ impl Parser {
                 self.next();
                 Ok(s)
             }
-            t => Err(self.err(format!("esperado {what}, encontrado {}", describe(&t)))),
+            t => Err(self.err(format!("expected {what}, found {}", describe(&t)))),
         }
     }
 
     fn ty(&mut self) -> Result<Type, CryoError> {
-        let name = self.ident("um tipo")?;
+        let name = self.ident("a type")?;
         Ok(match name.as_str() {
             "num" => Type::Num,
             "bool" => Type::Bool,
@@ -78,7 +78,7 @@ impl Parser {
             "any" => Type::Any,
             _ => {
                 return Err(self.err(format!(
-                    "tipo desconhecido `{name}` (use num, bool, text, vec3, entity, list ou any)"
+                    "unknown type `{name}` (use num, bool, text, vec3, entity, list or any)"
                 )))
             }
         })
@@ -94,7 +94,7 @@ impl Parser {
 
     fn script(&mut self) -> Result<Script, CryoError> {
         self.expect(Tok::Script, "`script`")?;
-        let name = self.ident("o nome do script")?;
+        let name = self.ident("the script name")?;
         self.expect(Tok::LBrace, "`{`")?;
         let mut s =
             Script { name, fields: vec![], handlers: HashMap::new(), funcs: HashMap::new() };
@@ -107,12 +107,12 @@ impl Parser {
                 }
                 Tok::Prop | Tok::Var => {
                     let is_prop = self.next() == Tok::Prop;
-                    let name = self.ident("o nome do campo")?;
+                    let name = self.ident("the field name")?;
                     if s.fields.iter().any(|f| f.name == name) {
-                        return Err(self.err(format!("campo `{name}` declarado duas vezes")));
+                        return Err(self.err(format!("field `{name}` declared twice")));
                     }
                     let ty = self.opt_ty()?;
-                    self.expect(Tok::Assign, "`=` com o valor inicial")?;
+                    self.expect(Tok::Assign, "`=` with the initial value")?;
                     let default = self.expr()?;
                     self.eat(&Tok::Semi);
                     s.fields.push(FieldDecl { name, ty, default, is_prop, line });
@@ -123,7 +123,7 @@ impl Parser {
                     if s.handlers.contains_key(&f.name) {
                         return Err(CryoError::new(
                             line,
-                            format!("evento `{}` declarado duas vezes", f.name),
+                            format!("event `{}` declared twice", f.name),
                         ));
                     }
                     s.handlers.insert(f.name.clone(), f);
@@ -134,15 +134,15 @@ impl Parser {
                     if s.funcs.contains_key(&f.name) {
                         return Err(CryoError::new(
                             line,
-                            format!("função `{}` declarada duas vezes", f.name),
+                            format!("function `{}` declared twice", f.name),
                         ));
                     }
                     s.funcs.insert(f.name.clone(), f);
                 }
-                Tok::Eof => return Err(self.err("faltou `}` para fechar o script")),
+                Tok::Eof => return Err(self.err("missing `}` to close the script")),
                 t => {
                     return Err(self.err(format!(
-                        "dentro de um script só são permitidos `prop`, `var`, `on` e `fn`; encontrado {}",
+                        "only `prop`, `var`, `on` and `fn` are allowed inside a script; found {}",
                         describe(&t)
                     )))
                 }
@@ -153,11 +153,11 @@ impl Parser {
 
     fn func(&mut self) -> Result<Func, CryoError> {
         let line = self.line();
-        let name = self.ident("um nome")?;
+        let name = self.ident("a name")?;
         self.expect(Tok::LParen, "`(`")?;
         let mut params = vec![];
         while self.peek() != &Tok::RParen {
-            let name = self.ident("o nome do parâmetro")?;
+            let name = self.ident("the parameter name")?;
             let ty = self.opt_ty()?;
             params.push(Param { name, ty });
             if !self.eat(&Tok::Comma) {
@@ -175,7 +175,7 @@ impl Parser {
         let mut out = vec![];
         while self.peek() != &Tok::RBrace {
             if self.peek() == &Tok::Eof {
-                return Err(self.err("faltou `}` para fechar o bloco"));
+                return Err(self.err("missing `}` to close the block"));
             }
             out.push(self.stmt()?);
             while self.eat(&Tok::Semi) {}
@@ -189,7 +189,7 @@ impl Parser {
         let kind = match self.peek().clone() {
             Tok::Let | Tok::Var => {
                 let mutable = self.next() == Tok::Var;
-                let name = self.ident("o nome da variável")?;
+                let name = self.ident("the variable name")?;
                 let ty = self.opt_ty()?;
                 self.expect(Tok::Assign, "`=`")?;
                 let value = self.expr()?;
@@ -207,7 +207,7 @@ impl Parser {
             }
             Tok::For => {
                 self.next();
-                let var = self.ident("a variável do `for`")?;
+                let var = self.ident("the `for` variable")?;
                 self.expect(Tok::In, "`in`")?;
                 let first = self.expr()?;
                 if self.eat(&Tok::DotDot) {
@@ -249,7 +249,7 @@ impl Parser {
                             target.kind,
                             ExprKind::Ident(_) | ExprKind::Member(..) | ExprKind::Index(..)
                         ) {
-                            return Err(self.err("o lado esquerdo de `=` não pode receber valor"));
+                            return Err(self.err("the left-hand side of `=` cannot be assigned to"));
                         }
                         self.next();
                         let value = self.expr()?;
@@ -279,14 +279,14 @@ impl Parser {
         Ok(Stmt { kind: StmtKind::If { cond, then, otherwise }, line })
     }
 
-    // ---------- expressões ----------
+    // ---------- expressions ----------
 
     fn expr(&mut self) -> Result<Expr, CryoError> {
         self.binary(0)
     }
 
     fn binop(&self) -> Option<(BinOp, u8)> {
-        // Um `-` no início de uma linha nova começa outra instrução.
+        // A `-` at the start of a new line begins another statement.
         Some(match self.peek() {
             Tok::Or => (BinOp::Or, 1),
             Tok::And => (BinOp::And, 2),
@@ -341,7 +341,7 @@ impl Parser {
             match self.peek() {
                 Tok::Dot => {
                     self.next();
-                    let name = self.ident("o nome do membro depois de `.`")?;
+                    let name = self.ident("the member name after `.`")?;
                     e = Expr { kind: ExprKind::Member(Box::new(e), name), line };
                 }
                 Tok::LParen if !self.newline_before() => {
@@ -392,7 +392,7 @@ impl Parser {
             t => {
                 return Err(CryoError::new(
                     line,
-                    format!("esperada uma expressão, encontrado {}", describe(&t)),
+                    format!("expected an expression, found {}", describe(&t)),
                 ))
             }
         };
@@ -402,10 +402,10 @@ impl Parser {
 
 fn describe(t: &Tok) -> String {
     match t {
-        Tok::Num(n) => format!("o número {n}"),
-        Tok::Str(_) => "um texto".into(),
+        Tok::Num(n) => format!("the number {n}"),
+        Tok::Str(_) => "a text".into(),
         Tok::Ident(s) => format!("`{s}`"),
-        Tok::Eof => "o fim do arquivo".into(),
+        Tok::Eof => "the end of the file".into(),
         Tok::LBrace => "`{`".into(),
         Tok::RBrace => "`}`".into(),
         Tok::LParen => "`(`".into(),

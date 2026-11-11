@@ -1,0 +1,11 @@
+script NAME {
+    prop speed: num = 1
+
+    // Called once when the game starts.
+    on start() {
+    }
+
+    // Called every frame. `dt` is the time (in seconds) since the previous frame.
+    on update(dt) {
+    }
+}

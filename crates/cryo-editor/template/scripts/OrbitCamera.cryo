@@ -1,0 +1,43 @@
+// Third-person camera. Drag with the right mouse button (or use the arrow
+// keys) to orbit around the target; the wheel zooms.
+script OrbitCamera {
+    prop target: text = "Player"
+    prop distance: num = 9
+    prop height: num = 1.2
+    prop sensitivity: num = 0.25
+    prop key_speed: num = 110
+    var yaw = 0
+    var pitch = 22
+    var focus = vec3(0)
+
+    on start() {
+        let t = scene.find(target)
+        if t != nil {
+            focus = t.position
+        }
+    }
+
+    on update(dt) {
+        let t = scene.find(target)
+        if t == nil {
+            return
+        }
+        if input.down("mouse_right") {
+            yaw -= input.mouse_dx * sensitivity
+            pitch += input.mouse_dy * sensitivity
+        }
+        if input.down("left") { yaw += key_speed * dt }
+        if input.down("right") { yaw -= key_speed * dt }
+        if input.down("up") { pitch += key_speed * 0.5 * dt }
+        if input.down("down") { pitch -= key_speed * 0.5 * dt }
+        pitch = clamp(pitch, -5, 80)
+        distance = clamp(distance - input.scroll * 0.02, 4, 20)
+
+        focus = lerp(focus, t.position + vec3(0, height, 0), clamp(8 * dt, 0, 1))
+        let a = yaw * PI / 180
+        let b = pitch * PI / 180
+        let out = vec3(sin(a) * cos(b), sin(b), cos(a) * cos(b))
+        self.position = focus + out * distance
+        self.look_at(focus)
+    }
+}

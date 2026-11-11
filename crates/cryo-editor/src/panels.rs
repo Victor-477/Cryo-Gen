@@ -1,4 +1,4 @@
-//! Painéis do editor: Hierarquia, Inspetor, Conteúdo, Console e Editor de Scripts.
+//! Editor panels: Hierarchy, Inspector, Content, Console and Script Editor.
 
 use crate::app::{PropCache, State, ACCENT};
 use crate::highlight::highlight;
@@ -22,10 +22,10 @@ fn entity_icon(e: &Entity) -> &'static str {
     }
 }
 
-fn vec3_row(ui: &mut egui::Ui, label: &str, v: &mut Vec3, speed: f32) -> bool {
+fn vec3_row(ui: &mut egui::Ui, label: impl AsRef<str>, v: &mut Vec3, speed: f32) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
-        ui.add_sized([62.0, 18.0], egui::Label::new(label).truncate());
+        ui.add_sized([62.0, 18.0], egui::Label::new(label.as_ref()).truncate());
         let colors = [
             Color32::from_rgb(235, 90, 90),
             Color32::from_rgb(120, 210, 80),
@@ -44,8 +44,8 @@ fn vec3_row(ui: &mut egui::Ui, label: &str, v: &mut Vec3, speed: f32) -> bool {
     changed
 }
 
-/// Botão de cor que só grava quando o usuário realmente altera
-/// (a conversão interna de cor do egui introduz pequenos arredondamentos).
+/// Colour button that only writes back when the user actually changes it
+/// (egui's internal colour conversion introduces small rounding differences).
 fn color_edit(ui: &mut egui::Ui, color: &mut [f32; 3]) -> egui::Response {
     let mut tmp = *color;
     let resp = ui.color_edit_button_rgb(&mut tmp);
@@ -55,16 +55,16 @@ fn color_edit(ui: &mut egui::Ui, color: &mut [f32; 3]) -> egui::Response {
     resp
 }
 
-fn row<R>(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+fn row<R>(ui: &mut egui::Ui, label: impl AsRef<str>, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     ui.horizontal(|ui| {
-        ui.add_sized([110.0, 18.0], egui::Label::new(label).truncate());
+        ui.add_sized([110.0, 18.0], egui::Label::new(label.as_ref()).truncate());
         add(ui)
     })
     .inner
 }
 
-/// Cabeçalho de componente com botão de remover. Devolve `true` se o usuário removeu.
-fn component(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui)) -> bool {
+/// Component header with a remove button. Returns `true` if the user removed it.
+fn component(ui: &mut egui::Ui, id_key: &str, title: impl AsRef<str>, body: impl FnOnce(&mut egui::Ui)) -> bool {
     let mut remove = false;
     ui.add_space(2.0);
     egui::Frame::new()
@@ -73,12 +73,12 @@ fn component(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui)) -
         .inner_margin(egui::Margin::same(6))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            let id = ui.make_persistent_id(("comp", title));
+            let id = ui.make_persistent_id(("comp", id_key));
             egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, true)
                 .show_header(ui, |ui| {
-                    ui.label(RichText::new(title).strong());
+                    ui.label(RichText::new(title.as_ref()).strong());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.small_button("✖").on_hover_text("Remover componente").clicked() {
+                        if ui.small_button("✖").on_hover_text(tr!("Remove component", "Remover componente")).clicked() {
                             remove = true;
                         }
                     });
@@ -90,11 +90,11 @@ fn component(ui: &mut egui::Ui, title: &str, body: impl FnOnce(&mut egui::Ui)) -
 
 impl State {
     // ------------------------------------------------------------------
-    // Hierarquia
+    // Hierarchy
     // ------------------------------------------------------------------
     pub fn hierarchy(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.menu_button("+", |ui| self.create_menu(ui)).response.on_hover_text("Criar objeto");
+            ui.menu_button("+", |ui| self.create_menu(ui)).response.on_hover_text(tr!("Create object", "Criar objeto"));
             ui.label(RichText::new(self.scene_path.rsplit('/').next().unwrap_or("")).weak());
         });
         ui.separator();
@@ -134,10 +134,10 @@ impl State {
                 }
                 resp.context_menu(|ui| {
                     for (label, act) in [
-                        ("Duplicar", "dup"),
-                        ("Criar filho vazio", "child"),
-                        ("Soltar do pai", "unparent"),
-                        ("Excluir", "del"),
+                        (tr!("Duplicate", "Duplicar"), "dup"),
+                        (tr!("Create empty child", "Criar filho vazio"), "child"),
+                        (tr!("Unparent", "Soltar do pai"), "unparent"),
+                        (tr!("Delete", "Excluir"), "del"),
                     ] {
                         if ui.button(label).clicked() {
                             action = Some((id, act));
@@ -146,7 +146,7 @@ impl State {
                     }
                 });
             }
-            // soltar em área vazia = tirar do pai
+            // dropping on empty space = unparent
             let rest = ui.allocate_response(ui.available_size(), Sense::click());
             if rest.clicked() {
                 self.selected = None;
@@ -163,7 +163,7 @@ impl State {
             match act {
                 "dup" => self.selected = self.scene.duplicate(id),
                 "child" => {
-                    let c = self.scene.add_empty("Vazio");
+                    let c = self.scene.add_empty("Empty");
                     self.scene.get_mut(c).unwrap().parent = Some(id);
                     self.selected = Some(c);
                 }
@@ -179,14 +179,14 @@ impl State {
         }
     }
 
-    /// Troca o pai mantendo a posição do objeto no mundo.
+    /// Changes the parent while keeping the object's world position.
     fn set_parent(&mut self, child: u64, parent: Option<u64>) {
         if Some(child) == parent || self.scene.get(child).map(|e| e.parent) == Some(parent) {
             return;
         }
         if let Some(p) = parent {
             if self.scene.is_descendant(p, child) {
-                return; // evitaria um ciclo
+                return; // would create a cycle
             }
         }
         let world = self.scene.world_matrix(child);
@@ -206,13 +206,13 @@ impl State {
     }
 
     // ------------------------------------------------------------------
-    // Inspetor
+    // Inspector
     // ------------------------------------------------------------------
     fn script_props(&mut self, rel: &str) -> Result<Vec<(String, Option<cryo_lang::Type>, cryo_lang::Value)>, String> {
         let fresh = self.prop_cache.get(rel).map(|c| c.at.elapsed().as_secs_f32() < 1.0).unwrap_or(false);
         if !fresh {
             let props = std::fs::read_to_string(self.project_dir.join(rel))
-                .map_err(|e| format!("arquivo não encontrado ({e})"))
+                .map_err(|e| tr!("file not found ({e})", "arquivo não encontrado ({e})"))
                 .and_then(|src| cryo_lang::parse(&src).map_err(|e| e.to_string()))
                 .map(|s| cryo_lang::default_props(&Rc::new(s)));
             self.prop_cache.insert(rel.to_string(), PropCache { at: Instant::now(), props });
@@ -251,7 +251,7 @@ impl State {
 
             let e = self.scene.get_mut(id).unwrap();
             ui.horizontal(|ui| {
-                ui.checkbox(&mut e.visible, "").on_hover_text("Visível");
+                ui.checkbox(&mut e.visible, "").on_hover_text(tr!("Visible", "Visível"));
                 ui.add(egui::TextEdit::singleline(&mut e.name).desired_width(f32::INFINITY));
             });
             ui.add_space(2.0);
@@ -262,23 +262,23 @@ impl State {
                 .inner_margin(egui::Margin::same(6))
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
-                    ui.label(RichText::new("Transformação").strong());
-                    vec3_row(ui, "Posição", &mut e.position, 0.05);
-                    vec3_row(ui, "Rotação", &mut e.rotation, 0.5);
-                    vec3_row(ui, "Escala", &mut e.scale, 0.02);
+                    ui.label(RichText::new(tr!("Transform", "Transformação")).strong());
+                    vec3_row(ui, tr!("Position", "Posição"), &mut e.position, 0.05);
+                    vec3_row(ui, tr!("Rotation", "Rotação"), &mut e.rotation, 0.5);
+                    vec3_row(ui, tr!("Scale", "Escala"), &mut e.scale, 0.02);
                 });
 
             if let Some(m) = &mut e.mesh {
-                let remove = component(ui, "■ Malha", |ui| {
+                let remove = component(ui, "mesh", tr!("■ Mesh", "■ Malha"), |ui| {
                     let file_name = |p: &str| p.rsplit('/').next().unwrap_or(p).to_string();
-                    row(ui, "Forma", |ui| {
+                    row(ui, tr!("Shape", "Forma"), |ui| {
                         let shown = match &m.model {
                             Some(p) => file_name(p),
-                            None => m.shape.label().to_string(),
+                            None => crate::app::shape_name(m.shape),
                         };
                         egui::ComboBox::from_id_salt("shape").selected_text(shown).show_ui(ui, |ui| {
                             for s in Shape::ALL {
-                                if ui.selectable_label(m.model.is_none() && m.shape == s, s.label()).clicked() {
+                                if ui.selectable_label(m.model.is_none() && m.shape == s, crate::app::shape_name(s)).clicked() {
                                     m.shape = s;
                                     m.model = None;
                                     m.model_bounds = None;
@@ -286,7 +286,7 @@ impl State {
                             }
                             if !models.is_empty() {
                                 ui.separator();
-                                ui.label(RichText::new("Modelos importados").weak().small());
+                                ui.label(RichText::new(tr!("Imported models", "Modelos importados")).weak().small());
                             }
                             for f in &models {
                                 if ui.selectable_label(m.model.as_ref() == Some(f), format!("◆ {f}")).clicked() {
@@ -302,27 +302,26 @@ impl State {
                                 let d = info.half * 2.0;
                                 ui.horizontal(|ui| {
                                     ui.label(
-                                        RichText::new(format!(
-                                            "{} triângulos · {:.2} × {:.2} × {:.2}",
+                                        RichText::new(tr!("{} triangles · {:.2} × {:.2} × {:.2}", "{} triângulos · {:.2} × {:.2} × {:.2}",
                                             info.triangles, d.x, d.y, d.z
                                         ))
                                         .weak()
                                         .small(),
                                     );
-                                    if ui.small_button("Ajustar tamanho").on_hover_text("Escala o objeto para ter 2 m na maior dimensão").clicked() {
+                                    if ui.small_button(tr!("Fit size", "Ajustar tamanho")).on_hover_text(tr!("Scales the object so its largest dimension is 2 m", "Escala o objeto para ter 2 m na maior dimensão")).clicked() {
                                         fit_size = true;
                                     }
                                 });
                             }
                             None => {
-                                ui.colored_label(Color32::from_rgb(240, 110, 110), "⚠ modelo não carregou (veja o Console)");
+                                ui.colored_label(Color32::from_rgb(240, 110, 110), tr!("⚠ model failed to load (see the Console)", "⚠ modelo não carregou (veja o Console)"));
                             }
                         }
                     }
-                    row(ui, "Textura", |ui| {
-                        let shown = m.texture.as_deref().map(file_name).unwrap_or_else(|| "(nenhuma)".into());
+                    row(ui, tr!("Texture", "Textura"), |ui| {
+                        let shown = m.texture.as_deref().map(file_name).unwrap_or_else(|| tr!("(none)", "(nenhuma)").into());
                         egui::ComboBox::from_id_salt("texture").selected_text(shown).show_ui(ui, |ui| {
-                            if ui.selectable_label(m.texture.is_none(), "(nenhuma)").clicked() {
+                            if ui.selectable_label(m.texture.is_none(), tr!("(none)", "(nenhuma)")).clicked() {
                                 m.texture = None;
                             }
                             for f in &images {
@@ -332,10 +331,10 @@ impl State {
                             }
                         });
                     });
-                    row(ui, "Cor", |ui| color_edit(ui, &mut m.color));
-                    row(ui, "Brilho", |ui| ui.add(egui::Slider::new(&mut m.shininess, 0.0..=1.0)));
-                    row(ui, "Sem iluminação", |ui| ui.checkbox(&mut m.unlit, ""));
-                    row(ui, "Projeta sombra", |ui| ui.checkbox(&mut m.cast_shadow, ""));
+                    row(ui, tr!("Colour", "Cor"), |ui| color_edit(ui, &mut m.color));
+                    row(ui, tr!("Shininess", "Brilho"), |ui| ui.add(egui::Slider::new(&mut m.shininess, 0.0..=1.0)));
+                    row(ui, tr!("Unlit", "Sem iluminação"), |ui| ui.checkbox(&mut m.unlit, ""));
+                    row(ui, tr!("Casts shadow", "Projeta sombra"), |ui| ui.checkbox(&mut m.cast_shadow, ""));
                 });
                 if fit_size {
                     if let Some(info) = &model_info {
@@ -348,23 +347,23 @@ impl State {
             }
 
             if let Some(l) = &mut e.light {
-                let remove = component(ui, "☀ Luz", |ui| {
-                    row(ui, "Tipo", |ui| {
-                        ui.selectable_value(&mut l.kind, LightKind::Directional, "Direcional");
-                        ui.selectable_value(&mut l.kind, LightKind::Point, "Pontual");
-                        ui.selectable_value(&mut l.kind, LightKind::Spot, "Holofote");
+                let remove = component(ui, "light", tr!("☀ Light", "☀ Luz"), |ui| {
+                    row(ui, tr!("Type", "Tipo"), |ui| {
+                        ui.selectable_value(&mut l.kind, LightKind::Directional, tr!("Directional", "Direcional"));
+                        ui.selectable_value(&mut l.kind, LightKind::Point, tr!("Point", "Pontual"));
+                        ui.selectable_value(&mut l.kind, LightKind::Spot, tr!("Spot", "Holofote"));
                     });
-                    row(ui, "Cor", |ui| color_edit(ui, &mut l.color));
-                    row(ui, "Intensidade", |ui| ui.add(egui::Slider::new(&mut l.intensity, 0.0..=8.0)));
+                    row(ui, tr!("Colour", "Cor"), |ui| color_edit(ui, &mut l.color));
+                    row(ui, tr!("Intensity", "Intensidade"), |ui| ui.add(egui::Slider::new(&mut l.intensity, 0.0..=8.0)));
                     if l.kind != LightKind::Directional {
-                        row(ui, "Alcance", |ui| ui.add(egui::Slider::new(&mut l.range, 0.5..=60.0)));
+                        row(ui, tr!("Range", "Alcance"), |ui| ui.add(egui::Slider::new(&mut l.range, 0.5..=60.0)));
                     }
                     if l.kind == LightKind::Spot {
-                        row(ui, "Abertura", |ui| ui.add(egui::Slider::new(&mut l.angle, 5.0..=80.0).suffix("°")));
+                        row(ui, tr!("Cone angle", "Abertura"), |ui| ui.add(egui::Slider::new(&mut l.angle, 5.0..=80.0).suffix("°")));
                     }
                     if l.kind == LightKind::Directional {
-                        row(ui, "Sombras", |ui| {
-                            ui.checkbox(&mut l.shadows, "").on_hover_text("Vale para a primeira luz direcional da cena")
+                        row(ui, tr!("Shadows", "Sombras"), |ui| {
+                            ui.checkbox(&mut l.shadows, "").on_hover_text(tr!("Applies to the first directional light in the scene", "Vale para a primeira luz direcional da cena"))
                         });
                     }
                 });
@@ -374,10 +373,10 @@ impl State {
             }
 
             if let Some(c) = &mut e.camera {
-                let remove = component(ui, "🎥 Câmera", |ui| {
-                    row(ui, "Campo de visão", |ui| ui.add(egui::Slider::new(&mut c.fov, 20.0..=120.0).suffix("°")));
-                    row(ui, "Plano próximo", |ui| ui.add(DragValue::new(&mut c.near).speed(0.01).range(0.01..=10.0)));
-                    row(ui, "Plano distante", |ui| ui.add(DragValue::new(&mut c.far).speed(1.0).range(10.0..=5000.0)));
+                let remove = component(ui, "camera", tr!("🎥 Camera", "🎥 Câmera"), |ui| {
+                    row(ui, tr!("Field of view", "Campo de visão"), |ui| ui.add(egui::Slider::new(&mut c.fov, 20.0..=120.0).suffix("°")));
+                    row(ui, tr!("Near plane", "Plano próximo"), |ui| ui.add(DragValue::new(&mut c.near).speed(0.01).range(0.01..=10.0)));
+                    row(ui, tr!("Far plane", "Plano distante"), |ui| ui.add(DragValue::new(&mut c.far).speed(1.0).range(10.0..=5000.0)));
                 });
                 if remove {
                     e.camera = None;
@@ -385,22 +384,22 @@ impl State {
             }
 
             if let Some(p) = &mut e.physics {
-                let remove = component(ui, "⚛ Física", |ui| {
-                    row(ui, "Corpo", |ui| {
-                        ui.selectable_value(&mut p.kind, BodyKind::Static, "Estático");
-                        ui.selectable_value(&mut p.kind, BodyKind::Dynamic, "Dinâmico");
+                let remove = component(ui, "physics", tr!("⚛ Physics", "⚛ Física"), |ui| {
+                    row(ui, tr!("Body", "Corpo"), |ui| {
+                        ui.selectable_value(&mut p.kind, BodyKind::Static, tr!("Static", "Estático"));
+                        ui.selectable_value(&mut p.kind, BodyKind::Dynamic, tr!("Dynamic", "Dinâmico"));
                     });
-                    row(ui, "Colisor", |ui| {
-                        ui.selectable_value(&mut p.collider, ColliderShape::Box, "Caixa");
-                        ui.selectable_value(&mut p.collider, ColliderShape::Sphere, "Esfera");
+                    row(ui, tr!("Collider", "Colisor"), |ui| {
+                        ui.selectable_value(&mut p.collider, ColliderShape::Box, tr!("Box", "Caixa"));
+                        ui.selectable_value(&mut p.collider, ColliderShape::Sphere, tr!("Sphere", "Esfera"));
                     });
-                    row(ui, "Gatilho", |ui| {
-                        ui.checkbox(&mut p.is_trigger, "").on_hover_text("Detecta contato sem bloquear")
+                    row(ui, tr!("Trigger", "Gatilho"), |ui| {
+                        ui.checkbox(&mut p.is_trigger, "").on_hover_text(tr!("Detects contact without blocking", "Detecta contato sem bloquear"))
                     });
                     if p.kind == BodyKind::Dynamic {
-                        row(ui, "Gravidade", |ui| ui.checkbox(&mut p.use_gravity, ""));
-                        row(ui, "Quique", |ui| ui.add(egui::Slider::new(&mut p.bounciness, 0.0..=1.0)));
-                        row(ui, "Atrito", |ui| ui.add(egui::Slider::new(&mut p.friction, 0.0..=1.0)));
+                        row(ui, tr!("Gravity", "Gravidade"), |ui| ui.checkbox(&mut p.use_gravity, ""));
+                        row(ui, tr!("Bounciness", "Quique"), |ui| ui.add(egui::Slider::new(&mut p.bounciness, 0.0..=1.0)));
+                        row(ui, tr!("Friction", "Atrito"), |ui| ui.add(egui::Slider::new(&mut p.friction, 0.0..=1.0)));
                     }
                 });
                 if remove {
@@ -409,9 +408,10 @@ impl State {
             }
 
             if let Some(s) = &mut e.script {
-                let remove = component(ui, "📜 Script Cryo", |ui| {
-                    row(ui, "Arquivo", |ui| {
-                        let shown = if s.path.is_empty() { "(nenhum)" } else { s.path.as_str() };
+                let remove = component(ui, "script", tr!("📜 Cryo Script", "📜 Script Cryo"), |ui| {
+                    row(ui, tr!("File", "Arquivo"), |ui| {
+                        let none = tr!("(none)", "(nenhum)");
+                        let shown = if s.path.is_empty() { none.as_str() } else { s.path.as_str() };
                         egui::ComboBox::from_id_salt("script_path")
                             .selected_text(shown.rsplit('/').next().unwrap_or(shown).to_string())
                             .show_ui(ui, |ui| {
@@ -424,10 +424,10 @@ impl State {
                             });
                     });
                     ui.horizontal(|ui| {
-                        if !s.path.is_empty() && ui.button("✏ Editar").clicked() {
+                        if !s.path.is_empty() && ui.button(tr!("✏ Edit", "✏ Editar")).clicked() {
                             open_script = Some(s.path.clone());
                         }
-                        if ui.button("+ Novo script").clicked() {
+                        if ui.button(tr!("+ New script", "+ Novo script")).clicked() {
                             new_script = true;
                         }
                     });
@@ -439,7 +439,7 @@ impl State {
                             for (name, _ty, default) in list {
                                 let Some(default) = value_to_prop(default) else { continue };
                                 let mut cur = match s.props.get(name) {
-                                    // se o tipo do prop mudou no script, volta ao padrão
+                                    // if the prop type changed in the script, fall back to the default
                                     Some(v) if std::mem::discriminant(v) == std::mem::discriminant(&default) => v.clone(),
                                     _ => default.clone(),
                                 };
@@ -465,7 +465,7 @@ impl State {
                                         s.props.insert(name.clone(), cur);
                                     }
                                 } else if overridden && !list.is_empty() {
-                                    // mantém o valor personalizado
+                                    // keeps the custom value
                                 }
                             }
                         }
@@ -473,7 +473,7 @@ impl State {
                             ui.colored_label(Color32::from_rgb(240, 110, 110), format!("⚠ {err}"));
                         }
                         None => {
-                            ui.label(RichText::new("Escolha um arquivo .cryo").weak());
+                            ui.label(RichText::new(tr!("Choose a .cryo file", "Escolha um arquivo .cryo")).weak());
                         }
                     }
                 });
@@ -484,12 +484,12 @@ impl State {
 
             ui.add_space(8.0);
             ui.vertical_centered(|ui| {
-                ui.menu_button("+ Adicionar componente", |ui| {
-                    if e.mesh.is_none() && ui.button("■ Malha").clicked() {
+                ui.menu_button(tr!("+ Add component", "+ Adicionar componente"), |ui| {
+                    if e.mesh.is_none() && ui.button(tr!("■ Mesh", "■ Malha")).clicked() {
                         e.mesh = Some(MeshRenderer::primitive(Shape::Cube));
                         ui.close();
                     }
-                    if e.physics.is_none() && ui.button("⚛ Física").clicked() {
+                    if e.physics.is_none() && ui.button(tr!("⚛ Physics", "⚛ Física")).clicked() {
                         let col = match e.mesh.as_ref().map(|m| m.shape) {
                             Some(Shape::Sphere) => ColliderShape::Sphere,
                             _ => ColliderShape::Box,
@@ -497,11 +497,11 @@ impl State {
                         e.physics = Some(Physics::new(BodyKind::Dynamic, col));
                         ui.close();
                     }
-                    if e.script.is_none() && ui.button("📜 Script Cryo").clicked() {
+                    if e.script.is_none() && ui.button(tr!("📜 Cryo Script", "📜 Script Cryo")).clicked() {
                         e.script = Some(ScriptRef::default());
                         ui.close();
                     }
-                    if e.light.is_none() && ui.button("☀ Luz").clicked() {
+                    if e.light.is_none() && ui.button(tr!("☀ Light", "☀ Luz")).clicked() {
                         e.light = Some(Light {
                             kind: LightKind::Point,
                             color: [1.0; 3],
@@ -512,7 +512,7 @@ impl State {
                         });
                         ui.close();
                     }
-                    if e.camera.is_none() && ui.button("🎥 Câmera").clicked() {
+                    if e.camera.is_none() && ui.button(tr!("🎥 Camera", "🎥 Câmera")).clicked() {
                         e.camera = Some(Camera { fov: 60.0, near: 0.1, far: 500.0 });
                         ui.close();
                     }
@@ -529,7 +529,7 @@ impl State {
                         }
                         open_script = Some(rel);
                     }
-                    Err(e) => self.error(format!("Não foi possível criar o script: {e}")),
+                    Err(e) => self.error(tr!("Could not create the script: {e}", "Não foi possível criar o script: {e}")),
                 }
             }
             if let Some(rel) = open_script {
@@ -539,17 +539,17 @@ impl State {
     }
 
     fn scene_settings(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("Configurações da cena").strong());
-        ui.label(RichText::new("Selecione um objeto para ver os componentes.").weak().small());
+        ui.label(RichText::new(tr!("Scene settings", "Configurações da cena")).strong());
+        ui.label(RichText::new(tr!("Select an object to see its components.", "Selecione um objeto para ver os componentes.")).weak().small());
         ui.add_space(6.0);
-        row(ui, "Luz ambiente", |ui| color_edit(ui, &mut self.scene.ambient));
-        row(ui, "Céu (topo)", |ui| color_edit(ui, &mut self.scene.sky_top));
-        row(ui, "Céu (horizonte)", |ui| color_edit(ui, &mut self.scene.sky_horizon));
-        row(ui, "Gravidade", |ui| ui.add(DragValue::new(&mut self.scene.gravity).speed(0.05).suffix(" m/s²")));
+        row(ui, tr!("Ambient light", "Luz ambiente"), |ui| color_edit(ui, &mut self.scene.ambient));
+        row(ui, tr!("Sky (top)", "Céu (topo)"), |ui| color_edit(ui, &mut self.scene.sky_top));
+        row(ui, tr!("Sky (horizon)", "Céu (horizonte)"), |ui| color_edit(ui, &mut self.scene.sky_horizon));
+        row(ui, tr!("Gravity", "Gravidade"), |ui| ui.add(DragValue::new(&mut self.scene.gravity).speed(0.05).suffix(" m/s²")));
     }
 
     // ------------------------------------------------------------------
-    // Navegador de conteúdo
+    // Content browser
     // ------------------------------------------------------------------
     pub fn content_browser(&mut self, ui: &mut egui::Ui) {
         let mut go: Option<String> = None;
@@ -560,20 +560,20 @@ impl State {
                     None => String::new(),
                 });
             }
-            if ui.button("⬇ Importar").on_hover_text("Modelos (.obj, .gltf, .glb), texturas (.png, .jpg) e sons (.wav, .ogg, .mp3).\nTambém dá para arrastar os arquivos para a janela.").clicked() {
+            if ui.button(tr!("⬇ Import", "⬇ Importar")).on_hover_text(tr!("Models (.obj, .gltf, .glb), textures (.png, .jpg) and sounds (.wav, .ogg, .mp3).\nYou can also drag files onto the window.", "Modelos (.obj, .gltf, .glb), texturas (.png, .jpg) e sons (.wav, .ogg, .mp3).\nTambém dá para arrastar os arquivos para a janela.")).clicked() {
                 self.import_dialog();
             }
             if ui.button("+ Script").clicked() {
-                match project::create_script(&self.project_dir, "NovoScript") {
+                match project::create_script(&self.project_dir, "NewScript") {
                     Ok(rel) => {
                         self.browser_dir = "scripts".into();
                         self.open_script(&rel);
                     }
-                    Err(e) => self.error(format!("Não foi possível criar o script: {e}")),
+                    Err(e) => self.error(tr!("Could not create the script: {e}", "Não foi possível criar o script: {e}")),
                 }
             }
             ui.separator();
-            if ui.link("Projeto").clicked() {
+            if ui.link(tr!("Project", "Projeto")).clicked() {
                 go = Some(String::new());
             }
             let mut acc = String::new();
@@ -591,7 +591,7 @@ impl State {
         let mut open: Option<(String, bool)> = None;
         ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             if entries.is_empty() {
-                ui.label(RichText::new("Pasta vazia").weak());
+                ui.label(RichText::new(tr!("Empty folder", "Pasta vazia")).weak());
             }
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
@@ -643,9 +643,9 @@ impl State {
                         Color32::from_gray(215),
                     );
                     let tip = if crate::assets::MODEL_EXTS.contains(&ext) {
-                        format!("{}\nDuplo clique: adicionar à cena", entry.rel)
+                        tr!("{}\nDouble-click: add to the scene", "{}\nDuplo clique: adicionar à cena", entry.rel)
                     } else if crate::assets::IMAGE_EXTS.contains(&ext) {
-                        format!("{}\nDuplo clique: aplicar como textura no objeto selecionado", entry.rel)
+                        tr!("{}\nDouble-click: apply as a texture to the selected object", "{}\nDuplo clique: aplicar como textura no objeto selecionado", entry.rel)
                     } else {
                         entry.rel.clone()
                     };
@@ -664,25 +664,25 @@ impl State {
                 self.open_script(&rel);
             } else if rel.ends_with(&format!(".{SCENE_EXT}")) {
                 if self.playing() {
-                    self.info("Pare o jogo antes de abrir outra cena.");
+                    self.info(tr!("Stop the game before opening another scene.", "Pare o jogo antes de abrir outra cena."));
                 } else {
                     self.load_scene(&rel);
                 }
             } else {
                 let ext = crate::assets::ext_of(&rel);
                 if crate::assets::MODEL_EXTS.contains(&ext.as_str()) {
-                    // duplo clique em um modelo: coloca na cena
+                    // double-click on a model: place it in the scene
                     if self.playing() {
-                        self.info("Pare o jogo antes de adicionar objetos à cena.");
+                        self.info(tr!("Stop the game before adding objects to the scene.", "Pare o jogo antes de adicionar objetos à cena."));
                     } else {
                         self.add_model_to_scene(&rel);
                     }
                 } else if crate::assets::IMAGE_EXTS.contains(&ext.as_str()) {
-                    // duplo clique em uma imagem: aplica como textura no objeto selecionado
+                    // double-click on an image: apply it as a texture to the selected object
                     let target = self.selected.and_then(|id| self.scene.get_mut(id)).and_then(|e| e.mesh.as_mut());
                     match target {
                         Some(m) => m.texture = Some(rel.clone()),
-                        None => self.info("Selecione um objeto com malha para aplicar a textura."),
+                        None => self.info(tr!("Select an object with a mesh to apply the texture.", "Selecione um objeto com malha para aplicar a textura.")),
                     }
                 }
             }
@@ -697,12 +697,12 @@ impl State {
     // ------------------------------------------------------------------
     pub fn console(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            if ui.button("🗑 Limpar").clicked() {
+            if ui.button(tr!("🗑 Clear", "🗑 Limpar")).clicked() {
                 self.logs.clear();
             }
             let errors = self.logs.iter().filter(|l| l.level == LogLevel::Error).count();
             let warns = self.logs.iter().filter(|l| l.level == LogLevel::Warn).count();
-            ui.label(RichText::new(format!("{} mensagens", self.logs.len())).weak());
+            ui.label(RichText::new(tr!("{} messages", "{} mensagens", self.logs.len())).weak());
             if warns > 0 {
                 ui.colored_label(Color32::from_rgb(240, 200, 90), format!("⚠ {warns}"));
             }
@@ -724,22 +724,22 @@ impl State {
     }
 
     // ------------------------------------------------------------------
-    // Editor de scripts
+    // Script editor
     // ------------------------------------------------------------------
     pub fn script_editor(&mut self, ui: &mut egui::Ui) {
         let Some(path) = self.editor.path.clone() else {
             ui.centered_and_justified(|ui| {
-                ui.label(RichText::new("Abra um arquivo .cryo na aba Conteúdo (duplo clique)").weak());
+                ui.label(RichText::new(tr!("Open a .cryo file from the Content tab (double-click)", "Abra um arquivo .cryo na aba Conteúdo (duplo clique)")).weak());
             });
             return;
         };
         ui.horizontal(|ui| {
             ui.label(RichText::new(&path).strong());
-            if ui.add_enabled(self.editor.dirty(), egui::Button::new("💾 Salvar")).on_hover_text("Ctrl+S").clicked() {
+            if ui.add_enabled(self.editor.dirty(), egui::Button::new(tr!("💾 Save", "💾 Salvar"))).on_hover_text("Ctrl+S").clicked() {
                 self.save_script();
             }
             match &self.editor.error {
-                None => ui.colored_label(Color32::from_rgb(110, 210, 130), "✔ sem erros"),
+                None => ui.colored_label(Color32::from_rgb(110, 210, 130), tr!("✔ no errors", "✔ sem erros")),
                 Some(e) => ui.colored_label(Color32::from_rgb(240, 110, 110), format!("⛔ {e}")),
             };
         });
@@ -749,7 +749,7 @@ impl State {
         let error_line = self.editor.error.as_ref().map(|e| e.line);
         ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
             ui.horizontal_top(|ui| {
-                // numeração das linhas
+                // line numbers
                 let lines = self.editor.text.matches('\n').count() + 1;
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 0.0;

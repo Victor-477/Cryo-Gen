@@ -1,4 +1,4 @@
-//! Árvore sintática da linguagem Cryo.
+//! Syntax tree of the Cryo language.
 
 use std::collections::HashMap;
 
@@ -74,14 +74,14 @@ pub struct Stmt {
 
 #[derive(Debug, Clone)]
 pub enum StmtKind {
-    /// `let` (imutável) ou `var` (mutável)
+    /// `let` (immutable) or `var` (mutable)
     Decl { name: String, ty: Option<Type>, value: Expr, mutable: bool },
     Assign { target: Expr, op: Option<BinOp>, value: Expr },
     If { cond: Expr, then: Vec<Stmt>, otherwise: Option<Vec<Stmt>> },
     While { cond: Expr, body: Vec<Stmt> },
     /// `for i in a..b`
     ForRange { var: String, from: Expr, to: Expr, body: Vec<Stmt> },
-    /// `for item in lista`
+    /// `for item in list`
     ForEach { var: String, iter: Expr, body: Vec<Stmt> },
     Return(Option<Expr>),
     Break,
@@ -109,7 +109,7 @@ pub struct FieldDecl {
     pub name: String,
     pub ty: Option<Type>,
     pub default: Expr,
-    /// `prop` aparece no Inspector do editor; `var` é estado interno.
+    /// `prop` shows up in the editor's Inspector; `var` is internal state.
     pub is_prop: bool,
     pub line: usize,
 }
@@ -118,7 +118,7 @@ pub struct FieldDecl {
 pub struct Script {
     pub name: String,
     pub fields: Vec<FieldDecl>,
-    /// Eventos: `on start()`, `on update(dt)`, `on collide(outro)`, ...
+    /// Events: `on start()`, `on update(dt)`, `on collide(other)`, ...
     pub handlers: HashMap<String, Func>,
     pub funcs: HashMap<String, Func>,
 }

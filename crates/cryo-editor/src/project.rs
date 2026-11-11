@@ -1,4 +1,4 @@
-//! Projeto em disco: pastas, cena de exemplo e utilitários de arquivo.
+//! Project on disk: folders, example scene and file utilities.
 
 use crate::scene::*;
 use glam::Vec3;
@@ -6,25 +6,34 @@ use std::path::{Path, PathBuf};
 
 pub const SCENE_EXT: &str = "cryoscene";
 pub const SCRIPT_EXT: &str = "cryo";
-pub const NEW_SCRIPT: &str = include_str!("../template/NovoScript.cryo");
+pub const NEW_SCRIPT: &str = include_str!("../template/NewScript.cryo");
 
 const TEMPLATE_SCRIPTS: &[(&str, &str)] = &[
-    ("Jogador.cryo", include_str!("../template/scripts/Jogador.cryo")),
-    ("Moeda.cryo", include_str!("../template/scripts/Moeda.cryo")),
-    ("CameraSegue.cryo", include_str!("../template/scripts/CameraSegue.cryo")),
-    ("CameraOrbital.cryo", include_str!("../template/scripts/CameraOrbital.cryo")),
-    ("CameraLivre.cryo", include_str!("../template/scripts/CameraLivre.cryo")),
+    ("Player.cryo", include_str!("../template/scripts/Player.cryo")),
+    ("Cap.cryo", include_str!("../template/scripts/Cap.cryo")),
+    ("OrbitCamera.cryo", include_str!("../template/scripts/OrbitCamera.cryo")),
+    ("Coin.cryo", include_str!("../template/scripts/Coin.cryo")),
+    ("Shard.cryo", include_str!("../template/scripts/Shard.cryo")),
+    ("Checkpoint.cryo", include_str!("../template/scripts/Checkpoint.cryo")),
+    ("MovingPlatform.cryo", include_str!("../template/scripts/MovingPlatform.cryo")),
+    ("BouncePad.cryo", include_str!("../template/scripts/BouncePad.cryo")),
+    ("Spinner.cryo", include_str!("../template/scripts/Spinner.cryo")),
+    ("Spiker.cryo", include_str!("../template/scripts/Spiker.cryo")),
+    ("Hopper.cryo", include_str!("../template/scripts/Hopper.cryo")),
+    ("HintZone.cryo", include_str!("../template/scripts/HintZone.cryo")),
+    ("FollowCamera.cryo", include_str!("../template/scripts/FollowCamera.cryo")),
+    ("FreeCamera.cryo", include_str!("../template/scripts/FreeCamera.cryo")),
 ];
 
-/// Modelo de exemplo (um cristal de 8 faces) para demonstrar a importação de .obj.
-const CRYSTAL_OBJ: &str = "# Cristal de exemplo da Cryo Engine\n\
+/// Example model (an 8-faced crystal) to demonstrate .obj import.
+const CRYSTAL_OBJ: &str = "# Cryo Engine example crystal\n\
 v 0 1 0\nv 0 -1 0\nv 0.5 0 0\nv 0 0 0.5\nv -0.5 0 0\nv 0 0 -0.5\n\
 f 1 4 3\nf 1 5 4\nf 1 6 5\nf 1 3 6\nf 2 3 4\nf 2 4 5\nf 2 5 6\nf 2 6 3\n";
 
-/// Garante que a pasta do projeto existe. Se estiver vazia, cria o jogo de exemplo.
-/// Devolve o caminho (relativo) da cena a abrir.
+/// Makes sure the project folder exists. If it is empty, creates the example game.
+/// Returns the (relative) path of the scene to open.
 pub fn ensure_project(dir: &Path) -> Result<String, String> {
-    let err = |e: std::io::Error| format!("não foi possível preparar o projeto em {}: {e}", dir.display());
+    let err = |e: std::io::Error| format!("could not prepare the project at {}: {e}", dir.display());
     std::fs::create_dir_all(dir.join("scripts")).map_err(err)?;
     std::fs::create_dir_all(dir.join("scenes")).map_err(err)?;
 
@@ -37,33 +46,50 @@ pub fn ensure_project(dir: &Path) -> Result<String, String> {
             std::fs::write(p, src).map_err(err)?;
         }
     }
-    // recursos de exemplo: sons sintetizados, textura xadrez e um modelo .obj
+    // example assets: synthesised sounds, checker texture and an .obj model
     use crate::audio::synth_wav;
     use std::f32::consts::TAU;
     for sub in ["sounds", "textures", "models"] {
         std::fs::create_dir_all(dir.join(sub)).map_err(err)?;
     }
-    let coin = synth_wav(0.35, |t| {
-        let f = if t < 0.08 { 988.0 } else { 1319.0 };
-        (t * f * TAU).sin() * (-t * 9.0).exp() * 0.6
-    });
-    std::fs::write(dir.join("sounds/moeda.wav"), coin).map_err(err)?;
-    let jump = synth_wav(0.18, |t| (TAU * (300.0 * t + 900.0 * t * t)).sin() * (1.0 - t / 0.18) * 0.5);
-    std::fs::write(dir.join("sounds/pulo.wav"), jump).map_err(err)?;
+    let tone = |f: f32, t: f32| (t * f * TAU).sin();
+    let sweep = |f0: f32, f1: f32, len: f32, t: f32| (TAU * (f0 * t + (f1 - f0) * t * t / (2.0 * len))).sin();
+    let sounds: [(&str, Vec<u8>); 10] = [
+        ("coin", synth_wav(0.35, |t| tone(if t < 0.08 { 988.0 } else { 1319.0 }, t) * (-t * 9.0).exp() * 0.6)),
+        ("jump", synth_wav(0.18, |t| sweep(300.0, 900.0, 0.18, t) * (1.0 - t / 0.18) * 0.5)),
+        ("throw", synth_wav(0.16, |t| sweep(900.0, 350.0, 0.16, t) * (1.0 - t / 0.16) * 0.4)),
+        ("bounce", synth_wav(0.3, |t| sweep(220.0, 880.0, 0.3, t) * (-t * 6.0).exp() * 0.6)),
+        ("stomp", synth_wav(0.2, |t| sweep(400.0, 90.0, 0.2, t) * (-t * 10.0).exp() * 0.7)),
+        ("pound", synth_wav(0.3, |t| sweep(160.0, 40.0, 0.3, t) * (-t * 8.0).exp() * 0.9)),
+        ("hurt", synth_wav(0.3, |t| (tone(180.0, t) + tone(187.0, t)) * (-t * 7.0).exp() * 0.4)),
+        ("capture", synth_wav(0.45, |t| tone(440.0 + 660.0 * (t * 6.0).floor().min(2.0), t) * (-t * 4.0).exp() * 0.5)),
+        (
+            "shard",
+            synth_wav(0.9, |t| {
+                let notes = [523.0, 659.0, 784.0, 1047.0];
+                let i = ((t / 0.12) as usize).min(3);
+                tone(notes[i], t) * (-(t - i as f32 * 0.12).max(0.0) * 3.0).exp() * 0.5
+            }),
+        ),
+        ("checkpoint", synth_wav(0.4, |t| tone(if t < 0.15 { 660.0 } else { 880.0 }, t) * (-t * 5.0).exp() * 0.5)),
+    ];
+    for (name, wav) in sounds {
+        std::fs::write(dir.join(format!("sounds/{name}.wav")), wav).map_err(err)?;
+    }
     let checker = image::RgbaImage::from_fn(256, 256, |x, y| {
         let on = ((x / 32) + (y / 32)) % 2 == 0;
-        let v = if on { 235 } else { 150 };
+        let v = if on { 240 } else { 205 };
         image::Rgba([v, v, v, 255])
     });
-    checker.save(dir.join("textures/xadrez.png")).map_err(|e| format!("textura de exemplo: {e}"))?;
-    std::fs::write(dir.join("models/cristal.obj"), CRYSTAL_OBJ).map_err(err)?;
+    checker.save(dir.join("textures/checker.png")).map_err(|e| format!("example texture: {e}"))?;
+    std::fs::write(dir.join("models/crystal.obj"), CRYSTAL_OBJ).map_err(err)?;
 
-    let rel = "scenes/Principal.cryoscene".to_string();
+    let rel = "scenes/Platformer.cryoscene".to_string();
     std::fs::write(dir.join(&rel), template_scene().to_json()).map_err(err)?;
     Ok(rel)
 }
 
-/// Lista (recursivamente) os arquivos com a extensão dada, com caminho relativo ao projeto.
+/// Lists (recursively) the files with the given extension, relative to the project.
 pub fn list_files(dir: &Path, ext: &str) -> Vec<String> {
     fn walk(base: &Path, dir: &Path, ext: &str, out: &mut Vec<String>, depth: usize) {
         if depth > 6 {
@@ -108,7 +134,7 @@ pub fn list_dir(project: &Path, rel: &str) -> Vec<DirEntry> {
     out
 }
 
-/// Transforma um texto qualquer em um identificador válido para nome de script.
+/// Turns any text into a valid identifier for a script name.
 pub fn script_ident(name: &str) -> String {
     let mut out = String::new();
     let mut upper = true;
@@ -130,7 +156,7 @@ pub fn script_ident(name: &str) -> String {
     out
 }
 
-/// Cria um script novo (sem sobrescrever) e devolve o caminho relativo.
+/// Creates a new script (never overwriting) and returns its relative path.
 pub fn create_script(project: &Path, base: &str) -> Result<String, String> {
     let ident = script_ident(base);
     let mut name = ident.clone();
@@ -144,132 +170,328 @@ pub fn create_script(project: &Path, base: &str) -> Result<String, String> {
         i += 1;
     };
     std::fs::create_dir_all(project.join("scripts")).map_err(|e| e.to_string())?;
-    std::fs::write(&path, NEW_SCRIPT.replace("NOME", &name)).map_err(|e| e.to_string())?;
+    std::fs::write(&path, NEW_SCRIPT.replace("NAME", &name)).map_err(|e| e.to_string())?;
     Ok(format!("scripts/{name}.{SCRIPT_EXT}"))
 }
 
-/// Jogo de exemplo: colete as moedas.
+/// Example game: "Frostpeak Isles", a 3D platformer.
+///
+/// Five Frost Shards are spread over a chain of floating islands. Each stretch teaches one
+/// move: jumping, moving platforms, enemies, capturing a Hopper, wall jumps, the cap bounce
+/// and bounce pads. All gameplay lives in the `.cryo` scripts; this function only places things.
 pub fn template_scene() -> Scene {
     let mut s = Scene::empty();
+    s.gravity = -24.0;
+    s.ambient = [0.42, 0.46, 0.55];
+    s.sky_top = [0.20, 0.42, 0.78];
+    s.sky_horizon = [0.78, 0.88, 0.97];
 
-    let cam = s.add_camera();
-    {
-        let e = s.get_mut(cam).unwrap();
-        e.position = Vec3::new(0.0, 6.0, 11.0);
-        e.rotation = Vec3::new(-25.0, 0.0, 0.0);
-        e.script = Some(ScriptRef { path: "scripts/CameraSegue.cryo".into(), ..Default::default() });
+    fn script(path: &str) -> Option<ScriptRef> {
+        Some(ScriptRef { path: format!("scripts/{path}.cryo"), ..Default::default() })
     }
-
-    s.add_light(LightKind::Directional);
-
-    let lamp = s.add_light(LightKind::Point);
-    {
-        let e = s.get_mut(lamp).unwrap();
-        e.position = Vec3::new(-5.0, 2.5, -4.0);
-        let l = e.light.as_mut().unwrap();
-        l.color = [0.35, 0.65, 1.0];
-        l.intensity = 2.5;
-        l.range = 9.0;
+    fn script_with(path: &str, props: &[(&str, PropValue)]) -> Option<ScriptRef> {
+        let mut r = ScriptRef { path: format!("scripts/{path}.cryo"), ..Default::default() };
+        for (k, v) in props {
+            r.props.insert(k.to_string(), v.clone());
+        }
+        Some(r)
     }
-
-    let solid = |s: &mut Scene, name: &str, pos: Vec3, scale: Vec3, color: [f32; 3]| {
-        let id = s.add_mesh(Shape::Cube);
+    /// A mesh entity; returns its id.
+    fn mesh(s: &mut Scene, name: &str, shape: Shape, pos: Vec3, scale: Vec3, color: [f32; 3]) -> u64 {
+        let id = s.add_mesh(shape);
         let e = s.get_mut(id).unwrap();
         e.name = name.into();
         e.position = pos;
         e.scale = scale;
         e.mesh.as_mut().unwrap().color = color;
-        e.physics = Some(Physics::new(BodyKind::Static, ColliderShape::Box));
         id
-    };
-    let ground = solid(&mut s, "Chão", Vec3::new(0.0, -0.25, 0.0), Vec3::new(24.0, 0.5, 24.0), [0.36, 0.50, 0.42]);
-    s.get_mut(ground).unwrap().mesh.as_mut().unwrap().texture = Some("textures/xadrez.png".into());
-    let ramp = solid(&mut s, "Rampa", Vec3::new(1.2, 0.0, -2.0), Vec3::new(4.0, 0.4, 3.0), [0.58, 0.48, 0.40]);
-    s.get_mut(ramp).unwrap().rotation = Vec3::new(0.0, 0.0, 20.0);
-    solid(&mut s, "Plataforma A", Vec3::new(4.0, 0.5, -2.0), Vec3::new(3.0, 1.0, 3.0), [0.55, 0.45, 0.38]);
-    solid(&mut s, "Plataforma B", Vec3::new(7.5, 1.25, -2.0), Vec3::new(3.0, 2.5, 3.0), [0.60, 0.50, 0.42]);
-    solid(&mut s, "Muro", Vec3::new(-5.0, 1.0, -6.0), Vec3::new(6.0, 2.0, 0.5), [0.50, 0.52, 0.58]);
+    }
+    /// A static, solid box.
+    fn block(s: &mut Scene, name: &str, pos: Vec3, scale: Vec3, color: [f32; 3]) -> u64 {
+        let id = mesh(s, name, Shape::Cube, pos, scale, color);
+        s.get_mut(id).unwrap().physics = Some(Physics::new(BodyKind::Static, ColliderShape::Box));
+        id
+    }
+    fn child(s: &mut Scene, parent: u64, id: u64) -> u64 {
+        s.get_mut(id).unwrap().parent = Some(parent);
+        id
+    }
+    fn trigger(kind: BodyKind, shape: ColliderShape) -> Option<Physics> {
+        let mut p = Physics::new(kind, shape);
+        p.is_trigger = true;
+        p.use_gravity = false;
+        Some(p)
+    }
+    let v = Vec3::new;
+    let grass = [0.42, 0.72, 0.45];
+    let stone = [0.62, 0.64, 0.70];
+    let wood = [0.72, 0.55, 0.38];
+    let snow = [0.92, 0.95, 1.0];
 
-    let player = s.add_mesh(Shape::Cube);
+    // ---------------------------------------------------------------- camera and lights
+    let cam = s.add_camera();
+    {
+        let e = s.get_mut(cam).unwrap();
+        e.position = v(0.0, 5.0, 13.0);
+        e.rotation = v(-18.0, 0.0, 0.0);
+        e.camera.as_mut().unwrap().fov = 62.0;
+        e.script = script("OrbitCamera");
+    }
+    let sun = s.add_light(LightKind::Directional);
+    {
+        let e = s.get_mut(sun).unwrap();
+        e.name = "Sun".into();
+        e.position = v(10.0, 20.0, 10.0);
+        e.rotation = v(-52.0, 40.0, 0.0);
+        e.light.as_mut().unwrap().intensity = 1.15;
+    }
+
+    // ---------------------------------------------------------------- the hero
+    // Root: collider + script, no mesh. `KipModel` cancels the root's scale and turns to face
+    // the movement direction, so the collider box itself never rotates.
+    let player = s.add_empty("Player");
     {
         let e = s.get_mut(player).unwrap();
-        e.name = "Jogador".into();
-        e.position = Vec3::new(0.0, 1.0, 3.0);
-        let m = e.mesh.as_mut().unwrap();
-        m.color = [0.20, 0.55, 0.95];
-        m.shininess = 0.6;
+        e.position = v(0.0, 0.85, 4.0);
+        e.scale = v(0.8, 1.6, 0.8);
         let mut p = Physics::new(BodyKind::Dynamic, ColliderShape::Box);
         p.friction = 0.0;
         e.physics = Some(p);
-        e.script = Some(ScriptRef { path: "scripts/Jogador.cryo".into(), ..Default::default() });
+        e.script = script("Player");
     }
+    let model = s.add_empty("KipModel");
+    child(&mut s, player, model);
+    s.get_mut(model).unwrap().scale = v(1.25, 0.625, 1.25);
+    let blue = [0.22, 0.55, 0.98];
+    let red = [0.92, 0.22, 0.25];
+    let id = mesh(&mut s, "KipBody", Shape::Capsule, v(0.0, -0.25, 0.0), v(0.72, 0.55, 0.72), blue);
+    child(&mut s, model, id);
+    let id = mesh(&mut s, "KipHead", Shape::Sphere, v(0.0, 0.42, 0.0), Vec3::splat(0.62), [1.0, 0.86, 0.72]);
+    child(&mut s, model, id);
+    for x in [-0.13, 0.13] {
+        let id = mesh(&mut s, "KipEye", Shape::Sphere, v(x, 0.47, -0.27), Vec3::splat(0.11), [0.08, 0.08, 0.1]);
+        child(&mut s, model, id);
+    }
+    let hat = s.add_empty("KipHat");
+    child(&mut s, model, hat);
+    s.get_mut(hat).unwrap().position = v(0.0, 0.70, 0.0);
+    let id = mesh(&mut s, "HatBrim", Shape::Cylinder, v(0.0, 0.0, 0.0), v(0.80, 0.06, 0.80), red);
+    child(&mut s, hat, id);
+    let id = mesh(&mut s, "HatTop", Shape::Cylinder, v(0.0, 0.15, 0.0), v(0.50, 0.28, 0.50), red);
+    child(&mut s, hat, id);
 
-    let ball = s.add_mesh(Shape::Sphere);
+    // The thrown cap is a separate entity (hidden while Kip wears his hat).
+    let cap = s.add_empty("Cap");
     {
-        let e = s.get_mut(ball).unwrap();
-        e.name = "Bola".into();
-        e.position = Vec3::new(-3.0, 4.0, 1.0);
-        let m = e.mesh.as_mut().unwrap();
-        m.color = [0.92, 0.30, 0.25];
-        m.shininess = 0.8;
-        let mut p = Physics::new(BodyKind::Dynamic, ColliderShape::Sphere);
-        p.bounciness = 0.75;
-        e.physics = Some(p);
+        let e = s.get_mut(cap).unwrap();
+        e.position = v(0.0, -50.0, 0.0);
+        e.scale = v(1.4, 0.7, 1.4);
+        e.physics = trigger(BodyKind::Dynamic, ColliderShape::Sphere);
+        e.script = script("Cap");
     }
+    let id = mesh(&mut s, "CapBrim", Shape::Cylinder, v(0.0, 0.0, 0.0), v(0.64, 0.1, 0.64), red);
+    child(&mut s, cap, id);
+    let id = mesh(&mut s, "CapTop", Shape::Cylinder, v(0.0, 0.25, 0.0), v(0.4, 0.45, 0.4), red);
+    child(&mut s, cap, id);
 
-    // modelo importado (.obj) com colisor
-    let crystal = s.add_mesh(Shape::Cube);
-    {
-        let e = s.get_mut(crystal).unwrap();
-        e.name = "Cristal".into();
-        e.position = Vec3::new(-6.5, 1.5, -1.5);
-        e.scale = Vec3::splat(1.5);
-        let m = e.mesh.as_mut().unwrap();
-        m.model = Some("models/cristal.obj".into());
-        m.model_bounds = Some(([0.0; 3], [0.5, 1.0, 0.5]));
-        m.color = [0.35, 0.95, 1.0];
-        m.shininess = 1.0;
-        e.physics = Some(Physics::new(BodyKind::Static, ColliderShape::Box));
-    }
-
-    let spot = s.add_light(LightKind::Spot);
-    {
-        let e = s.get_mut(spot).unwrap();
-        e.position = Vec3::new(7.5, 7.0, -2.0);
-        let l = e.light.as_mut().unwrap();
-        l.color = [1.0, 0.85, 0.5];
-        l.intensity = 3.0;
-        l.angle = 28.0;
-    }
-
-    let coins = s.add_empty("Moedas");
-    let spots = [
-        Vec3::new(-3.0, 0.8, -2.0),
-        Vec3::new(0.0, 0.8, -4.0),
-        Vec3::new(4.0, 1.8, -2.0),
-        Vec3::new(7.5, 3.3, -2.0),
-        Vec3::new(-6.0, 0.8, 4.0),
-    ];
-    for p in spots {
-        let id = s.add_mesh(Shape::Cylinder);
+    // ---------------------------------------------------------------- reusable pieces
+    let coin = |s: &mut Scene, parent: u64, pos: Vec3| {
+        let id = mesh(s, "Coin", Shape::Cylinder, pos, v(0.6, 0.07, 0.6), [1.0, 0.82, 0.18]);
         let e = s.get_mut(id).unwrap();
-        e.name = "Moeda".into();
-        e.parent = Some(coins);
-        e.position = p;
-        e.rotation = Vec3::new(90.0, 0.0, 0.0);
-        e.scale = Vec3::new(0.7, 0.08, 0.7);
+        e.parent = Some(parent);
+        e.rotation = v(90.0, 0.0, 0.0);
+        e.mesh.as_mut().unwrap().shininess = 1.0;
+        e.physics = trigger(BodyKind::Static, ColliderShape::Sphere);
+        e.script = script("Coin");
+    };
+    let shard = |s: &mut Scene, n: usize, pos: Vec3| {
+        let id = mesh(s, &format!("Frost Shard {n}"), Shape::Cube, pos, Vec3::splat(0.9), [0.45, 0.95, 1.0]);
+        let e = s.get_mut(id).unwrap();
         let m = e.mesh.as_mut().unwrap();
-        m.color = [1.0, 0.80, 0.15];
+        m.model = Some("models/crystal.obj".into());
+        m.model_bounds = Some(([0.0; 3], [0.5, 1.0, 0.5]));
         m.shininess = 1.0;
-        let mut ph = Physics::new(BodyKind::Static, ColliderShape::Sphere);
-        ph.is_trigger = true;
-        e.physics = Some(ph);
-        e.script = Some(ScriptRef { path: "scripts/Moeda.cryo".into(), ..Default::default() });
+        e.physics = trigger(BodyKind::Static, ColliderShape::Sphere);
+        e.script = script("Shard");
+        // a soft glow so shards can be spotted from far away
+        let l = s.add_light(LightKind::Point);
+        let e = s.get_mut(l).unwrap();
+        e.name = "Glow".into();
+        e.parent = Some(id);
+        e.position = Vec3::ZERO;
+        let light = e.light.as_mut().unwrap();
+        light.color = [0.4, 0.9, 1.0];
+        light.intensity = 2.0;
+        light.range = 6.0;
+    };
+    let checkpoint = |s: &mut Scene, pos: Vec3| {
+        // a flat pad the player walks over; it turns green once activated
+        let id = mesh(s, "Checkpoint", Shape::Cylinder, pos + v(0.0, 0.06, 0.0), v(2.4, 0.12, 2.4), [0.95, 0.35, 0.35]);
+        let e = s.get_mut(id).unwrap();
+        e.physics = trigger(BodyKind::Static, ColliderShape::Box);
+        e.script = script("Checkpoint");
+        let pole = mesh(s, "Pole", Shape::Cylinder, v(0.4, 10.0, 0.4), v(0.05, 20.0, 0.05), [0.9, 0.9, 0.95]);
+        s.get_mut(pole).unwrap().parent = Some(id);
+        let flag = mesh(s, "Flag", Shape::Cube, v(0.26, 17.0, 0.4), v(0.26, 5.0, 0.02), [0.3, 0.7, 1.0]);
+        s.get_mut(flag).unwrap().parent = Some(id);
+    };
+    let hint = |s: &mut Scene, pos: Vec3, size: Vec3, text: &str| {
+        let id = s.add_empty("Hint");
+        let e = s.get_mut(id).unwrap();
+        e.position = pos;
+        e.scale = size;
+        e.physics = trigger(BodyKind::Static, ColliderShape::Box);
+        e.script = script_with("HintZone", &[("message", PropValue::Text(text.into()))]);
+    };
+    let tree = |s: &mut Scene, parent: u64, pos: Vec3, h: f32| {
+        let t = mesh(s, "Trunk", Shape::Cylinder, pos + v(0.0, h * 0.2, 0.0), v(0.35, h * 0.4, 0.35), [0.45, 0.32, 0.22]);
+        s.get_mut(t).unwrap().parent = Some(parent);
+        let c = mesh(s, "Pine", Shape::Cone, pos + v(0.0, h * 0.7, 0.0), v(1.6, h * 0.8, 1.6), [0.20, 0.52, 0.36]);
+        s.get_mut(c).unwrap().parent = Some(parent);
+    };
+
+    let coins = s.add_empty("Coins");
+    let scenery = s.add_empty("Scenery");
+
+    // sea far below (falling into it sends Kip back to the last checkpoint)
+    let sea = mesh(&mut s, "Sea", Shape::Plane, v(0.0, -7.0, -45.0), v(500.0, 1.0, 500.0), [0.16, 0.42, 0.72]);
+    {
+        let m = s.get_mut(sea).unwrap().mesh.as_mut().unwrap();
+        m.shininess = 1.0;
+        m.cast_shadow = false;
     }
+
+    // ---------------------------------------------------------------- 1. Start Isle
+    let g = block(&mut s, "Start Isle", v(0.0, -1.0, 0.0), v(22.0, 2.0, 22.0), grass);
+    s.get_mut(g).unwrap().mesh.as_mut().unwrap().texture = Some("textures/checker.png".into());
+    checkpoint(&mut s, v(3.0, 0.0, 6.0));
+    for i in 0..5 {
+        coin(&mut s, coins, v(0.0, 0.8, 1.0 - i as f32 * 2.0));
+    }
+    tree(&mut s, scenery, v(8.0, 0.0, 7.0), 3.5);
+    tree(&mut s, scenery, v(-8.5, 0.0, 8.0), 4.5);
+    tree(&mut s, scenery, v(9.0, 0.0, -7.0), 3.0);
+    // a step and a tall pillar: reach the top with a backflip or a triple jump
+    block(&mut s, "Step", v(-7.0, 0.8, -2.5), v(3.0, 1.6, 3.0), stone);
+    block(&mut s, "Pillar", v(-7.0, 1.75, -6.5), v(3.0, 3.5, 3.0), stone);
+    shard(&mut s, 1, v(-7.0, 4.9, -6.5));
+    hint(
+        &mut s,
+        v(-7.0, 1.0, 0.5),
+        v(5.0, 2.0, 3.0),
+        "Shift + Space: backflip.  Three jumps in a row while running: triple jump.",
+    );
+    hint(
+        &mut s,
+        v(0.0, 1.0, -9.0),
+        v(8.0, 2.0, 3.0),
+        "Shift + Space while running: long jump.  Shift in the air: ground pound.",
+    );
+
+    // ---------------------------------------------------------------- 2. stepping stones
+    block(&mut s, "Stone 1", v(0.0, 0.5, -15.5), v(4.0, 1.0, 4.0), wood);
+    block(&mut s, "Stone 2", v(3.5, 1.5, -21.0), v(4.0, 1.0, 4.0), wood);
+    block(&mut s, "Stone 3", v(0.0, 2.5, -26.5), v(4.0, 1.0, 4.0), wood);
+    coin(&mut s, coins, v(0.0, 1.8, -15.5));
+    coin(&mut s, coins, v(3.5, 2.8, -21.0));
+    coin(&mut s, coins, v(0.0, 3.8, -26.5));
+
+    // ---------------------------------------------------------------- 3. moving platform
+    let p = block(&mut s, "Moving Platform", v(0.0, 2.75, -32.0), v(4.0, 0.5, 4.0), [0.95, 0.75, 0.30]);
+    s.get_mut(p).unwrap().script = script("MovingPlatform");
+    for i in 0..3 {
+        coin(&mut s, coins, v(0.0, 4.6, -34.0 - i as f32 * 2.5));
+    }
+
+    // ---------------------------------------------------------------- 4. Mid Isle
+    let g = block(&mut s, "Mid Isle", v(0.0, 1.5, -54.0), v(24.0, 3.0, 20.0), grass);
+    s.get_mut(g).unwrap().mesh.as_mut().unwrap().texture = Some("textures/checker.png".into());
+    checkpoint(&mut s, v(-2.5, 3.0, -46.0));
+    tree(&mut s, scenery, v(10.5, 3.0, -46.0), 4.0);
+    tree(&mut s, scenery, v(-10.5, 3.0, -62.5), 3.5);
+    for x in [-3.0, 3.0] {
+        let id = mesh(&mut s, "Spiker", Shape::Sphere, v(x, 3.6, -50.0 - x), Vec3::splat(1.1), [0.75, 0.25, 0.55]);
+        let e = s.get_mut(id).unwrap();
+        let mut p = Physics::new(BodyKind::Dynamic, ColliderShape::Box);
+        p.friction = 0.0;
+        e.physics = Some(p);
+        e.script = script("Spiker");
+        let spike = mesh(&mut s, "Spike", Shape::Cone, v(0.0, 0.55, 0.0), v(0.5, 0.5, 0.5), [0.95, 0.9, 0.95]);
+        child(&mut s, id, spike);
+    }
+    hint(
+        &mut s,
+        v(0.0, 4.0, -47.0),
+        v(10.0, 2.0, 2.0),
+        "Spikers: jump on their heads or hit them with your cap (F).",
+    );
+    // the Hopper and the tower only it can jump onto
+    let hopper = mesh(&mut s, "Hopper", Shape::Sphere, v(5.0, 3.7, -53.0), v(1.3, 1.2, 1.3), [0.45, 0.85, 0.5]);
+    {
+        let e = s.get_mut(hopper).unwrap();
+        let mut p = Physics::new(BodyKind::Dynamic, ColliderShape::Box);
+        p.friction = 1.0;
+        e.physics = Some(p);
+        e.script = script("Hopper");
+    }
+    for x in [-0.2, 0.2] {
+        let eye = mesh(&mut s, "HopperEye", Shape::Sphere, v(x, 0.25, -0.42), Vec3::splat(0.16), [0.05, 0.05, 0.08]);
+        child(&mut s, hopper, eye);
+    }
+    block(&mut s, "Tower", v(8.0, 6.25, -60.0), v(6.0, 6.5, 6.0), stone);
+    shard(&mut s, 2, v(8.0, 10.9, -60.0));
+    hint(
+        &mut s,
+        v(5.0, 4.0, -53.0),
+        v(7.0, 2.0, 5.0),
+        "Throw your cap (F) at the Hopper to capture it. Its jump reaches the tower!",
+    );
+    // wall-jump shaft
+    block(&mut s, "Wall A", v(-10.0, 8.0, -58.0), v(1.0, 10.0, 5.0), stone);
+    block(&mut s, "Wall B", v(-6.0, 8.0, -58.0), v(1.0, 10.0, 5.0), stone);
+    for i in 0..3 {
+        coin(&mut s, coins, v(-8.0, 5.0 + i as f32 * 1.6, -58.0));
+    }
+    shard(&mut s, 3, v(-8.0, 10.5, -58.0));
+    hint(
+        &mut s,
+        v(-8.0, 4.0, -54.0),
+        v(4.0, 2.0, 2.5),
+        "Jump against a wall, then press Space again to wall-jump. Climb between the walls!",
+    );
+
+    // ---------------------------------------------------------------- 5. cap gap
+    hint(
+        &mut s,
+        v(0.0, 4.0, -62.5),
+        v(8.0, 2.0, 2.5),
+        "Too far to jump: throw the cap, keep F held, then jump onto it to bounce across.",
+    );
+    for i in 0..4 {
+        let t = i as f32;
+        coin(&mut s, coins, v(0.0, 4.2 + (1.5 - (t - 1.5).abs()) * 0.6, -66.0 - t * 2.2));
+    }
+    let g = block(&mut s, "Cap Isle", v(0.0, 1.5, -80.5), v(14.0, 3.0, 13.0), snow);
+    s.get_mut(g).unwrap().mesh.as_mut().unwrap().texture = Some("textures/checker.png".into());
+    checkpoint(&mut s, v(-4.0, 3.0, -76.5));
+    shard(&mut s, 4, v(-3.0, 4.3, -82.0));
+    tree(&mut s, scenery, v(-5.5, 3.0, -85.0), 3.5);
+
+    // ---------------------------------------------------------------- 6. the summit
+    let pad = block(&mut s, "Bounce Pad", v(4.0, 3.15, -84.0), v(2.4, 0.3, 2.4), [0.98, 0.45, 0.75]);
+    s.get_mut(pad).unwrap().script = script("BouncePad");
+    hint(&mut s, v(4.0, 4.0, -81.5), v(4.0, 2.0, 2.0), "Bounce pads launch you high. Aim for the summit!");
+    block(&mut s, "Summit", v(4.0, 10.5, -93.0), v(9.0, 1.0, 9.0), snow);
+    let bar = block(&mut s, "Spinner", v(4.0, 11.4, -93.0), v(8.0, 0.6, 0.6), [0.95, 0.35, 0.3]);
+    s.get_mut(bar).unwrap().script = script("Spinner");
+    block(&mut s, "Spinner Hub", v(4.0, 11.4, -93.0), v(0.9, 0.8, 0.9), stone);
+    shard(&mut s, 5, v(4.0, 12.6, -96.2));
+    tree(&mut s, scenery, v(7.5, 11.0, -96.5), 3.0);
+
     s
 }
 
-/// Pasta de destino para cada tipo de arquivo importado.
+/// Destination folder for each kind of imported file.
 pub fn import_folder(ext: &str) -> Option<&'static str> {
     use crate::assets::{IMAGE_EXTS, MODEL_EXTS, SOUND_EXTS};
     if MODEL_EXTS.contains(&ext) {
@@ -285,7 +507,7 @@ pub fn import_folder(ext: &str) -> Option<&'static str> {
     }
 }
 
-/// Arquivos que um modelo referencia (materiais, buffers, texturas), relativos à pasta dele.
+/// Files a model references (materials, buffers, textures), relative to its folder.
 fn model_dependencies(src: &Path) -> Vec<String> {
     let ext = crate::assets::ext_of(&src.to_string_lossy());
     let dir = src.parent().unwrap_or(Path::new("."));
@@ -329,25 +551,25 @@ fn model_dependencies(src: &Path) -> Vec<String> {
     out
 }
 
-/// Copia um arquivo externo (e suas dependências) para dentro do projeto.
-/// Devolve o caminho relativo do arquivo importado.
+/// Copies an external file (and its dependencies) into the project.
+/// Returns the relative path of the imported file.
 pub fn import_file(project: &Path, src: &Path) -> Result<String, String> {
-    let name = src.file_name().and_then(|n| n.to_str()).ok_or("nome de arquivo inválido")?.to_string();
+    let name = src.file_name().and_then(|n| n.to_str()).ok_or("invalid file name")?.to_string();
     let ext = crate::assets::ext_of(&name);
     let folder = import_folder(&ext).ok_or_else(|| {
-        format!("`{name}`: tipo não suportado (modelos .obj/.gltf/.glb, imagens .png/.jpg, sons .wav/.ogg/.mp3)")
+        format!("`{name}`: unsupported type (models .obj/.gltf/.glb, images .png/.jpg, sounds .wav/.ogg/.mp3)")
     })?;
     let dest_dir = project.join(folder);
     std::fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
     let dest = dest_dir.join(&name);
-    // já está dentro do projeto? então não há o que copiar
+    // already inside the project? then there is nothing to copy
     let same = std::fs::canonicalize(src).ok() == std::fs::canonicalize(&dest).ok() && dest.exists();
     if !same {
-        std::fs::copy(src, &dest).map_err(|e| format!("não foi possível copiar `{name}`: {e}"))?;
+        std::fs::copy(src, &dest).map_err(|e| format!("could not copy `{name}`: {e}"))?;
         let src_dir = src.parent().unwrap_or(Path::new("."));
         for dep in model_dependencies(src) {
             let rel = Path::new(&dep);
-            // só dependências dentro da pasta do modelo (nada de `..` ou caminhos absolutos)
+            // only dependencies inside the model's folder (no `..` or absolute paths)
             if rel.is_absolute() || rel.components().any(|c| !matches!(c, std::path::Component::Normal(_))) {
                 continue;
             }
@@ -381,7 +603,7 @@ fn copy_dir(from: &Path, to: &Path, depth: usize) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Configuração gravada junto ao jogo exportado.
+/// Configuration written alongside the exported game.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct GameConfig {
     pub title: String,
@@ -390,20 +612,20 @@ pub struct GameConfig {
 
 pub const GAME_CONFIG: &str = "cryo_game.json";
 
-/// Exporta o jogo para `dest`: uma cópia do executável mais a pasta `game/` com o projeto.
-/// O executável, ao encontrar essa pasta ao lado, abre direto no jogo (sem o editor).
+/// Exports the game to `dest`: a copy of the executable plus the `game/` folder with the project.
+/// The executable, on finding that folder next to it, opens straight into the game (no editor).
 pub fn export_game(project: &Path, scene: &str, title: &str, dest: &Path) -> Result<PathBuf, String> {
-    let io = |e: std::io::Error| format!("falha ao exportar: {e}");
+    let io = |e: std::io::Error| format!("export failed: {e}");
     let exe = std::env::current_exe().map_err(io)?;
     let safe: String =
         title.chars().map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
-    let safe = if safe.is_empty() { "Jogo".to_string() } else { safe };
+    let safe = if safe.is_empty() { "Game".to_string() } else { safe };
     if dest.starts_with(project) {
-        return Err("escolha uma pasta fora do projeto para exportar".into());
+        return Err("choose a folder outside the project to export to".into());
     }
 
     let (root, exe_dir, game_dir) = if cfg!(target_os = "macos") {
-        // pacote .app do macOS
+        // macOS .app bundle
         let app = dest.join(format!("{safe}.app"));
         let contents = app.join("Contents");
         (app, contents.join("MacOS"), contents.join("Resources").join("game"))
@@ -430,7 +652,7 @@ pub fn export_game(project: &Path, scene: &str, title: &str, dest: &Path) -> Res
     Ok(root)
 }
 
-/// Se este executável foi exportado como jogo, devolve a pasta `game/` embutida.
+/// If this executable was exported as a game, returns the embedded `game/` folder.
 pub fn bundled_game() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
@@ -448,35 +670,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn importa_obj_com_material_e_textura() {
+    fn imports_obj_with_material_and_texture() {
         let base = std::env::temp_dir().join(format!("cryo_import_{}", std::process::id()));
         std::fs::remove_dir_all(&base).ok();
-        let ext = base.join("fora/tex");
+        let ext = base.join("outside/tex");
         std::fs::create_dir_all(&ext).unwrap();
-        std::fs::write(base.join("fora/casa.obj"), "mtllib casa.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n").unwrap();
-        std::fs::write(base.join("fora/casa.mtl"), "newmtl a\nmap_Kd tex/parede.png\n").unwrap();
-        std::fs::write(ext.join("parede.png"), "x").unwrap();
+        std::fs::write(base.join("outside/house.obj"), "mtllib house.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n").unwrap();
+        std::fs::write(base.join("outside/house.mtl"), "newmtl a\nmap_Kd tex/wall.png\n").unwrap();
+        std::fs::write(ext.join("wall.png"), "x").unwrap();
         let proj = base.join("proj");
-        let rel = import_file(&proj, &base.join("fora/casa.obj")).unwrap();
-        assert_eq!(rel, "models/casa.obj");
-        assert!(proj.join("models/casa.mtl").exists());
-        assert!(proj.join("models/tex/parede.png").exists());
-        assert!(import_file(&proj, &base.join("fora/casa.mtl")).is_err());
+        let rel = import_file(&proj, &base.join("outside/house.obj")).unwrap();
+        assert_eq!(rel, "models/house.obj");
+        assert!(proj.join("models/house.mtl").exists());
+        assert!(proj.join("models/tex/wall.png").exists());
+        assert!(import_file(&proj, &base.join("outside/house.mtl")).is_err());
         std::fs::remove_dir_all(base).ok();
     }
 
     #[test]
-    fn exporta_jogo_com_configuracao() {
+    fn exports_game_with_config() {
         let base = std::env::temp_dir().join(format!("cryo_export_{}", std::process::id()));
         std::fs::remove_dir_all(&base).ok();
         let proj = base.join("proj");
         let scene = ensure_project(&proj).unwrap();
-        let out = export_game(&proj, &scene, "Meu Jogo", &base.join("saida")).unwrap();
+        let out = export_game(&proj, &scene, "My Game", &base.join("out")).unwrap();
         let game = if cfg!(target_os = "macos") { out.join("Contents/Resources/game") } else { out.join("game") };
         assert_eq!(read_game_config(&game).unwrap().scene, scene);
-        assert!(game.join("scripts/Jogador.cryo").exists());
-        assert!(game.join("sounds/moeda.wav").exists());
-        assert!(export_game(&proj, &scene, "x", &proj.join("dentro")).is_err());
+        assert!(game.join("scripts/Player.cryo").exists());
+        assert!(game.join("sounds/coin.wav").exists());
+        assert!(export_game(&proj, &scene, "x", &proj.join("inside")).is_err());
         std::fs::remove_dir_all(base).ok();
     }
 }

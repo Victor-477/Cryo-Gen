@@ -1,0 +1,39 @@
+// Patrolling enemy. Jump on its head or hit it with the cap; touching its
+// side hurts.
+script Spiker {
+    prop speed: num = 2.2
+    prop range: num = 3.5
+    var home_x = 0
+    var direction = 1
+
+    on start() {
+        home_x = self.position.x
+    }
+
+    on update(dt) {
+        if self.position.x > home_x + range { direction = -1 }
+        if self.position.x < home_x - range { direction = 1 }
+        var v = self.velocity
+        v.x = direction * speed
+        v.z = 0
+        self.velocity = v
+    }
+
+    on collide(other, normal) {
+        if other.name == "Cap" {
+            audio.play("sounds/stomp.wav", 0.6)
+            self.destroy()
+            return
+        }
+        if other.name == "Player" {
+            // the normal points from the player to us: down means we were stomped
+            if normal.y < -0.5 {
+                other.send("stomp")
+                audio.play("sounds/stomp.wav", 0.7)
+                self.destroy()
+            } else {
+                other.send("hurt", self.position)
+            }
+        }
+    }
+}

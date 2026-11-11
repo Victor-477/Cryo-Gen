@@ -1,0 +1,15 @@
+// Simple camera that follows an entity from a fixed offset.
+script FollowCamera {
+    prop target: text = "Player"
+    prop offset: vec3 = vec3(0, 5, 9)
+    prop smoothness: num = 5
+
+    on update(dt) {
+        let t = scene.find(target)
+        if t == nil {
+            return
+        }
+        self.position = lerp(self.position, t.position + offset, clamp(smoothness * dt, 0, 1))
+        self.look_at(t.position)
+    }
+}

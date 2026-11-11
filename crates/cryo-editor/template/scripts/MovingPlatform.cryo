@@ -1,0 +1,25 @@
+// Slides back and forth by `travel` and carries whatever stands on it.
+script MovingPlatform {
+    prop travel: vec3 = vec3(0, 0, -9)
+    prop period: num = 5
+    var origin = vec3(0)
+    var delta = vec3(0)
+
+    on start() {
+        origin = self.position
+    }
+
+    on update(dt) {
+        let phase = (1 - cos(time.total * 2 * PI / period)) / 2
+        let next = origin + travel * phase
+        delta = next - self.position
+        self.position = next
+    }
+
+    on collide(other, normal) {
+        // `normal` points from `other` to us: straight down means it is standing on top
+        if normal.y < -0.5 and not other.trigger {
+            other.translate(delta)
+        }
+    }
+}

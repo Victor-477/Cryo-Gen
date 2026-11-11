@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cryo Engine Documentation</title>
+<meta name="description" content="Cryo Engine: a native 3D game engine with a visual editor, scripted in the Cryo language.">
+<style>
+:root {
+  --bg: #f6f8fb; --panel: #ffffff; --ink: #18212f; --muted: #5a6779; --line: #dbe2ec;
+  --accent: #1273e6; --accent-soft: #e4f0ff; --code-bg: #0f1722; --code-ink: #dce6f2;
+  --kw: #6cb6ff; --str: #f0a67c; --com: #7fb37a; --num: #b8d7a3; --fn: #e6db9a;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e141c; --panel: #151d28; --ink: #e6edf5; --muted: #93a1b4; --line: #263243;
+    --accent: #4da3ff; --accent-soft: #14283f; --code-bg: #0a1018; --code-ink: #dce6f2;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e141c; --panel: #151d28; --ink: #e6edf5; --muted: #93a1b4; --line: #263243;
+  --accent: #4da3ff; --accent-soft: #14283f; --code-bg: #0a1018; --code-ink: #dce6f2;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 20px; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 16px/1.65 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+.layout { display: grid; grid-template-columns: 270px minmax(0, 1fr); min-height: 100vh; }
+nav { position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto;
+  padding: 22px 18px; border-right: 1px solid var(--line); background: var(--panel); }
+nav .brand { font-weight: 700; font-size: 1.2rem; color: var(--ink); display: block; margin-bottom: 2px; }
+nav .version { color: var(--muted); font-size: .82rem; margin-bottom: 16px; }
+nav h4 { margin: 18px 0 6px; font-size: .72rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+nav a.item { display: block; padding: 4px 10px; border-radius: 6px; color: var(--ink); font-size: .93rem; }
+nav a.item:hover { background: var(--accent-soft); text-decoration: none; }
+nav a.item.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+nav button { margin-top: 18px; width: 100%; padding: 7px; border: 1px solid var(--line); border-radius: 6px;
+  background: transparent; color: var(--muted); cursor: pointer; font: inherit; font-size: .85rem; }
+main { padding: 34px 44px 90px; max-width: 980px; }
+h1 { font-size: 2.3rem; line-height: 1.15; margin: 0 0 10px; }
+h2 { font-size: 1.55rem; margin: 56px 0 10px; padding-top: 14px; border-top: 1px solid var(--line); }
+h3 { font-size: 1.1rem; margin: 28px 0 6px; }
+p.lead { font-size: 1.14rem; color: var(--muted); max-width: 46em; }
+img { max-width: 100%; border-radius: 10px; border: 1px solid var(--line); display: block; }
+figure { margin: 18px 0; } figcaption { color: var(--muted); font-size: .86rem; margin-top: 6px; }
+code { font: .88em ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: var(--accent-soft); padding: 1px 5px; border-radius: 4px; }
+pre { background: var(--code-bg); color: var(--code-ink); padding: 14px 16px; border-radius: 10px;
+  overflow-x: auto; font: .86rem/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+pre code { background: none; padding: 0; color: inherit; font-size: inherit; }
+.k { color: var(--kw); } .s { color: var(--str); } .c { color: var(--com); } .n { color: var(--num); } .f { color: var(--fn); }
+.table-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: .93rem; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; }
+kbd { font: .82em ui-monospace, Menlo, Consolas, monospace; border: 1px solid var(--line); border-bottom-width: 2px;
+  border-radius: 5px; padding: 1px 6px; background: var(--panel); white-space: nowrap; }
+.buttons { display: flex; gap: 10px; flex-wrap: wrap; margin: 20px 0 8px; }
+.btn { display: inline-block; padding: 10px 18px; border-radius: 8px; font-weight: 600; border: 1px solid var(--accent); }
+.btn.primary { background: var(--accent); color: #fff; } .btn:hover { text-decoration: none; opacity: .9; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin: 18px 0; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+.card b { display: block; margin-bottom: 3px; } .card span { color: var(--muted); font-size: .9rem; }
+.note { border-left: 4px solid var(--accent); background: var(--accent-soft); padding: 10px 14px; border-radius: 0 8px 8px 0; margin: 14px 0; }
+footer { margin-top: 70px; color: var(--muted); font-size: .86rem; border-top: 1px solid var(--line); padding-top: 16px; }
+@media (max-width: 860px) {
+  .layout { grid-template-columns: 1fr; }
+  nav { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); }
+  main { padding: 24px 16px 70px; }
+  h1 { font-size: 1.8rem; }
+}
+</style>
+</head>
+<body>
+<div class="layout">
+<nav>
+  <a class="brand" href="#top">❄ Cryo Engine</a>
+  <div class="version">Documentation · 0.2.1-beta</div>
+  <h4>Start</h4>
+  <a class="item" href="#top">Overview</a>
+  <a class="item" href="#install">Download and install</a>
+  <a class="item" href="#first-steps">First steps</a>
+  <h4>Editor</h4>
+  <a class="item" href="#editor">The interface</a>
+  <a class="item" href="#camera">Camera controls</a>
+  <a class="item" href="#components">Entities and components</a>
+  <a class="item" href="#import">Importing assets</a>
+  <a class="item" href="#tutorials">Built-in tutorials</a>
+  <h4>Scripting</h4>
+  <a class="item" href="#language">The Cryo language</a>
+  <a class="item" href="#events">Events</a>
+  <a class="item" href="#api">Engine API</a>
+  <a class="item" href="#builtins">Built-in functions</a>
+  <a class="item" href="#physics">Physics</a>
+  <h4>Projects</h4>
+  <a class="item" href="#example">Example: Frostpeak Isles</a>
+  <a class="item" href="#export">Exporting a game</a>
+  <a class="item" href="#source">Building from source</a>
+  <a class="item" href="#limits">Known limits</a>
+  <button id="theme" type="button">Switch theme</button>
+</nav>
+
+<main id="top">
+<h1>Cryo Engine</h1>
+<p class="lead">A native 3D game engine with a Unity/Unreal-style visual editor. Games are written in Cryo, a small scripting language designed to be easy to read and hard to break.</p>
+<div class="buttons">
+  <a class="btn primary" href="https://github.com/Victor-477/Cryo-Gen/releases">Download</a>
+  <a class="btn" href="https://github.com/Victor-477/Cryo-Gen">Source on GitHub</a>
+</div>
+<figure><img src="img/editor.png" alt="The Cryo Engine editor with the example platformer open">
+<figcaption>The editor with the example project open: Hierarchy on the left, Scene in the centre, Inspector on the right, Content and Console below.</figcaption></figure>
+
+<div class="cards">
+  <div class="card"><b>Visual editor</b><span>Dockable panels, gizmos, undo/redo, Play/Pause/Stop.</span></div>
+  <div class="card"><b>Cryo scripting</b><span>Typed, readable, with live error checking.</span></div>
+  <div class="card"><b>Model import</b><span>.obj, .gltf and .glb, plus textures and sounds.</span></div>
+  <div class="card"><b>Lights and shadows</b><span>Directional, point and spot lights.</span></div>
+  <div class="card"><b>Physics</b><span>Boxes, spheres, triggers and contact events.</span></div>
+  <div class="card"><b>One-click export</b><span>A standalone game without the editor.</span></div>
+</div>
+
+<h2 id="install">Download and install</h2>
+<p>Get the zip for your system from the <a href="https://github.com/Victor-477/Cryo-Gen/releases">Releases page</a>, unzip it and run the editor. There is nothing to install.</p>
+<div class="table-wrap"><table>
+<tr><th>System</th><th>How to start</th></tr>
+<tr><td>Windows 10/11</td><td>Double-click <code>cryo.exe</code>.</td></tr>
+<tr><td>macOS 11 or later</td><td>Right-click <b>Cryo Engine.app</b> and choose <b>Open</b> the first time (the app is not signed).</td></tr>
+<tr><td>Linux (x86_64)</td><td>Run <code>./cryo</code> in a terminal.</td></tr>
+</table></div>
+<p>On first launch the editor creates the example project in <code>~/CryoProjects/FrostpeakIsles</code> and starts the welcome tour. Editor settings are kept in <code>~/.cryo-engine/settings.json</code>.</p>
+<div class="note">If the window fails to open with a graphics configuration error, start the editor with the environment variable <code>CRYO_MSAA=0</code>.</div>
+
+<h2 id="first-steps">First steps</h2>
+<ol>
+  <li>Follow the <b>welcome tour</b> that opens on first launch. It takes about two minutes.</li>
+  <li>Press <b>▶ Play</b> (<kbd>Ctrl</kbd>+<kbd>P</kbd>) and try the example game. <kbd>Esc</kbd> stops it.</li>
+  <li>Select <b>Player</b> in the Hierarchy and change <code>jump_speed</code> in the Inspector. Play again.</li>
+  <li>Open <code>scripts/Coin.cryo</code> from the Content tab and read it: it is twenty lines.</li>
+  <li>Use <b>+ Create</b> to add a cube, give it Physics and a new script, and make it do something.</li>
+</ol>
+<p>To start your own game, choose <b>File &gt; Open or create project</b> and pick an empty folder.</p>
+<p>The interface is in English by default. Portuguese is available from the 🌐 menu in the top-right corner.</p>
+
+<h2 id="editor">The interface</h2>
+<div class="table-wrap"><table>
+<tr><th>Panel</th><th>What it is for</th></tr>
+<tr><td><b>Hierarchy</b></td><td>Every entity in the scene, as a tree. Drag one onto another to parent it. Right-click to duplicate or delete.</td></tr>
+<tr><td><b>Scene</b></td><td>The 3D workspace: select by clicking, move/rotate/scale with gizmos, navigate with the editor camera.</td></tr>
+<tr><td><b>Game</b></td><td>What the game camera sees. In Play mode it receives the keyboard and mouse.</td></tr>
+<tr><td><b>Inspector</b></td><td>Transform and components of the selected entity. With nothing selected, the scene settings.</td></tr>
+<tr><td><b>Content</b></td><td>Project files. Double-click opens scripts and scenes, places models and applies textures.</td></tr>
+<tr><td><b>Console</b></td><td>Output of <code>log(...)</code> and script errors with line numbers.</td></tr>
+<tr><td><b>Script editor</b></td><td>Syntax highlighting and error checking as you type.</td></tr>
+</table></div>
+<p>Every panel is a tab that can be dragged and re-docked. <b>Window &gt; Reset default layout</b> puts everything back.</p>
+<h3>Shortcuts</h3>
+<div class="table-wrap"><table>
+<tr><td><kbd>W</kbd> <kbd>E</kbd> <kbd>R</kbd></td><td>Move, rotate and scale tools</td></tr>
+<tr><td><kbd>Ctrl</kbd>+<kbd>P</kbd> / <kbd>Esc</kbd></td><td>Play / stop</td></tr>
+<tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>Save the scene and the open script</td></tr>
+<tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></td><td>Undo / redo</td></tr>
+<tr><td><kbd>Ctrl</kbd>+<kbd>D</kbd> / <kbd>Del</kbd></td><td>Duplicate / delete the selection</td></tr>
+<tr><td><kbd>F1</kbd></td><td>Tutorials</td></tr>
+</table></div>
+<p>On macOS use <kbd>Cmd</kbd> instead of <kbd>Ctrl</kbd>. Stopping the game restores the scene to how it was before Play.</p>
+
+<h2 id="camera">Camera controls</h2>
+<p>All options are in the <b>🎥 Camera</b> menu in the top-left corner of the Scene tab.</p>
+<div class="table-wrap"><table>
+<tr><th>Action</th><th>Mouse</th><th>Trackpad gestures mode</th></tr>
+<tr><td>Orbit</td><td><kbd>Alt</kbd> + drag</td><td>two fingers</td></tr>
+<tr><td>Pan</td><td>middle button drag</td><td><kbd>Shift</kbd> + two fingers</td></tr>
+<tr><td>Zoom</td><td>wheel, or <kbd>Alt</kbd> + right drag</td><td>pinch</td></tr>
+<tr><td>Fly</td><td colspan="2">hold the right button + <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>, <kbd>Q</kbd>/<kbd>E</kbd> down/up, <kbd>Shift</kbd> faster</td></tr>
+<tr><td>Flight speed</td><td colspan="2">wheel while flying, or the Speed slider</td></tr>
+<tr><td>Walk without flying</td><td colspan="2">arrow keys, <kbd>PageUp</kbd>/<kbd>PageDown</kbd></td></tr>
+<tr><td>Frame selection / everything</td><td colspan="2"><kbd>F</kbd> (or double-click an object) / <kbd>Home</kbd></td></tr>
+<tr><td>Perspective / orthographic</td><td colspan="2"><kbd>O</kbd></td></tr>
+<tr><td>Axis views</td><td colspan="2">click X, Y or Z on the orientation gizmo (top right): Front, Right, Top and their opposites</td></tr>
+<tr><td>Bookmarks</td><td colspan="2"><kbd>Ctrl</kbd>+<kbd>1</kbd>…<kbd>4</kbd> save, <kbd>1</kbd>…<kbd>4</kbd> recall</td></tr>
+<tr><td>Align game camera to view</td><td colspan="2"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd></td></tr>
+</table></div>
+<p>Trackpad gestures are on by default on macOS. Field of view and smooth movement can be changed in the same menu.</p>
+
+<h2 id="components">Entities and components</h2>
+<p>A scene is a tree of <b>entities</b>. Each has a name, a transform (position, rotation in degrees, scale) and any of these components:</p>
+<div class="table-wrap"><table>
+<tr><th>Component</th><th>Settings</th></tr>
+<tr><td><b>Mesh</b></td><td>A primitive (cube, sphere, plane, cylinder, cone, capsule) or an imported model; texture, colour, shininess, unlit, casts shadow.</td></tr>
+<tr><td><b>Light</b></td><td>Directional, point or spot; colour, intensity, range, cone angle, shadows.</td></tr>
+<tr><td><b>Camera</b></td><td>Field of view, near and far planes. The first camera in the scene is the game camera.</td></tr>
+<tr><td><b>Physics</b></td><td>Static or dynamic body; box or sphere collider; trigger; gravity, bounciness, friction.</td></tr>
+<tr><td><b>Cryo Script</b></td><td>A <code>.cryo</code> file plus the values of its <code>prop</code> fields.</td></tr>
+</table></div>
+<p>Children follow their parent. Scenes are saved as readable JSON (<code>.cryoscene</code>), which works well with version control.</p>
+
+<h2 id="import">Importing assets</h2>
+<p>Drag files onto the editor window, or use <b>⬇ Import</b> in the Content tab.</p>
+<div class="table-wrap"><table>
+<tr><th>Kind</th><th>Formats</th><th>Folder</th></tr>
+<tr><td>3D models</td><td><code>.obj</code> (+ <code>.mtl</code>), <code>.gltf</code>, <code>.glb</code></td><td><code>models/</code></td></tr>
+<tr><td>Textures</td><td><code>.png</code>, <code>.jpg</code></td><td><code>textures/</code></td></tr>
+<tr><td>Sounds</td><td><code>.wav</code>, <code>.ogg</code>, <code>.mp3</code></td><td><code>sounds/</code></td></tr>
+</table></div>
+<p>Files a model refers to (materials, <code>.bin</code> buffers, textures) are copied with it. An imported model is placed in front of the camera; if it was authored in other units, its scale is set to about 2 m. A model's box collider uses its bounding box and is drawn in green when selected.</p>
+
+<h2 id="tutorials">Built-in tutorials</h2>
+<p>Open <b>Help &gt; Tutorials</b> (<kbd>F1</kbd>). Each tutorial is a short sequence of cards; the panel a step talks about is brought to the front and outlined.</p>
+<figure><img src="img/tutorial.png" alt="The welcome tour card in the bottom-right corner of the editor">
+<figcaption>The welcome tour starts automatically the first time the editor opens.</figcaption></figure>
+<div class="table-wrap"><table>
+<tr><td><b>Welcome tour</b></td><td>Where everything is.</td></tr>
+<tr><td><b>Moving the camera</b></td><td>Fly, orbit, zoom, axis views, bookmarks.</td></tr>
+<tr><td><b>Building a scene</b></td><td>Create, transform, parent, duplicate, save.</td></tr>
+<tr><td><b>Importing models, textures and sounds</b></td><td>Bringing your own assets.</td></tr>
+<tr><td><b>Scripting with Cryo</b></td><td>Events, props, talking to other objects, errors.</td></tr>
+<tr><td><b>Physics and collisions</b></td><td>Bodies, colliders, triggers, contact events.</td></tr>
+<tr><td><b>Inside the example platformer</b></td><td>How Frostpeak Isles is built.</td></tr>
+<tr><td><b>Exporting your game</b></td><td>From project to something people can run.</td></tr>
+</table></div>
+
+<h2 id="language">The Cryo language</h2>
+<p>Each <code>.cryo</code> file defines one <code>script</code>. Attach it to an entity with the Cryo Script component.</p>
+<pre><code><span class="k">script</span> Player {
+    <span class="k">prop</span> speed: num = <span class="n">6</span>          <span class="c">// editable in the Inspector</span>
+    <span class="k">var</span> coins = <span class="n">0</span>                <span class="c">// internal state</span>
+
+    <span class="k">on</span> start() {                 <span class="c">// once, when the game starts</span>
+        <span class="f">hud</span>(<span class="s">"Coins: 0"</span>)
+    }
+
+    <span class="k">on</span> update(dt) {              <span class="c">// every frame</span>
+        <span class="k">var</span> v = self.velocity
+        v.x = input.axis(<span class="s">"horizontal"</span>) * speed
+        <span class="k">if</span> input.pressed(<span class="s">"space"</span>) <span class="k">and</span> self.grounded {
+            v.y = <span class="n">8</span>
+        }
+        self.velocity = v
+    }
+
+    <span class="k">on</span> coin() {                  <span class="c">// your own event: other.send("coin")</span>
+        coins += <span class="n">1</span>
+        <span class="f">hud</span>(<span class="s">"Coins: "</span> + coins)
+    }
+
+    <span class="k">fn</span> double(x: num) -> num {
+        <span class="k">return</span> x * <span class="n">2</span>
+    }
+}</code></pre>
+<h3>Syntax</h3>
+<div class="table-wrap"><table>
+<tr><td>Types</td><td><code>num</code>, <code>bool</code>, <code>text</code>, <code>vec3</code>, <code>entity</code>, <code>list</code>, <code>any</code>. Annotations are optional; when present they are checked.</td></tr>
+<tr><td>Fields</td><td><code>prop name: type = value</code> (shown in the Inspector) and <code>var name = value</code>.</td></tr>
+<tr><td>Locals</td><td><code>let</code> (immutable) and <code>var</code> (mutable).</td></tr>
+<tr><td>Control flow</td><td><code>if / else if / else</code>, <code>while</code>, <code>for i in 0..10</code>, <code>for item in list</code>, <code>break</code>, <code>continue</code>, <code>return</code>.</td></tr>
+<tr><td>Operators</td><td><code>+ - * / %</code>, <code>== != &lt; &lt;= &gt; &gt;=</code>, <code>and or not</code>, <code>+= -= *= /=</code>. <code>+</code> joins text with anything.</td></tr>
+<tr><td>Vectors</td><td><code>vec3(x, y, z)</code>; <code>+ -</code> between vectors, <code>* /</code> with a number; components <code>.x .y .z</code> can be read and assigned.</td></tr>
+<tr><td>Lists</td><td><code>[1, 2, 3]</code>, <code>list[i]</code>, <code>.push(x)</code> <code>.pop()</code> <code>.remove(i)</code> <code>.contains(x)</code> <code>.clear()</code> <code>.len()</code>.</td></tr>
+<tr><td>Text</td><td><code>"..."</code> with <code>\n</code>; <code>.len()</code> <code>.upper()</code> <code>.lower()</code> <code>.contains(s)</code>.</td></tr>
+<tr><td>Comments</td><td><code>// to the end of the line</code>. Semicolons are optional.</td></tr>
+</table></div>
+<h3>Safe by default</h3>
+<ul>
+  <li>A <code>let</code> cannot be reassigned, and conditions must be <code>bool</code>: there is no implicit truthiness.</li>
+  <li>Division by zero, an index outside a list, and reading a member of <code>nil</code> are errors with a line number, not silent bad values.</li>
+  <li><code>for item in list</code> iterates without indexes, so off-by-one mistakes cannot be written.</li>
+  <li>A runaway loop or deep recursion is stopped automatically instead of freezing the editor.</li>
+  <li>A script that fails is disabled on that entity; everything else keeps running.</li>
+</ul>
+
+<h2 id="events">Events</h2>
+<div class="table-wrap"><table>
+<tr><th>Handler</th><th>When it runs</th></tr>
+<tr><td><code>on start()</code></td><td>Once, when the game starts.</td></tr>
+<tr><td><code>on update(dt)</code></td><td>Every frame. <code>dt</code> is the time in seconds since the previous frame.</td></tr>
+<tr><td><code>on collide(other, normal)</code></td><td>Every frame two physics bodies touch (triggers included). <code>normal</code> points from <code>other</code> towards this entity: <code>normal.y</code> near 1 means you are standing on it.</td></tr>
+<tr><td><code>on anything(args...)</code></td><td>Your own events, fired with <code>entity.send("anything", args...)</code>. Delivered right after the current event finishes.</td></tr>
+</table></div>
+<p>Handlers may declare fewer parameters than the engine sends: <code>on collide(other)</code> is fine.</p>
+
+<h2 id="api">Engine API</h2>
+<h3>Entities</h3>
+<p><code>self</code> is the entity the script is attached to. Any <code>entity</code> value offers the same members.</p>
+<div class="table-wrap"><table>
+<tr><th>Member</th><th>Type</th><th>Notes</th></tr>
+<tr><td><code>name</code></td><td>text</td><td></td></tr>
+<tr><td><code>position</code>, <code>rotation</code>, <code>scale</code></td><td>vec3</td><td>Local values; rotation in degrees.</td></tr>
+<tr><td><code>forward</code>, <code>right</code>, <code>up</code></td><td>vec3</td><td>Read-only directions. Forward is local -Z.</td></tr>
+<tr><td><code>visible</code></td><td>bool</td><td>Hidden entities (and their children) are not drawn and do not collide.</td></tr>
+<tr><td><code>color</code></td><td>vec3</td><td>Mesh colour, each channel 0 to 1.</td></tr>
+<tr><td><code>velocity</code></td><td>vec3</td><td>Needs Physics.</td></tr>
+<tr><td><code>grounded</code></td><td>bool</td><td>Read-only: standing on something this frame.</td></tr>
+<tr><td><code>trigger</code></td><td>bool</td><td>Whether the body is a trigger.</td></tr>
+<tr><td><code>fov</code></td><td>num</td><td>Cameras only.</td></tr>
+</table></div>
+<div class="table-wrap"><table>
+<tr><th>Method</th><th>Effect</th></tr>
+<tr><td><code>translate(v)</code>, <code>rotate(v)</code></td><td>Add to position / rotation.</td></tr>
+<tr><td><code>look_at(point)</code></td><td>Turn so forward points at a position.</td></tr>
+<tr><td><code>distance_to(entity)</code></td><td>Distance between two entities.</td></tr>
+<tr><td><code>send("event", args...)</code></td><td>Run <code>on event(...)</code> in that entity's script.</td></tr>
+<tr><td><code>destroy()</code>, <code>exists()</code></td><td>Remove at the end of the frame / check it is still there.</td></tr>
+<tr><td><code>add_physics("dynamic"|"static", "box"|"sphere")</code></td><td>Give a spawned entity a body.</td></tr>
+</table></div>
+<h3>Globals</h3>
+<div class="table-wrap"><table>
+<tr><td><code>input</code></td><td><code>.down(key)</code> held, <code>.pressed(key)</code> / <code>.released(key)</code> this frame, <code>.axis("horizontal"|"vertical")</code> from WASD and arrows, <code>.mouse_dx</code>, <code>.mouse_dy</code>, <code>.scroll</code>.<br>Keys: letters, digits, <code>space</code>, <code>enter</code>, <code>shift</code>, <code>escape</code>, <code>tab</code>, <code>up</code> <code>down</code> <code>left</code> <code>right</code>, <code>mouse_left</code> <code>mouse_right</code> <code>mouse_middle</code>.</td></tr>
+<tr><td><code>scene</code></td><td><code>.find("Name")</code> (entity or <code>nil</code>), <code>.all()</code>, <code>.spawn("cube", position)</code>, <code>.destroy(entity)</code>.</td></tr>
+<tr><td><code>time</code></td><td><code>.dt</code>, <code>.total</code> (seconds since Play).</td></tr>
+<tr><td><code>audio</code></td><td><code>.play(file)</code>, <code>.play(file, volume)</code>, <code>.music(file)</code> (loops), <code>.stop_music()</code>, <code>.stop()</code>, <code>.volume</code>.</td></tr>
+<tr><td><code>log(...)</code></td><td>Print to the Console.</td></tr>
+<tr><td><code>hud(...)</code></td><td>Text on the game screen (use <code>\n</code> for a second line).</td></tr>
+</table></div>
+
+<h2 id="builtins">Built-in functions</h2>
+<div class="table-wrap"><table>
+<tr><td>Numbers</td><td><code>abs sign floor ceil round sqrt pow min max clamp lerp</code>, <code>random()</code> (0 to 1), <code>random(a, b)</code>, constant <code>PI</code></td></tr>
+<tr><td>Trigonometry</td><td><code>sin cos tan atan2</code> (radians)</td></tr>
+<tr><td>Vectors</td><td><code>vec3(x, y, z)</code>, <code>vec3(n)</code>, <code>length normalize dot cross distance</code>, <code>lerp(a, b, t)</code></td></tr>
+<tr><td>Conversion</td><td><code>str(x)</code>, <code>num(text)</code> (or <code>nil</code>), <code>len(list or text)</code></td></tr>
+</table></div>
+
+<h2 id="physics">Physics</h2>
+<ul>
+  <li><b>Static</b> bodies never move on their own; move them from a script to make platforms and doors. <b>Dynamic</b> bodies fall and are pushed out of whatever they overlap.</li>
+  <li>Colliders are a <b>box</b> (which follows the entity's rotation, so ramps work) or a <b>sphere</b>, sized from the entity's scale or the model's bounds.</li>
+  <li>A <b>trigger</b> reports contact without blocking: use it for pickups, checkpoints and zones.</li>
+  <li>Drive characters by setting <code>self.velocity</code> and checking <code>self.grounded</code>.</li>
+  <li>Gravity is a scene setting (deselect everything to see it in the Inspector).</li>
+</ul>
+<pre><code><span class="c">// A platform that carries whatever stands on it</span>
+<span class="k">on</span> collide(other, normal) {
+    <span class="k">if</span> normal.y &lt; -<span class="n">0.5</span> <span class="k">and not</span> other.trigger {   <span class="c">// other is on top of us</span>
+        other.translate(delta)
+    }
+}</code></pre>
+
+<h2 id="example">Example: Frostpeak Isles</h2>
+<p>The default project is a small 3D platformer: five Frost Shards hidden across a chain of floating islands, each stretch teaching one move.</p>
+<figure><img src="img/game.png" alt="Frostpeak Isles running in the Game tab"></figure>
+<div class="table-wrap"><table>
+<tr><th>Move</th><th>How</th></tr>
+<tr><td>Run, jump</td><td><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>, <kbd>Space</kbd> (hold for a higher jump)</td></tr>
+<tr><td>Triple jump</td><td>Jump again right after landing, three times, while running</td></tr>
+<tr><td>Backflip</td><td><kbd>Shift</kbd> + <kbd>Space</kbd> standing still</td></tr>
+<tr><td>Long jump</td><td><kbd>Shift</kbd> + <kbd>Space</kbd> while running</td></tr>
+<tr><td>Ground pound</td><td><kbd>Shift</kbd> in the air; jump right after landing for extra height</td></tr>
+<tr><td>Wall jump</td><td>Jump against a wall, then <kbd>Space</kbd> again</td></tr>
+<tr><td>Cap throw</td><td><kbd>F</kbd> or click. It defeats Spikers and collects coins</td></tr>
+<tr><td>Cap bounce</td><td>Keep <kbd>F</kbd> held so the cap hovers, then jump onto it</td></tr>
+<tr><td>Capture</td><td>Hit a Hopper with the cap to control it and use its super jump; <kbd>E</kbd> leaves</td></tr>
+<tr><td>Camera</td><td>Arrow keys or right-drag; wheel zooms</td></tr>
+</table></div>
+<h3>How it is built</h3>
+<div class="table-wrap"><table>
+<tr><th>Script</th><th>Role</th></tr>
+<tr><td><code>Player.cryo</code></td><td>Movement relative to the camera, all jump types, health, respawn, HUD, capture control.</td></tr>
+<tr><td><code>Cap.cryo</code></td><td>Out, hover, return; bounce and capture hand-off.</td></tr>
+<tr><td><code>OrbitCamera.cryo</code></td><td>Third-person camera with mouse and keyboard orbit.</td></tr>
+<tr><td><code>Coin</code>, <code>Shard</code>, <code>Checkpoint</code></td><td>Trigger pickups that <code>send</code> an event to the player.</td></tr>
+<tr><td><code>MovingPlatform</code>, <code>BouncePad</code>, <code>Spinner</code></td><td>Level pieces driven by a few lines each.</td></tr>
+<tr><td><code>Spiker</code>, <code>Hopper</code></td><td>An enemy that can be stomped, and a creature that can be captured.</td></tr>
+<tr><td><code>HintZone</code></td><td>Invisible trigger that shows a tip.</td></tr>
+</table></div>
+<p>The hero's root entity holds the Physics box and the script and has no mesh; its child <code>KipModel</code> holds the visible shapes and turns to face the movement, so the collider never rotates. Every mechanic is covered by an automated play-through test in the repository.</p>
+
+<h2 id="export">Exporting a game</h2>
+<ol>
+  <li>Open the scene the game should start in and check the <b>Game</b> tab.</li>
+  <li>Choose <b>File &gt; Export game</b> and pick a folder outside the project.</li>
+  <li>Cryo writes a folder (an <code>.app</code> on macOS) with the executable and a copy of the project. It opens straight into the game; <kbd>Esc</kbd> quits.</li>
+</ol>
+<p>The export is for the system you are running on. To ship for another system, export from the editor on that system.</p>
+
+<h2 id="source">Building from source</h2>
+<p>Requires <a href="https://rustup.rs">Rust</a>. On Linux also install <code>libasound2-dev</code>.</p>
+<pre><code>git clone https://github.com/Victor-477/Cryo-Gen.git
+cd Cryo-Gen
+cargo run --release                      <span class="c"># the editor</span>
+cargo run --release -- path/to/MyGame    <span class="c"># open or create a project there</span>
+cargo run --release -- MyGame --game     <span class="c"># run only the game</span>
+cargo test                               <span class="c"># all tests</span></code></pre>
+<p>The workspace has two crates: <code>cryo-lang</code> (the language, with no dependencies) and <code>cryo-editor</code> (engine and editor). The <a href="https://github.com/Victor-477/Cryo-Gen#repository-layout">README</a> maps the source files.</p>
+
+<h2 id="limits">Known limits</h2>
+<ul>
+  <li>Models: mesh, base colour and base texture. glTF animations, skeletons and full PBR materials are not read yet.</li>
+  <li>Shadows come from the first directional light only and cover about 50 m around the camera.</li>
+  <li>Up to 4 directional and 16 point/spot lights per scene.</li>
+  <li>Physics has no rotational dynamics: bodies do not tip over or spin on impact. A model's collider is its bounding box.</li>
+  <li>Export targets the current system; the macOS app is not signed.</li>
+  <li>Script error messages are in English only.</li>
+</ul>
+
+<footer>Cryo Engine is free software under the <a href="https://github.com/Victor-477/Cryo-Gen/blob/main/LICENSE">GNU GPL v3</a>. Found a problem? <a href="https://github.com/Victor-477/Cryo-Gen/issues">Open an issue</a>.</footer>
+</main>
+</div>
+<script>
+// theme toggle (remembered per browser)
+const root = document.documentElement;
+try { const t = localStorage.getItem("cryo-theme"); if (t) root.dataset.theme = t; } catch (e) {}
+document.getElementById("theme").addEventListener("click", () => {
+  const dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+  root.dataset.theme = dark ? "light" : "dark";
+  try { localStorage.setItem("cryo-theme", root.dataset.theme); } catch (e) {}
+});
+// highlight the section being read
+const links = [...document.querySelectorAll("nav a.item")];
+const byId = new Map(links.map(a => [a.getAttribute("href").slice(1), a]));
+const seen = new IntersectionObserver(entries => {
+  for (const e of entries) if (e.isIntersecting) {
+    links.forEach(a => a.classList.remove("active"));
+    const a = byId.get(e.target.id); if (a) a.classList.add("active");
+  }
+}, { rootMargin: "0px 0px -75% 0px" });
+document.querySelectorAll("main[id], h2[id]").forEach(el => seen.observe(el));
+</script>
+</body>
+</html>

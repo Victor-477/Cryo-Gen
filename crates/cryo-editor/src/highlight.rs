@@ -1,4 +1,4 @@
-//! Realce de sintaxe da linguagem Cryo para o editor de scripts.
+//! Cryo syntax highlighting for the script editor.
 
 use cryo_lang::lexer::{KEYWORDS, TYPES};
 use eframe::egui::{self, text::LayoutJob, Color32, FontId, TextFormat};
@@ -81,7 +81,7 @@ pub fn highlight(src: &str, font: FontId) -> LayoutJob {
                 i += 1;
             }
             if i == start {
-                i += 1; // um `/` sozinho
+                i += 1; // a lone `/`
             }
             push(start, i, plain);
         }

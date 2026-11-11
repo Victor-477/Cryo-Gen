@@ -1,196 +1,135 @@
 # ❄ Cryo Engine
 
 [![CI](https://github.com/Victor-477/Cryo-Gen/actions/workflows/ci.yml/badge.svg)](https://github.com/Victor-477/Cryo-Gen/actions/workflows/ci.yml)
-[![Licença: GPL v3](https://img.shields.io/badge/licen%C3%A7a-GPLv3-blue.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/Victor-477/Cryo-Gen?include_prereleases&label=download)](https://github.com/Victor-477/Cryo-Gen/releases)
+[![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 
-Engine 3D nativa (Rust + OpenGL) com editor visual no estilo Unity/Unreal e scripts na linguagem **Cryo**.
+A native 3D game engine (Rust + OpenGL) with a Unity/Unreal-style visual editor. Games are scripted in **Cryo**, a small, safe language made for the engine.
 
-![Editor da Cryo Engine](docs/cryo-editor.png)
+![The Cryo Engine editor](docs/img/editor.png)
 
-**Nesta página:** [Como rodar](#como-rodar) · [O editor](#o-editor) · [A linguagem Cryo](#a-linguagem-cryo) · [Estrutura do código](#estrutura-do-código) · [Limites](#limites-desta-versão-02)
+**[Documentation](https://victor-477.github.io/Cryo-Gen/)** · **[Download](https://github.com/Victor-477/Cryo-Gen/releases)** · [Run from source](#run-from-source) · [The Cryo language](#the-cryo-language) · [Example game](#example-game-frostpeak-isles)
 
-## Como rodar
+## Download
 
-Requisito: [Rust](https://rustup.rs) instalado.
+Pre-built editors for Windows, macOS and Linux are on the [Releases page](https://github.com/Victor-477/Cryo-Gen/releases). Unzip and run; no installation and no source code needed.
+
+On first launch the editor creates the example project in `~/CryoProjects/FrostpeakIsles` and starts a short welcome tour.
+
+> **macOS:** the app is not signed. The first time, right-click **Cryo Engine.app** and choose **Open**.
+
+## Run from source
+
+Requires [Rust](https://rustup.rs). On Linux, also install `libasound2-dev` (audio).
 
 ```bash
 git clone https://github.com/Victor-477/Cryo-Gen.git
 cd Cryo-Gen
-cargo run --release                    # abre (ou cria) ./ProjetoExemplo
+cargo run --release
 ```
 
-Outras formas de abrir:
+Other ways to start:
 
 ```bash
-cargo run --release -- caminho/MeuJogo # abre outro projeto
-cargo run --release -- --play          # já inicia em modo Jogo
-cargo run --release -- MeuJogo --game  # roda só o jogo, sem o editor
-cargo test                             # testes da linguagem, física, importação e do jogo de exemplo
+cargo run --release -- path/to/MyGame   # open (or create) a project in that folder
+cargo run --release -- --play           # start in Play mode
+cargo run --release -- MyGame --game    # run only the game, without the editor
+cargo test                              # language, physics, import and example-game tests
 ```
 
-Na primeira execução a engine cria um jogo de exemplo (colete as moedas: WASD + Espaço).
-Se aparecer erro de configuração gráfica, rode com `CRYO_MSAA=0`.
-No Linux, o áudio precisa do pacote `libasound2-dev` para compilar.
+If you get a graphics configuration error, run with `CRYO_MSAA=0`.
 
-## O editor
+## What is in the box
 
-| Painel | Função |
+| | |
 |---|---|
-| **Hierarquia** | Árvore de entidades. Arraste uma sobre outra para criar pai/filho; botão direito para duplicar/excluir. |
-| **Cena** | Viewport 3D com grade, seleção por clique, gizmos de mover / girar / escalar e sombras. |
-| **Jogo** | O que a câmera do jogo vê. Em modo Jogo, recebe teclado e mouse. |
-| **Inspetor** | Transformação e componentes (Malha, Luz, Câmera, Física, Script Cryo). Os `prop` do script aparecem aqui. |
-| **Conteúdo** | Arquivos do projeto. Duplo clique abre scripts e cenas, coloca modelos na cena e aplica texturas. |
-| **Console** | Saída de `log(...)` e erros de script com número da linha. |
-| **Editor de script** | Realce de sintaxe e verificação de erros enquanto você digita. |
+| **Editor** | Dockable panels (Hierarchy, Scene, Game, Inspector, Content, Console, script editor), move/rotate/scale gizmos, undo/redo, parent/child entities, Play/Pause/Stop. |
+| **Rendering** | Primitives and imported models (`.obj`, `.gltf`, `.glb`), textures, directional/point/spot lights, shadows, sky gradient. |
+| **Physics** | Gravity, oriented box and sphere colliders, triggers, contact events with normals. |
+| **Scripting** | The Cryo language, with live error checking and script properties editable in the Inspector. |
+| **Audio** | Sound effects and looping music (`.wav`, `.ogg`, `.mp3`). |
+| **Camera tools** | Fly, orbit, pan, zoom, trackpad gestures, orthographic axis views, framing, bookmarks. |
+| **Export** | One menu item produces a standalone game for the system you are on. |
+| **Tutorials** | Eight guided tours inside the editor (Help > Tutorials, or F1). |
+| **Languages** | English interface, with Portuguese as a second language (🌐 menu, top right). |
 
-Todos os painéis são abas que podem ser arrastadas e reorganizadas (Janela → Restaurar layout padrão).
+## The Cryo language
 
-### Importar modelos, texturas e sons
-
-Arraste os arquivos para a janela, ou use **Conteúdo → Importar** / **Arquivo → Importar**.
-
-| Tipo | Formatos | Vai para |
-|---|---|---|
-| Modelos 3D | `.obj` (+ `.mtl`), `.gltf`, `.glb` | `models/` |
-| Texturas | `.png`, `.jpg` | `textures/` |
-| Sons | `.wav`, `.ogg`, `.mp3` | `sounds/` |
-
-Os arquivos que o modelo referencia (materiais, `.bin`, texturas) são copiados junto. Um modelo importado
-entra na cena à frente da câmera; se vier em outra unidade (gigante ou minúsculo), a escala é ajustada para ~2 m.
-No Inspetor, o componente **Malha** permite trocar o modelo, aplicar uma textura e ajustar o tamanho.
-O colisor de caixa usa o volume do modelo e aparece em verde quando o objeto está selecionado.
-
-### Câmera do editor
-
-Tudo fica no menu **🎥 Câmera**, no canto da aba Cena.
-
-| Ação | Mouse | Trackpad (modo "Gestos de trackpad") |
-|---|---|---|
-| Orbitar | `Alt` + arrastar | dois dedos |
-| Deslocar | botão do meio (ou `Alt` + meio) | `Shift` + dois dedos |
-| Aproximar | roda, ou `Alt` + botão direito | pinça |
-| Voar | botão direito + `WASD` / `Q` `E` (`Shift` acelera) | igual |
-| Velocidade de voo | roda enquanto voa | igual |
-| Andar sem voar | setas, `PageUp` / `PageDown` | igual |
-
-- **Vistas:** clique nas bolinhas X/Y/Z do indicador de orientação (canto superior direito) para Frente, Direita, Topo e opostas, em projeção ortográfica. `O` alterna perspectiva/ortográfica.
-- **Enquadrar:** `F` enquadra a seleção (duplo clique num objeto também), `Home` enquadra a cena toda.
-- **Marcadores:** `Ctrl+1..4` salva a posição da câmera, `1..4` volta para ela.
-- **Alinhar:** "Alinhar câmera do jogo à vista" (`Ctrl+Shift+F`) leva a câmera do jogo para onde você está olhando; "Alinhar vista ao objeto selecionado" faz o inverso.
-- Campo de visão, velocidade e movimento suave são ajustáveis no menu. No macOS o modo trackpad já vem ligado.
-
-Para a câmera **do jogo**, o projeto de exemplo traz três scripts prontos: `CameraSegue` (segue um alvo),
-`CameraOrbital` (gira em volta do alvo com o mouse) e `CameraLivre` (voo livre).
-
-### Exportar o jogo
-
-**Arquivo → Exportar jogo…** gera uma pasta (no macOS, um `.app`) com o executável e o projeto dentro.
-Esse executável abre direto no jogo, sem o editor; `Esc` fecha. Compile com `--release` antes de exportar.
-
-**Atalhos gerais**
-
-- Ferramentas: `W` mover · `E` girar · `R` escalar
-- `Ctrl+P` jogar/parar · `Esc` parar · `Ctrl+S` salvar · `Ctrl+Z` / `Ctrl+Shift+Z` desfazer/refazer · `Ctrl+D` duplicar · `Del` excluir
-
-(no macOS use `Cmd` no lugar de `Ctrl`)
-
-Ao parar o jogo, a cena volta ao estado anterior — como na Unity.
-
-## A linguagem Cryo
-
-Cada arquivo `.cryo` define um `script`, que é anexado a uma entidade pelo Inspetor.
+Each `.cryo` file defines one `script`, attached to an entity in the Inspector.
 
 ```cryo
-script Jogador {
-    prop velocidade: num = 6        // aparece no Inspetor
-    var moedas = 0                  // estado interno
+script Coin {
+    prop spin: num = 160            // editable in the Inspector
 
-    on start() {                    // uma vez, ao iniciar
-        hud("Moedas: 0")
+    on update(dt) {                 // every frame
+        self.rotate(vec3(0, spin * dt, 0))
     }
 
-    on update(dt) {                 // todo quadro
-        var v = self.velocity
-        v.x = input.axis("horizontal") * velocidade
-        if input.pressed("space") and self.grounded {
-            v.y = 7
+    on collide(other, normal) {     // on contact
+        if other.name == "Player" {
+            other.send("coin")      // runs `on coin()` in the player's script
+            audio.play("sounds/coin.wav")
+            self.destroy()
         }
-        self.velocity = v
-    }
-
-    on collide(outro: entity) {     // contato físico
-        log("bati em", outro.name)
-    }
-
-    on pegou_moeda() {              // evento próprio: outro.send("pegou_moeda")
-        moedas += 1
-    }
-
-    fn dobro(x: num) -> num {
-        return x * 2
     }
 }
 ```
 
-### Sintaxe
+- **Types:** `num`, `bool`, `text`, `vec3`, `entity`, `list`, `any`. Annotations are optional and checked when present.
+- **Safe by default:** `let` is immutable, conditions must be `bool`, and division by zero, out-of-range indexes, `nil` access and runaway loops become clear errors with a line number. A broken script is disabled; the editor keeps running.
 
-- **Tipos:** `num`, `bool`, `text`, `vec3`, `entity`, `list`, `any`. Anotações são opcionais; quando presentes, são verificadas.
-- **Variáveis:** `let` (imutável) e `var` (mutável). Campos do script: `prop` (editável no Inspetor) e `var`.
-- **Controle:** `if / else if / else`, `while`, `for i in 0..10`, `for item in lista`, `break`, `continue`, `return`.
-- **Operadores:** `+ - * / %`, `== != < <= > >=`, `and or not`, `+= -= *= /=`. `+` junta textos; `vec3` aceita `+ -` entre vetores e `* /` com número.
-- **Comentários:** `// ...`. Ponto e vírgula é opcional.
+The full reference (syntax, built-in functions and the engine API) is in the [documentation](https://victor-477.github.io/Cryo-Gen/#language).
 
-### Seguro por padrão
+## Example game: Frostpeak Isles
 
-Erros nunca derrubam o editor: o script com problema é desativado e o Console mostra a linha.
+A small 3D platformer that ships as the default project, built only with editor primitives and twelve short Cryo scripts.
 
-- `let` não pode ser reatribuído; condições precisam ser `bool` (nada de "verdadeiro implícito").
-- Divisão por zero, índice fora da lista e acesso a `nil` viram erros claros, não valores inválidos.
-- `for x in lista` percorre sem índices (sem erro de "um a mais"); laços infinitos são interrompidos automaticamente.
+![Frostpeak Isles](docs/img/game.png)
 
-### API da engine
-
-| | |
+| Move | Keys |
 |---|---|
-| `self` / qualquer `entity` | `.name` `.position` `.rotation` (graus) `.scale` `.color` `.visible` `.velocity` `.grounded` `.forward` `.right` `.up` `.fov` (câmeras) |
-| métodos de entidade | `.translate(v)` `.rotate(v)` `.look_at(ponto)` `.distance_to(e)` `.destroy()` `.exists()` `.send("evento", args...)` `.add_physics("dynamic"\|"static", "box"\|"sphere")` |
-| `input` | `.axis("horizontal"\|"vertical")` `.down("w")` `.pressed("space")` `.released("e")` — teclas: letras, dígitos, `space`, `enter`, `shift`, `up/down/left/right`, e os botões `mouse_left` `mouse_right` `mouse_middle` · `.mouse_dx` `.mouse_dy` `.scroll` |
-| `audio` | `.play("sounds/moeda.wav")` `.play(arquivo, volume)` `.music(arquivo)` (em repetição) `.stop_music()` `.stop()` `.volume` |
-| `scene` | `.find("Nome")` (ou `nil`) `.spawn("cube", pos)` `.destroy(e)` `.all()` |
-| `time` | `.dt` `.total` |
-| saída | `log(...)` no Console · `hud(...)` texto na tela do jogo |
-| matemática | `vec3(x,y,z)` `abs sign sin cos tan atan2 sqrt pow floor ceil round min max clamp lerp random` `length normalize dot cross distance` `PI` |
-| texto e listas | `str(x)` `num(t)` `len(x)` · `lista.push(x)` `.pop()` `.remove(i)` `.contains(x)` `.clear()` · `t.upper()` `.lower()` `.contains(s)` |
+| Run / jump | `WASD` / `Space` |
+| Triple jump | three jumps in a row while running |
+| Backflip / long jump | `Shift` + `Space` standing still / while running |
+| Ground pound | `Shift` in the air |
+| Wall jump | jump against a wall, then `Space` |
+| Throw the cap | `F` or click; hold to keep it hovering, then jump onto it to bounce |
+| Capture | hit a Hopper with the cap to control it; `E` leaves |
+| Camera | arrow keys or right-drag, wheel zooms |
 
-## Estrutura do código
+Collect the five Frost Shards. Every mechanic is covered by an automated play-through test in `crates/cryo-editor/src/runtime.rs`.
+
+## Repository layout
 
 ```
 crates/
-  cryo-lang/     linguagem Cryo: lexer, parser, interpretador (sem dependências)
+  cryo-lang/       the Cryo language: lexer, parser, interpreter (no dependencies)
   cryo-editor/
-    src/scene.rs     entidades, componentes, serialização .cryoscene (JSON)
-    src/assets.rs    importação de modelos (.obj, .gltf, .glb) e texturas
-    src/render.rs    renderizador OpenGL: malhas, texturas, luzes, sombras, céu, grade
-    src/physics.rs   gravidade e colisões (caixas orientadas e esferas)
-    src/audio.rs     efeitos sonoros e música
-    src/runtime.rs   modo Jogo: liga os scripts Cryo à cena
-    src/viewport.rs  abas Cena e Jogo, câmera do editor, gizmos, seleção
-    src/panels.rs    Hierarquia, Inspetor, Conteúdo, Console, editor de script
-    src/project.rs   projeto em disco, importação de arquivos, exportação do jogo
-    src/app.rs       estado do editor, menus, barra de ferramentas, layout
-    template/        scripts do jogo de exemplo
+    src/scene.rs     entities, components, .cryoscene (JSON) serialisation
+    src/assets.rs    model (.obj, .gltf, .glb) and texture import
+    src/render.rs    OpenGL renderer: meshes, textures, lights, shadows, sky, grid
+    src/physics.rs   gravity and collisions (oriented boxes and spheres)
+    src/audio.rs     sound effects and music
+    src/runtime.rs   Play mode: connects Cryo scripts to the scene
+    src/viewport.rs  Scene and Game tabs, editor camera, gizmos, picking
+    src/panels.rs    Hierarchy, Inspector, Content, Console, script editor
+    src/tutorial.rs  built-in guided tours
+    src/i18n.rs      interface languages
+    src/project.rs   project on disk, example game, import and export
+    src/app.rs       editor state, menus, toolbar, layout
+    template/        scripts of the example game
+docs/              documentation site (GitHub Pages)
 ```
 
-## Limites desta versão (0.2)
+## Known limits (0.2.1-beta)
 
-- Modelos: malha, cor e textura base. Animações, esqueletos e materiais PBR completos do glTF ainda não são lidos.
-- Sombras: só da primeira luz direcional, numa área de ~50 m em volta da câmera.
-- Luzes: até 4 direcionais e 16 pontuais/holofotes por cena.
-- Física: os corpos colidem com caixas giradas, mas não tombam nem giram ao bater (sem dinâmica de rotação). O colisor de um modelo é a caixa que o envolve, não a malha.
-- Exportação: gera o jogo para o sistema em que o editor está rodando (sem compilação cruzada); o `.app` do macOS não é assinado.
-- Áudio sem posicionamento 3D.
+- Models: mesh, base colour and base texture. glTF animations, skeletons and full PBR materials are not read yet.
+- Shadows: first directional light only, covering about 50 m around the camera.
+- Lights: up to 4 directional and 16 point/spot lights per scene.
+- Physics: no rotational dynamics (bodies do not tip over). A model's collider is its bounding box, not its mesh.
+- Export targets the system the editor is running on. The macOS app is not signed.
+- Script error messages are in English only.
 
-## Licença
+## License
 
-Distribuído sob a [GNU GPL v3](LICENSE).
+Distributed under the [GNU GPL v3](LICENSE).

@@ -1,0 +1,10 @@
+// Launches the player upwards.
+script BouncePad {
+    prop power: num = 21
+
+    on collide(other, normal) {
+        if other.name == "Player" and normal.y < -0.5 {
+            other.send("bounce", power)
+        }
+    }
+}

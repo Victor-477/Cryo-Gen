@@ -1,0 +1,20 @@
+// Frost Shard: the main collectible. Find them all to finish the level.
+script Shard {
+    var base_y = 0
+
+    on start() {
+        base_y = self.position.y
+    }
+
+    on update(dt) {
+        self.rotate(vec3(0, 90 * dt, 0))
+        self.position.y = base_y + sin(time.total * 2.5) * 0.2
+    }
+
+    on collide(other, normal) {
+        if other.name == "Player" {
+            other.send("shard")
+            self.destroy()
+        }
+    }
+}

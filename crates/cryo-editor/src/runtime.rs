@@ -1,4 +1,4 @@
-//! Modo Play: liga os scripts Cryo à cena (API `self`, `input`, `scene`, `time`).
+//! Play mode: connects Cryo scripts to the scene (`self`, `input`, `scene`, `time` API).
 
 use crate::audio::Audio;
 use crate::physics;
@@ -34,7 +34,7 @@ pub struct InputState {
     pub down: HashSet<String>,
     pub pressed: HashSet<String>,
     pub released: HashSet<String>,
-    /// Movimento do mouse neste quadro (pixels) e rolagem.
+    /// Mouse movement this frame (pixels) and scroll.
     pub mouse_dx: f32,
     pub mouse_dy: f32,
     pub scroll: f32,
@@ -77,7 +77,7 @@ fn to_v(v: Vec3) -> Value {
 fn from_v(v: &Value, what: &str) -> Result<Vec3, String> {
     match v {
         Value::Vec3(a) => Ok(Vec3::new(a[0] as f32, a[1] as f32, a[2] as f32)),
-        other => Err(format!("`{what}` espera `vec3`, mas recebeu `{}`", other.type_name())),
+        other => Err(format!("`{what}` expects `vec3`, but got `{}`", other.type_name())),
     }
 }
 
@@ -101,7 +101,7 @@ struct EngineHost<'a> {
 
 impl EngineHost<'_> {
     fn entity(&mut self, id: u64) -> Result<&mut crate::scene::Entity, String> {
-        self.scene.get_mut(id).ok_or_else(|| "a entidade não existe mais (foi destruída)".to_string())
+        self.scene.get_mut(id).ok_or_else(|| "the entity no longer exists (it was destroyed)".to_string())
     }
 }
 
@@ -129,15 +129,16 @@ impl Host for EngineHost<'_> {
                     "up" => to_v(e.up()),
                     "color" => match &e.mesh {
                         Some(m) => Value::Vec3(m.color.map(|c| c as f64)),
-                        None => return Err("esta entidade não tem malha, logo não tem `color`".into()),
+                        None => return Err("this entity has no mesh, so it has no `color`".into()),
                     },
                     "velocity" => to_v(e.physics.as_ref().map(|p| p.velocity).unwrap_or_default()),
                     "grounded" => Value::Bool(e.physics.as_ref().map(|p| p.grounded).unwrap_or(false)),
+                    "trigger" => Value::Bool(e.physics.as_ref().map(|p| p.is_trigger).unwrap_or(false)),
                     "fov" => match &e.camera {
                         Some(c) => Value::Num(c.fov as f64),
-                        None => return Err("`fov` só existe em entidades com o componente Câmera".into()),
+                        None => return Err("`fov` only exists on entities with a Camera component".into()),
                     },
-                    _ => return Err(format!("entidade não tem o membro `{name}`")),
+                    _ => return Err(format!("entity has no member `{name}`")),
                 })
             }
             Value::Object(o) => match (&**o, name) {
@@ -147,9 +148,9 @@ impl Host for EngineHost<'_> {
                 ("input", "mouse_dy") => Ok(Value::Num(self.input.mouse_dy as f64)),
                 ("input", "scroll") => Ok(Value::Num(self.input.scroll as f64)),
                 ("audio", "volume") => Ok(Value::Num(self.audio.volume as f64)),
-                _ => Err(format!("`{o}` não tem o membro `{name}`")),
+                _ => Err(format!("`{o}` has no member `{name}`")),
             },
-            other => Err(format!("`{}` não tem o membro `{name}`", other.type_name())),
+            other => Err(format!("`{}` has no member `{name}`", other.type_name())),
         }
     }
 
@@ -161,7 +162,7 @@ impl Host for EngineHost<'_> {
             }
         }
         let Value::Entity(id) = target else {
-            return Err(format!("não é possível alterar `{name}` aqui"));
+            return Err(format!("cannot set `{name}` here"));
         };
         let e = self.entity(*id)?;
         match name {
@@ -171,13 +172,13 @@ impl Host for EngineHost<'_> {
             "name" => e.name = value.to_string(),
             "visible" => match value {
                 Value::Bool(b) => e.visible = b,
-                _ => return Err("`visible` espera `bool`".into()),
+                _ => return Err("`visible` expects `bool`".into()),
             },
             "color" => {
                 let c = from_v(&value, name)?;
                 match &mut e.mesh {
                     Some(m) => m.color = [c.x, c.y, c.z],
-                    None => return Err("esta entidade não tem malha, logo não tem `color`".into()),
+                    None => return Err("this entity has no mesh, so it has no `color`".into()),
                 }
             }
             "velocity" => {
@@ -186,20 +187,25 @@ impl Host for EngineHost<'_> {
                     Some(p) => p.velocity = v,
                     None => {
                         return Err(
-                            "`velocity` precisa do componente Física (adicione no Inspector ou use add_physics)".into(),
+                            "`velocity` needs the Physics component (add it in the Inspector or call add_physics)".into(),
                         )
                     }
                 }
             }
             "fov" => match (&mut e.camera, value) {
                 (Some(c), Value::Num(v)) => c.fov = (v as f32).clamp(5.0, 170.0),
-                (None, _) => return Err("`fov` só existe em entidades com o componente Câmera".into()),
-                _ => return Err("`fov` espera `num`".into()),
+                (None, _) => return Err("`fov` only exists on entities with a Camera component".into()),
+                _ => return Err("`fov` expects `num`".into()),
+            },
+            "trigger" => match (&mut e.physics, value) {
+                (Some(p), Value::Bool(b)) => p.is_trigger = b,
+                (None, _) => return Err("`trigger` needs the Physics component".into()),
+                _ => return Err("`trigger` expects `bool`".into()),
             },
             "forward" | "right" | "up" | "grounded" => {
-                return Err(format!("`{name}` é somente leitura"))
+                return Err(format!("`{name}` is read-only"))
             }
-            _ => return Err(format!("entidade não tem o membro `{name}`")),
+            _ => return Err(format!("entity has no member `{name}`")),
         }
         Ok(())
     }
@@ -217,7 +223,7 @@ impl Host for EngineHost<'_> {
                     *self.hud = parts.join(" ");
                     Ok(Value::Nil)
                 }
-                _ => Err(format!("função desconhecida `{name}`")),
+                _ => Err(format!("unknown function `{name}`")),
             },
             Some(Value::Entity(id)) => {
                 let id = *id;
@@ -248,16 +254,16 @@ impl Host for EngineHost<'_> {
                         let kind = match &**kind {
                             "dynamic" => BodyKind::Dynamic,
                             "static" => BodyKind::Static,
-                            k => return Err(format!("tipo de corpo `{k}` inválido (dynamic ou static)")),
+                            k => return Err(format!("invalid body type `{k}` (dynamic or static)")),
                         };
                         let shape = match &**shape {
                             "box" => ColliderShape::Box,
                             "sphere" => ColliderShape::Sphere,
-                            s => return Err(format!("colisor `{s}` inválido (box ou sphere)")),
+                            s => return Err(format!("invalid collider `{s}` (box or sphere)")),
                         };
                         self.entity(id)?.physics = Some(Physics::new(kind, shape));
                     }
-                    _ => return Err(format!("entidade não tem o método `{name}` com esses argumentos")),
+                    _ => return Err(format!("entity has no method `{name}` with these arguments")),
                 }
                 Ok(Value::Nil)
             }
@@ -266,7 +272,7 @@ impl Host for EngineHost<'_> {
                     .input
                     .axis(n)
                     .map(Value::Num)
-                    .ok_or_else(|| format!("eixo `{n}` desconhecido (horizontal ou vertical)")),
+                    .ok_or_else(|| format!("unknown axis `{n}` (horizontal or vertical)")),
                 ("input", "down", [Value::Text(k)]) => Ok(Value::Bool(self.input.down.contains(&**k))),
                 ("input", "pressed", [Value::Text(k)]) => {
                     Ok(Value::Bool(self.input.pressed.contains(&**k)))
@@ -278,7 +284,7 @@ impl Host for EngineHost<'_> {
                     let volume = match rest {
                         [] => 1.0,
                         [Value::Num(v)] => *v as f32,
-                        _ => return Err(format!("`audio.{name}` espera (arquivo) ou (arquivo, volume)")),
+                        _ => return Err(format!("`audio.{name}` expects (file) or (file, volume)")),
                     };
                     let warn = if name == "play" {
                         self.audio.play(file, volume)?
@@ -304,12 +310,12 @@ impl Host for EngineHost<'_> {
                 ("scene", "spawn", [Value::Text(shape), pos]) => {
                     let Some(shape) = Shape::from_script_name(shape) else {
                         return Err(format!(
-                            "forma `{shape}` desconhecida (cube, sphere, plane, cylinder, cone, capsule)"
+                            "unknown shape `{shape}` (cube, sphere, plane, cylinder, cone, capsule)"
                         ));
                     };
                     let p = from_v(pos, "spawn")?;
                     if self.scene.entities.len() > 5000 {
-                        return Err("limite de 5000 entidades na cena atingido".into());
+                        return Err("reached the limit of 5000 entities in the scene".into());
                     }
                     let id = self.scene.add_mesh(shape);
                     self.scene.get_mut(id).unwrap().position = p;
@@ -322,9 +328,9 @@ impl Host for EngineHost<'_> {
                 ("scene", "all", []) => Ok(Value::list(
                     self.scene.entities.iter().map(|e| Value::Entity(e.id)).collect(),
                 )),
-                _ => Err(format!("`{o}` não tem o método `{name}` com esses argumentos")),
+                _ => Err(format!("`{o}` has no method `{name}` with these arguments")),
             },
-            Some(other) => Err(format!("`{}` não tem o método `{name}`", other.type_name())),
+            Some(other) => Err(format!("`{}` has no method `{name}`", other.type_name())),
         }
     }
 }
@@ -334,7 +340,7 @@ struct Running {
     name: String,
 }
 
-/// Uma sessão de jogo em execução.
+/// A running game session.
 pub struct Runtime {
     instances: HashMap<u64, Running>,
     pub time: f64,
@@ -344,7 +350,7 @@ pub struct Runtime {
 }
 
 impl Runtime {
-    /// Compila os scripts da cena, cria as instâncias e dispara `start`.
+    /// Compiles the scene's scripts, creates the instances and fires `start`.
     pub fn start(scene: &mut Scene, project_dir: &Path, logs: &mut Vec<LogLine>) -> Runtime {
         let mut rt = Runtime {
             instances: HashMap::new(),
@@ -368,7 +374,7 @@ impl Runtime {
                     let src = match std::fs::read_to_string(project_dir.join(&sref.path)) {
                         Ok(s) => s,
                         Err(e) => {
-                            log(logs, LogLevel::Error, format!("{}: não foi possível ler ({e})", sref.path));
+                            log(logs, LogLevel::Error, format!("{}: could not read ({e})", sref.path));
                             return None;
                         }
                     };
@@ -463,7 +469,7 @@ impl Runtime {
                     logs,
                     LogLevel::Error,
                     format!(
-                        "[{}] erro em `{event}` ({who}), {e} — script desativado nesta entidade",
+                        "[{}] error in `{event}` ({who}), {e} — script disabled on this entity",
                         running.name
                     ),
                 );
@@ -471,7 +477,7 @@ impl Runtime {
         }
     }
 
-    /// Entrega mensagens (`send`) e aplica destruições pendentes.
+    /// Delivers messages (`send`) and applies pending destroys.
     fn flush(&mut self, scene: &mut Scene, input: &InputState, dt: f64, logs: &mut Vec<LogLine>) {
         for _ in 0..8 {
             if self.queues.messages.is_empty() {
@@ -500,9 +506,12 @@ impl Runtime {
         }
         self.flush(scene, input, dt as f64, logs);
 
-        for (a, b) in physics::step(scene, dt) {
-            self.dispatch(scene, input, dt as f64, logs, a, "collide", &[Value::Entity(b)]);
-            self.dispatch(scene, input, dt as f64, logs, b, "collide", &[Value::Entity(a)]);
+        // `on collide(other, normal)`: the normal points from `other` towards the entity
+        // receiving the event (straight up when it is standing on `other`).
+        for c in physics::step(scene, dt) {
+            let n = c.normal;
+            self.dispatch(scene, input, dt as f64, logs, c.a, "collide", &[Value::Entity(c.b), to_v(n)]);
+            self.dispatch(scene, input, dt as f64, logs, c.b, "collide", &[Value::Entity(c.a), to_v(-n)]);
         }
         self.flush(scene, input, dt as f64, logs);
     }
@@ -514,21 +523,21 @@ mod tests {
     use crate::scene::ScriptRef;
 
     #[test]
-    fn script_move_entidade_e_envia_mensagem() {
+    fn script_moves_entity_and_sends_message() {
         let dir = std::env::temp_dir().join(format!("cryo_test_{}", std::process::id()));
         std::fs::create_dir_all(dir.join("scripts")).unwrap();
         std::fs::write(
             dir.join("scripts/A.cryo"),
-            "script A {\n prop vel: num = 1\n var n = 0\n\
-             on start() { self.send(\"soma\", 5) }\n\
-             on soma(q) { n += q \n hud(\"n=\" + n) }\n\
-             on update(dt) { self.position.x += vel * dt \n let c = scene.find(\"Chão\") \n if c != nil { c.destroy() } }\n}",
+            "script A {\n prop speed: num = 1\n var n = 0\n\
+             on start() { self.send(\"add\", 5) }\n\
+             on add(q) { n += q \n hud(\"n=\" + n) }\n\
+             on update(dt) { self.position.x += speed * dt \n let c = scene.find(\"Ground\") \n if c != nil { c.destroy() } }\n}",
         )
         .unwrap();
         let mut scene = Scene::default_scene();
-        let cube = scene.find_by_name("Cubo").unwrap();
+        let cube = scene.find_by_name("Cube").unwrap();
         let mut props = std::collections::BTreeMap::new();
-        props.insert("vel".to_string(), PropValue::Num(10.0));
+        props.insert("speed".to_string(), PropValue::Num(10.0));
         scene.get_mut(cube).unwrap().script = Some(ScriptRef { path: "scripts/A.cryo".into(), props });
         let mut logs = vec![];
         let mut rt = Runtime::start(&mut scene, &dir, &mut logs);
@@ -540,56 +549,370 @@ mod tests {
         let errs: Vec<_> = logs.iter().filter(|l| l.level == LogLevel::Error).map(|l| l.text.clone()).collect();
         assert!(errs.is_empty(), "{errs:?}");
         assert!((scene.get(cube).unwrap().position.x - 10.0).abs() < 1e-3);
-        assert!(scene.find_by_name("Chão").is_none());
+        assert!(scene.find_by_name("Ground").is_none());
         std::fs::remove_dir_all(dir).ok();
     }
 
-    /// O jogo de exemplo inteiro roda sem erros: andar, pular e coletar uma moeda.
+    // ------------------------------------------------------------------
+    // The example platformer, played by the test harness
+    // ------------------------------------------------------------------
+
+    struct Game {
+        dir: std::path::PathBuf,
+        scene: Scene,
+        rt: Runtime,
+        input: InputState,
+        logs: Vec<LogLine>,
+    }
+
+    impl Game {
+        fn new(tag: &str) -> Game {
+            let dir = std::env::temp_dir().join(format!("cryo_platformer_{}_{tag}", std::process::id()));
+            std::fs::remove_dir_all(&dir).ok();
+            let rel = crate::project::ensure_project(&dir).unwrap();
+            let mut scene = Scene::from_json(&std::fs::read_to_string(dir.join(rel)).unwrap()).unwrap();
+            let mut logs = vec![];
+            let rt = Runtime::start(&mut scene, &dir, &mut logs);
+            let mut g = Game { dir, scene, rt, input: InputState::default(), logs };
+            g.frames(30); // let everything settle on the ground
+            g
+        }
+        fn frame(&mut self) {
+            self.rt.update(&mut self.scene, &self.input, 1.0 / 60.0, &mut self.logs);
+            self.input.pressed.clear();
+            self.input.released.clear();
+        }
+        fn frames(&mut self, n: usize) {
+            for _ in 0..n {
+                self.frame();
+            }
+        }
+        fn press(&mut self, key: &str) {
+            self.input.pressed.insert(key.into());
+            self.input.down.insert(key.into());
+        }
+        fn release(&mut self, key: &str) {
+            self.input.released.insert(key.into());
+            self.input.down.remove(key);
+        }
+        fn tap(&mut self, key: &str) {
+            self.press(key);
+            self.frame();
+            self.release(key);
+        }
+        fn id(&self, name: &str) -> u64 {
+            self.scene.find_by_name(name).unwrap_or_else(|| panic!("no entity named {name}"))
+        }
+        fn pos(&self, name: &str) -> Vec3 {
+            self.scene.world_matrix(self.id(name)).w_axis.truncate()
+        }
+        fn grounded(&self, name: &str) -> bool {
+            self.scene.get(self.id(name)).unwrap().physics.as_ref().unwrap().grounded
+        }
+        fn teleport(&mut self, name: &str, p: Vec3) {
+            let id = self.id(name);
+            let e = self.scene.get_mut(id).unwrap();
+            e.position = p;
+            if let Some(ph) = &mut e.physics {
+                ph.velocity = Vec3::ZERO;
+            }
+        }
+        /// Runs until the player is on the ground again; returns the highest point reached.
+        fn until_landed(&mut self) -> f32 {
+            let mut top = f32::MIN;
+            for i in 0..600 {
+                self.frame();
+                top = top.max(self.pos("Player").y);
+                if i > 5 && self.grounded("Player") {
+                    break;
+                }
+            }
+            top
+        }
+        fn finish(self) {
+            let errs: Vec<_> =
+                self.logs.iter().filter(|l| l.level == LogLevel::Error).map(|l| l.text.clone()).collect();
+            assert!(errs.is_empty(), "{errs:?}");
+            std::fs::remove_dir_all(self.dir).ok();
+        }
+    }
+
     #[test]
-    fn jogo_de_exemplo_funciona() {
-        let dir = std::env::temp_dir().join(format!("cryo_exemplo_{}", std::process::id()));
-        std::fs::remove_dir_all(&dir).ok();
-        let rel = crate::project::ensure_project(&dir).unwrap();
-        let mut scene = Scene::from_json(&std::fs::read_to_string(dir.join(rel)).unwrap()).unwrap();
-        let mut logs = vec![];
-        let mut rt = Runtime::start(&mut scene, &dir, &mut logs);
-        let player = scene.find_by_name("Jogador").unwrap();
-        let total = scene.entities.len();
+    fn platformer_boots_and_idles_without_errors() {
+        let mut g = Game::new("boot");
+        g.frames(240);
+        assert!(g.grounded("Player"));
+        assert!(g.rt.hud.contains("Shards 0/5"), "{}", g.rt.hud);
+        assert!(g.rt.hud.contains("HP 3/3"), "{}", g.rt.hud);
+        g.finish();
+    }
 
-        let mut input = InputState::default();
-        for _ in 0..60 {
-            rt.update(&mut scene, &input, 1.0 / 60.0, &mut logs);
-        }
-        assert!(scene.get(player).unwrap().physics.as_ref().unwrap().grounded);
-
-        // anda para a direita e pula
-        let x0 = scene.get(player).unwrap().position.x;
-        input.down.insert("d".into());
-        input.pressed.insert("space".into());
-        rt.update(&mut scene, &input, 1.0 / 60.0, &mut logs);
-        input.pressed.clear();
-        let mut max_y: f32 = 0.0;
-        for _ in 0..30 {
-            rt.update(&mut scene, &input, 1.0 / 60.0, &mut logs);
-            max_y = max_y.max(scene.get(player).unwrap().position.y);
-        }
-        assert!(scene.get(player).unwrap().position.x > x0 + 2.0);
-        assert!(max_y > 1.5, "pulo: {max_y}");
-
-        // encosta em uma moeda
-        input.down.clear();
-        let coin = scene.entities.iter().find(|e| e.name == "Moeda").unwrap().position;
-        scene.get_mut(player).unwrap().position = coin;
+    #[test]
+    fn platformer_jumps_get_higher_in_a_chain() {
+        let mut g = Game::new("jumps");
+        let ground = g.pos("Player").y;
+        // run diagonally across the island so three jumps fit, and so the chain counts
+        g.teleport("Player", Vec3::new(-10.0, ground, 10.0));
+        g.frames(10);
+        g.press("w");
+        g.press("d");
+        g.frames(12);
+        let mut peaks = vec![];
         for _ in 0..3 {
-            rt.update(&mut scene, &input, 1.0 / 60.0, &mut logs);
+            g.press("space");
+            peaks.push(g.until_landed() - ground);
+            g.release("space");
+            g.frame();
         }
-        assert_eq!(rt.hud, "Moedas: 1");
-        assert_eq!(scene.entities.len(), total - 1);
+        assert!(peaks[0] > 1.8 && peaks[0] < 2.4, "single jump: {peaks:?}");
+        assert!(peaks[1] > peaks[0] + 0.4, "double jump: {peaks:?}");
+        assert!(peaks[2] > 3.7, "triple jump: {peaks:?}");
+        g.release("w");
+        g.finish();
+    }
 
-        let errs: Vec<_> = logs.iter().filter(|l| l.level == LogLevel::Error).map(|l| l.text.clone()).collect();
-        assert!(errs.is_empty(), "{errs:?}");
-        // o pulo e a moeda dispararam sons (mesmo sem placa de som no ambiente de teste)
-        assert!(rt.audio.played >= 2, "sons tocados: {}", rt.audio.played);
-        std::fs::remove_dir_all(dir).ok();
+    #[test]
+    fn platformer_backflip_long_jump_and_ground_pound() {
+        let mut g = Game::new("moves");
+        let start = g.pos("Player");
+        // backflip: crouch + jump while standing still
+        g.press("shift");
+        g.frames(3);
+        g.press("space");
+        let top = g.until_landed() - start.y;
+        g.release("space");
+        g.release("shift");
+        assert!(top > 3.4, "backflip height {top}");
+
+        // long jump: run, crouch + jump -> travels much further than a normal jump
+        g.teleport("Player", start);
+        g.frames(10);
+        g.press("w");
+        g.frames(40);
+        let from = g.pos("Player").z;
+        g.press("shift");
+        g.press("space");
+        g.frame();
+        g.release("shift");
+        g.until_landed();
+        g.release("space");
+        let dist = from - g.pos("Player").z;
+        assert!(dist > 6.5, "long jump distance {dist}");
+        g.release("w");
+
+        // ground pound: slam down much faster than falling
+        g.teleport("Player", start);
+        g.frames(10);
+        g.tap("space");
+        g.frames(20);
+        g.tap("shift");
+        g.frames(18);
+        let vy = g.scene.get(g.id("Player")).unwrap().physics.as_ref().unwrap().velocity.y;
+        assert!(vy < -20.0 || g.grounded("Player"), "ground pound speed {vy}");
+        g.until_landed();
+        g.finish();
+    }
+
+    #[test]
+    fn platformer_cap_flies_out_and_returns() {
+        let mut g = Game::new("cap");
+        let cap = g.id("Cap");
+        assert!(!g.scene.get(cap).unwrap().visible);
+        g.tap("f");
+        g.frames(12);
+        assert!(g.scene.get(cap).unwrap().visible, "cap should be flying");
+        let out = (g.pos("Cap") - g.pos("Player")).length();
+        assert!(out > 2.0, "cap distance {out}");
+        g.frames(120);
+        assert!(!g.scene.get(cap).unwrap().visible, "cap should be back home");
+        // and it can be thrown again
+        g.tap("f");
+        g.frames(5);
+        assert!(g.scene.get(cap).unwrap().visible);
+        g.finish();
+    }
+
+    #[test]
+    fn platformer_capture_the_hopper_and_super_jump() {
+        let mut g = Game::new("capture");
+        // stand facing the Hopper (the player starts facing -Z)
+        let hopper = g.pos("Hopper");
+        g.teleport("Player", hopper + Vec3::new(0.0, 0.2, 3.5));
+        g.frames(20);
+        g.tap("f");
+        g.frames(40);
+        let player = g.id("Player");
+        assert!(!g.scene.get(player).unwrap().visible, "player should be inside the Hopper");
+        let base = g.pos("Hopper").y;
+        g.frames(30);
+        g.tap("space");
+        let mut top = 0.0f32;
+        for _ in 0..90 {
+            g.frame();
+            top = top.max(g.pos("Hopper").y - base);
+        }
+        assert!(top > 6.8, "hopper jump {top}");
+        g.tap("e");
+        g.frames(3);
+        assert!(g.scene.get(player).unwrap().visible, "player should be out again");
+        g.frames(120);
+        g.finish();
+    }
+
+    #[test]
+    fn platformer_hopper_reaches_the_tower_shard() {
+        let mut g = Game::new("tower");
+        let hopper = g.pos("Hopper");
+        g.teleport("Player", hopper + Vec3::new(0.0, 0.2, 3.5));
+        g.frames(20);
+        g.tap("f");
+        g.frames(40);
+        // hop to the foot of the tower, then jump on top while pushing forward and right
+        g.teleport("Hopper", Vec3::new(8.0, 3.7, -55.5));
+        g.frames(30);
+        g.press("w");
+        g.tap("space");
+        g.frames(70);
+        g.release("w");
+        g.frames(80);
+        assert!(g.pos("Hopper").y > 9.5, "hopper should stand on the tower: {:?} hud {}", g.pos("Hopper"), g.rt.hud);
+        // leave the Hopper next to the shard and grab it
+        g.tap("e");
+        g.frames(5);
+        if let Some(shard) = g.scene.find_by_name("Frost Shard 2") {
+            let p = g.scene.get(shard).unwrap().position;
+            g.teleport("Player", p);
+            g.frames(5);
+        }
+        assert!(g.rt.hud.contains("Shards 1/5"), "{}", g.rt.hud);
+        g.finish();
+    }
+
+    #[test]
+    fn platformer_cap_bounce_crosses_the_big_gap() {
+        let mut g = Game::new("gap");
+        g.teleport("Player", Vec3::new(0.0, 3.85, -59.0));
+        g.frames(20);
+        // throw the cap from the edge and keep the button held so it hovers
+        g.press("w");
+        let mut thrown = false;
+        let mut jumped = false;
+        for _ in 0..400 {
+            let z = g.pos("Player").z;
+            if !thrown && z < -62.6 {
+                g.press("f");
+                thrown = true;
+            }
+            if !jumped && z < -63.6 {
+                g.press("space");
+                jumped = true;
+            }
+            g.frame();
+            if jumped && g.grounded("Player") {
+                break;
+            }
+            assert!(g.pos("Player").y > -4.0, "fell into the sea at {:?}", g.pos("Player"));
+        }
+        let p = g.pos("Player");
+        assert!(p.z < -74.5 && p.y > 3.5, "should land on Cap Isle, got {p:?}");
+        g.release("f");
+        g.release("w");
+        g.finish();
+    }
+
+    #[test]
+    fn platformer_wall_jumps_climb_the_shaft() {
+        let mut g = Game::new("walls");
+        // between the two walls (inner faces at x = -9.5 and x = -6.5)
+        g.teleport("Player", Vec3::new(-8.0, 3.85, -58.0));
+        g.frames(20);
+        let mut top = 0.0f32;
+        let mut side = "a"; // push left first (towards Wall A at -X)
+        g.press("space");
+        g.frame();
+        g.release("space");
+        g.press(side);
+        for _ in 0..600 {
+            g.frame();
+            let p = g.pos("Player");
+            top = top.max(p.y);
+            let x = p.x;
+            // when touching a wall, jump off it and push towards the other one
+            let touching = if side == "a" { x < -9.05 } else { x > -6.95 };
+            if touching && !g.grounded("Player") {
+                g.release(side);
+                side = if side == "a" { "d" } else { "a" };
+                g.press(side);
+                g.tap("space");
+            }
+            if g.rt.hud.contains("Shards 1/5") {
+                break;
+            }
+        }
+        assert!(g.rt.hud.contains("Shards 1/5"), "highest point {top}, hud: {}", g.rt.hud);
+        g.finish();
+    }
+
+    #[test]
+    fn platformer_pickups_enemies_platforms_and_respawn() {
+        let mut g = Game::new("misc");
+        // coins
+        let coin = g.scene.entities.iter().find(|e| e.name == "Coin").unwrap().id;
+        let p = g.scene.world_matrix(coin).w_axis.truncate();
+        g.teleport("Player", p);
+        g.frames(3);
+        assert!(g.rt.hud.contains("Coins 1"), "{}", g.rt.hud);
+        assert!(g.scene.get(coin).is_none());
+
+        // the moving platform carries the player along
+        let plat = g.pos("Moving Platform");
+        g.teleport("Player", plat + Vec3::new(0.0, 1.1, 0.0));
+        g.frames(150);
+        let d = g.pos("Player") - g.pos("Moving Platform");
+        assert!(d.x.abs() < 1.0 && d.z.abs() < 1.0 && (d.y - 1.05).abs() < 0.2, "not carried: {d:?}");
+        assert!((g.pos("Moving Platform").z - plat.z).abs() > 2.0, "platform did not move");
+
+        // stomping a Spiker removes it and bounces the player; touching its side hurts
+        let spikers = g.scene.entities.iter().filter(|e| e.name == "Spiker").count();
+        let sp = g.pos("Spiker");
+        g.teleport("Player", sp + Vec3::new(0.0, 2.2, 0.0));
+        g.frames(40);
+        assert_eq!(g.scene.entities.iter().filter(|e| e.name == "Spiker").count(), spikers - 1);
+        assert!(g.rt.hud.contains("HP 3/3"), "{}", g.rt.hud);
+        g.until_landed();
+        let sp = g.pos("Spiker");
+        g.teleport("Player", sp + Vec3::new(0.0, 0.25, 0.9));
+        g.frames(10);
+        assert!(g.rt.hud.contains("HP 2/3"), "{}", g.rt.hud);
+
+        // checkpoint, then a fall into the sea brings the player back to it
+        let cp = g.scene.entities.iter().filter(|e| e.name == "Checkpoint").nth(1).unwrap().position;
+        g.teleport("Player", cp + Vec3::new(0.0, 0.9, 0.0));
+        g.frames(30);
+        g.teleport("Player", Vec3::new(30.0, 0.0, -30.0));
+        g.frames(90);
+        let back = g.pos("Player");
+        assert!((back - cp).length() < 3.0, "respawned at {back:?}, checkpoint {cp:?}");
+
+        // the bounce pad reaches the summit
+        let pad = g.pos("Bounce Pad");
+        g.teleport("Player", pad + Vec3::new(0.0, 1.2, 0.0));
+        let mut top = 0.0f32;
+        for _ in 0..120 {
+            g.frame();
+            top = top.max(g.pos("Player").y);
+        }
+        assert!(top > 12.2, "bounce pad height {top}");
+
+        // every shard can be collected, which wins the game
+        for n in 1..=5 {
+            let p = g.pos(&format!("Frost Shard {n}"));
+            g.teleport("Player", p);
+            g.frames(3);
+        }
+        assert!(g.rt.hud.contains("Shards 5/5"), "{}", g.rt.hud);
+        assert!(g.rt.hud.contains("Thanks for playing"), "{}", g.rt.hud);
+        assert!(g.rt.audio.played > 5);
+        g.finish();
     }
 }

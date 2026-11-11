@@ -1,4 +1,4 @@
-//! Viewports 3D: aba Cena (câmera do editor, seleção, gizmos) e aba Jogo.
+//! 3D viewports: Scene tab (editor camera, selection, gizmos) and Game tab.
 
 use crate::app::{State, ACCENT};
 use crate::render::{ortho, RenderFrame};
@@ -20,7 +20,7 @@ pub struct GizmoDrag {
     pub axis: usize,
 }
 
-/// Uma posição de câmera: ponto de interesse + ângulos + distância.
+/// A camera pose: point of interest + angles + distance.
 #[derive(Clone, Copy)]
 pub struct Pose {
     pub pivot: Vec3,
@@ -36,28 +36,28 @@ struct Anim {
     t: f32,
 }
 
-/// Câmera do editor: voo livre, órbita, vistas ortográficas, marcadores e transições suaves.
+/// Editor camera: free flight, orbit, orthographic views, bookmarks and smooth transitions.
 pub struct EditorCamera {
     pub pos: Vec3,
     pub yaw: f32,
     pub pitch: f32,
-    /// Distância até o ponto de interesse (pivô da órbita).
+    /// Distance to the point of interest (orbit pivot).
     pub dist: f32,
-    /// Campo de visão vertical, em graus.
+    /// Vertical field of view, in degrees.
     pub fov: f32,
     pub ortho: bool,
-    /// Velocidade de voo (m/s).
+    /// Flight speed (m/s).
     pub speed: f32,
-    /// Gestos de trackpad: dois dedos orbitam, Shift desloca, pinça aproxima.
+    /// Trackpad gestures: two fingers orbit, Shift pans, pinch zooms.
     pub trackpad: bool,
-    /// Aceleração suave ao voar.
+    /// Smooth acceleration while flying.
     pub smooth: bool,
     pub bookmarks: [Option<Pose>; 4],
     vel: Vec3,
     anim: Option<Anim>,
-    /// Tempo restante mostrando o aviso de velocidade.
+    /// Time left showing the speed notice.
     speed_flash: f32,
-    pub view_name: &'static str,
+    pub view_name: String,
 }
 
 impl Default for EditorCamera {
@@ -76,7 +76,7 @@ impl Default for EditorCamera {
             vel: Vec3::ZERO,
             anim: None,
             speed_flash: 0.0,
-            view_name: "",
+            view_name: String::new(),
         };
         c.pos = Vec3::new(0.0, 0.5, 0.0) - c.forward() * c.dist;
         c
@@ -124,7 +124,7 @@ impl EditorCamera {
         self.ortho = p.ortho;
         self.pos = p.pivot - self.forward() * self.dist;
     }
-    /// Vai suavemente até outra posição de câmera.
+    /// Moves smoothly to another camera pose.
     pub fn animate_to(&mut self, to: Pose) {
         self.vel = Vec3::ZERO;
         self.anim = Some(Anim { from: self.pose(), to, t: 0.0 });
@@ -136,35 +136,35 @@ impl EditorCamera {
     fn look(&mut self, dx: f32, dy: f32) {
         self.yaw -= dx * 0.005;
         self.pitch = (self.pitch - dy * 0.005).clamp(-FRAC_PI_2, FRAC_PI_2);
-        self.view_name = "";
+        self.view_name.clear();
     }
     fn orbit(&mut self, dx: f32, dy: f32) {
         let pivot = self.pivot();
         self.look(dx, dy);
         self.pos = pivot - self.forward() * self.dist;
     }
-    /// Desloca a câmera no plano da tela; `per_px` = metros por pixel na distância do pivô.
+    /// Pans the camera in the screen plane; `per_px` = metres per pixel at the pivot distance.
     fn pan(&mut self, dx: f32, dy: f32, per_px: f32) {
         self.pos += (-self.right() * dx + self.up() * dy) * per_px;
     }
-    /// Aproxima/afasta mantendo o pivô (fator < 1 aproxima).
+    /// Zooms in/out keeping the pivot (factor < 1 zooms in).
     fn zoom(&mut self, factor: f32) {
         let pivot = self.pivot();
         self.dist = (self.dist * factor).clamp(0.2, 2000.0);
         self.pos = pivot - self.forward() * self.dist;
     }
 
-    /// Vista alinhada a um eixo: a câmera olha na direção `-axis` (a partir do lado `+axis`).
-    pub fn view_from(&mut self, axis: Vec3, name: &'static str) {
+    /// Axis-aligned view: the camera looks along `-axis` (from the `+axis` side).
+    pub fn view_from(&mut self, axis: Vec3, name: impl Into<String>) {
         let f = -axis;
         let pitch = f.y.clamp(-1.0, 1.0).asin();
-        // topo/base: alinhado aos eixos (X para a direita)
+        // top/bottom: aligned with the axes (X to the right)
         let yaw = if f.x.abs() + f.z.abs() < 1e-4 { 0.0 } else { (-f.x).atan2(-f.z) };
         self.animate_to(Pose { pivot: self.pivot(), yaw, pitch, dist: self.dist, ortho: true });
-        self.view_name = name;
+        self.view_name = name.into();
     }
 
-    /// Enquadra uma esfera (centro, raio) mantendo a direção atual.
+    /// Frames a sphere (centre, radius) keeping the current direction.
     pub fn frame(&mut self, center: Vec3, radius: f32) {
         let dist = (radius / (self.fov.to_radians() * 0.5).tan().max(0.05) * 1.25 + 0.5).clamp(1.0, 1500.0);
         self.animate_to(Pose { pivot: center, yaw: self.yaw, pitch: self.pitch, dist, ortho: self.ortho });
@@ -175,7 +175,7 @@ impl EditorCamera {
         a.t = (a.t + dt / 0.22).min(1.0);
         let k = a.t * a.t * (3.0 - 2.0 * a.t);
         let (from, to, done) = (a.from, a.to, a.t >= 1.0);
-        // menor caminho angular
+        // shortest angular path
         let mut dy = (to.yaw - from.yaw) % std::f32::consts::TAU;
         if dy > std::f32::consts::PI {
             dy -= std::f32::consts::TAU;
@@ -187,7 +187,7 @@ impl EditorCamera {
             yaw: from.yaw + dy * k,
             pitch: from.pitch + (to.pitch - from.pitch) * k,
             dist: from.dist + (to.dist - from.dist) * k,
-            // perspectiva durante a transição; ortográfica só ao chegar
+            // perspective during the transition; orthographic only on arrival
             ortho: if done { to.ortho } else { from.ortho && to.ortho },
         });
         if done {
@@ -197,7 +197,7 @@ impl EditorCamera {
     }
 }
 
-/// Projeção em perspectiva no padrão OpenGL (profundidade de -1 a 1).
+/// Perspective projection, OpenGL convention (depth from -1 to 1).
 pub fn perspective(fov_y: f32, aspect: f32, near: f32, far: f32) -> Mat4 {
     let f = 1.0 / (fov_y * 0.5).tan();
     Mat4::from_cols_array(&[
@@ -235,8 +235,8 @@ fn dist_to_segment(p: Pos2, a: Pos2, b: Pos2) -> f32 {
     (p - (a + ab * t)).length()
 }
 
-/// Interseção raio × caixa alinhada (em espaço local). Devolve o `t` de entrada.
-/// Aceita `t` negativo (necessário na vista ortográfica, cujo raio nasce atrás da cena).
+/// Ray × axis-aligned box intersection (in local space). Returns the entry `t`.
+/// Accepts negative `t` (needed in orthographic views, whose ray starts behind the scene).
 fn ray_box(o: Vec3, d: Vec3, half: Vec3) -> Option<f32> {
     let mut tmin = f32::NEG_INFINITY;
     let mut tmax = f32::INFINITY;
@@ -263,7 +263,7 @@ const AXIS_COLORS: [Color32; 3] = [
 ];
 
 impl State {
-    /// Entidade sob o raio. `min_t` descarta o que está atrás da câmera (perspectiva).
+    /// Entity under the ray. `min_t` discards whatever is behind the camera (perspective).
     fn pick(&self, origin: Vec3, dir: Vec3, min_t: f32) -> Option<u64> {
         let mut best: Option<(f32, u64)> = None;
         for e in &self.scene.entities {
@@ -278,11 +278,11 @@ impl State {
                     }
                     let inv = world.inverse();
                     let (center, half) = m.local_bounds();
-                    // sem normalizar a direção, `t` continua valendo no espaço do mundo
+                    // without normalising the direction, `t` stays valid in world space
                     ray_box(inv.transform_point3(origin) - center, inv.transform_vector3(dir), half)
                 }
                 None => {
-                    // luzes, câmeras e vazios: pequena esfera de seleção
+                    // lights, cameras and empties: small selection sphere
                     let c = world.w_axis.truncate();
                     let oc = origin - c;
                     let b = oc.dot(dir);
@@ -305,7 +305,7 @@ impl State {
             ui.painter().text(
                 rect.center(),
                 Align2::CENTER_CENTER,
-                self.render_error.as_deref().unwrap_or("Renderizador indisponível"),
+                self.render_error.clone().unwrap_or(tr!("Renderer unavailable", "Renderizador indisponível")),
                 FontId::proportional(14.0),
                 Color32::LIGHT_RED,
             );
@@ -321,7 +321,7 @@ impl State {
         ui.painter().add(egui::PaintCallback { rect, callback: Arc::new(cb) });
     }
 
-    /// Centro e raio aproximados de uma entidade no mundo.
+    /// Approximate world-space centre and radius of an entity.
     fn entity_sphere(&self, id: u64) -> (Vec3, f32) {
         let world = self.scene.world_matrix(id);
         let (scale, _, pos) = world.to_scale_rotation_translation();
@@ -358,7 +358,7 @@ impl State {
         }
     }
 
-    /// Move a câmera do jogo (a selecionada, ou a principal) para a vista atual do editor.
+    /// Moves the game camera (the selected one, or the main one) to the editor's current view.
     pub fn align_game_camera_to_view(&mut self) {
         let target = self
             .selected
@@ -368,13 +368,13 @@ impl State {
             Some(id) => {
                 self.scene.set_world_pose(id, self.cam.pos, self.cam.rotation());
                 let name = self.scene.get(id).map(|e| e.name.clone()).unwrap_or_default();
-                self.info(format!("Câmera \"{name}\" alinhada à vista do editor."));
+                self.info(tr!("Camera \"{name}\" aligned to the editor view.", "Câmera \"{name}\" alinhada à vista do editor."));
             }
-            None => self.info("Não há câmera na cena para alinhar."),
+            None => self.info(tr!("There is no camera in the scene to align.", "Não há câmera na cena para alinhar.")),
         }
     }
 
-    /// Leva a vista do editor para a posição/rotação do objeto selecionado.
+    /// Takes the editor view to the selected object's position/rotation.
     pub fn align_view_to_selected(&mut self) {
         let Some(id) = self.selected.filter(|id| self.scene.get(*id).is_some()) else { return };
         let (_, rot, pos) = self.scene.world_matrix(id).to_scale_rotation_translation();
@@ -382,38 +382,38 @@ impl State {
         let dist = self.cam.dist;
         let forward = Quat::from_euler(EulerRot::YXZ, yaw, pitch, 0.0) * Vec3::NEG_Z;
         self.cam.animate_to(Pose { pivot: pos + forward * dist, yaw, pitch, dist, ortho: false });
-        self.cam.view_name = "";
+        self.cam.view_name.clear();
     }
 
     fn camera_menu(&mut self, ui: &mut egui::Ui) {
         ui.set_min_width(250.0);
-        ui.label(egui::RichText::new("Projeção").strong());
+        ui.label(egui::RichText::new(tr!("Projection", "Projeção")).strong());
         ui.horizontal(|ui| {
-            if ui.selectable_label(!self.cam.ortho, "Perspectiva").clicked() {
+            if ui.selectable_label(!self.cam.ortho, tr!("Perspective", "Perspectiva")).clicked() {
                 self.cam.ortho = false;
-                self.cam.view_name = "";
+                self.cam.view_name.clear();
             }
-            if ui.selectable_label(self.cam.ortho, "Ortográfica").on_hover_text("Tecla O").clicked() {
+            if ui.selectable_label(self.cam.ortho, tr!("Orthographic", "Ortográfica")).on_hover_text(tr!("O key", "Tecla O")).clicked() {
                 self.cam.ortho = true;
             }
         });
-        ui.add(egui::Slider::new(&mut self.cam.fov, 20.0..=110.0).suffix("°").text("Campo de visão"));
+        ui.add(egui::Slider::new(&mut self.cam.fov, 20.0..=110.0).suffix("°").text(tr!("Field of view", "Campo de visão")));
 
         ui.separator();
-        ui.label(egui::RichText::new("Vistas").strong());
+        ui.label(egui::RichText::new(tr!("Views", "Vistas")).strong());
         egui::Grid::new("vistas").num_columns(3).show(ui, |ui| {
             for (i, (label, axis)) in [
-                ("Frente", Vec3::Z),
-                ("Direita", Vec3::X),
-                ("Topo", Vec3::Y),
-                ("Trás", Vec3::NEG_Z),
-                ("Esquerda", Vec3::NEG_X),
-                ("Base", Vec3::NEG_Y),
+                (tr!("Front", "Frente"), Vec3::Z),
+                (tr!("Right", "Direita"), Vec3::X),
+                (tr!("Top", "Topo"), Vec3::Y),
+                (tr!("Back", "Trás"), Vec3::NEG_Z),
+                (tr!("Left", "Esquerda"), Vec3::NEG_X),
+                (tr!("Bottom", "Base"), Vec3::NEG_Y),
             ]
             .into_iter()
             .enumerate()
             {
-                if ui.button(label).clicked() {
+                if ui.button(&label).clicked() {
                     self.cam.view_from(axis, label);
                 }
                 if i == 2 {
@@ -423,30 +423,30 @@ impl State {
         });
 
         ui.separator();
-        ui.label(egui::RichText::new("Navegação").strong());
-        ui.add(egui::Slider::new(&mut self.cam.speed, 0.5..=100.0).logarithmic(true).suffix(" m/s").text("Velocidade"))
-            .on_hover_text("Também muda com a roda do mouse enquanto você voa (botão direito)");
-        ui.checkbox(&mut self.cam.smooth, "Movimento suave");
-        ui.checkbox(&mut self.cam.trackpad, "Gestos de trackpad")
-            .on_hover_text("Dois dedos orbitam · Shift + dois dedos desloca · pinça aproxima");
-        ui.checkbox(&mut self.show_grid, "Mostrar grade");
+        ui.label(egui::RichText::new(tr!("Navigation", "Navegação")).strong());
+        ui.add(egui::Slider::new(&mut self.cam.speed, 0.5..=100.0).logarithmic(true).suffix(" m/s").text(tr!("Speed", "Velocidade")))
+            .on_hover_text(tr!("Also changes with the mouse wheel while you fly (right button)", "Também muda com a roda do mouse enquanto você voa (botão direito)"));
+        ui.checkbox(&mut self.cam.smooth, tr!("Smooth movement", "Movimento suave"));
+        ui.checkbox(&mut self.cam.trackpad, tr!("Trackpad gestures", "Gestos de trackpad"))
+            .on_hover_text(tr!("Two fingers orbit · Shift + two fingers pan · pinch zooms", "Dois dedos orbitam · Shift + dois dedos desloca · pinça aproxima"));
+        ui.checkbox(&mut self.show_grid, tr!("Show grid", "Mostrar grade"));
 
         ui.separator();
-        if ui.button("Enquadrar seleção            F").clicked() {
+        if ui.button(tr!("Frame selection              F", "Enquadrar seleção            F")).clicked() {
             self.focus_selected();
             ui.close();
         }
-        if ui.button("Enquadrar tudo            Home").clicked() {
+        if ui.button(tr!("Frame all                 Home", "Enquadrar tudo            Home")).clicked() {
             self.frame_all();
             ui.close();
         }
-        if ui.button("Alinhar vista ao objeto selecionado").clicked() {
+        if ui.button(tr!("Align view to selected object", "Alinhar vista ao objeto selecionado")).clicked() {
             self.align_view_to_selected();
             ui.close();
         }
         if ui
-            .button("Alinhar câmera do jogo à vista")
-            .on_hover_text("Ctrl+Shift+F — posiciona a câmera do jogo exatamente onde você está olhando")
+            .button(tr!("Align game camera to view", "Alinhar câmera do jogo à vista"))
+            .on_hover_text(tr!("Ctrl+Shift+F — puts the game camera exactly where you are looking", "Ctrl+Shift+F — posiciona a câmera do jogo exatamente onde você está olhando"))
             .clicked()
         {
             self.align_game_camera_to_view();
@@ -454,13 +454,13 @@ impl State {
         }
 
         ui.separator();
-        ui.label(egui::RichText::new("Marcadores de câmera").strong());
+        ui.label(egui::RichText::new(tr!("Camera bookmarks", "Marcadores de câmera")).strong());
         ui.horizontal(|ui| {
             for i in 0..4 {
                 let has = self.cam.bookmarks[i].is_some();
                 let resp = ui
-                    .add_enabled(has, egui::Button::new(format!("Ir {}", i + 1)))
-                    .on_hover_text(format!("Tecla {}", i + 1));
+                    .add_enabled(has, egui::Button::new(tr!("Go {}", "Ir {}", i + 1)))
+                    .on_hover_text(tr!("Key {}", "Tecla {}", i + 1));
                 if resp.clicked() {
                     if let Some(p) = self.cam.bookmarks[i] {
                         self.cam.animate_to(p);
@@ -470,14 +470,14 @@ impl State {
         });
         ui.horizontal(|ui| {
             for i in 0..4 {
-                if ui.small_button(format!("Salvar {}", i + 1)).on_hover_text(format!("Ctrl+{}", i + 1)).clicked() {
+                if ui.small_button(tr!("Save {}", "Salvar {}", i + 1)).on_hover_text(format!("Ctrl+{}", i + 1)).clicked() {
                     self.cam.bookmarks[i] = Some(self.cam.pose());
                 }
             }
         });
     }
 
-    /// Navegação da câmera do editor. Devolve `true` enquanto o usuário está voando.
+    /// Editor camera navigation. Returns `true` while the user is flying.
     fn camera_input(&mut self, ui: &egui::Ui, resp: &egui::Response, rect: Rect) -> bool {
         let ctx = ui.ctx().clone();
         let dt = ctx.input(|i| i.stable_dt).min(0.1);
@@ -496,10 +496,10 @@ impl State {
             self.cam.cancel_anim();
         }
 
-        // --- arrastar ---
+        // --- dragging ---
         if resp.dragged_by(PointerButton::Secondary) {
             if alt {
-                // Alt + botão direito: aproximar/afastar (dolly)
+                // Alt + right button: dolly in/out
                 self.cam.zoom((-(delta.x - delta.y) * 0.006).exp());
             } else {
                 self.cam.look(delta.x, delta.y);
@@ -512,7 +512,7 @@ impl State {
             self.cam.orbit(delta.x, delta.y);
         }
 
-        // --- voo (botão direito segurado) ---
+        // --- flight (right button held) ---
         let flying = !alt
             && (resp.dragged_by(PointerButton::Secondary)
                 || (resp.hovered() && ctx.input(|i| i.pointer.secondary_down())));
@@ -530,7 +530,7 @@ impl State {
                     i.modifiers.shift,
                 )
             });
-            // WASD só enquanto voa (fora do voo, W/E/R trocam a ferramenta); setas valem sempre
+            // WASD only while flying (otherwise W/E/R switch tools); arrow keys always work
             let dir = if flying { mv + arrows } else { arrows };
             if dir != Vec3::ZERO {
                 let d = dir.normalize();
@@ -553,7 +553,7 @@ impl State {
             self.cam.vel = Vec3::ZERO;
         }
 
-        // --- roda / trackpad / pinça ---
+        // --- wheel / trackpad / pinch ---
         if resp.hovered() {
             let (scroll, pinch) = ctx.input(|i| (i.smooth_scroll_delta, i.zoom_delta()));
             if pinch != 1.0 {
@@ -563,7 +563,7 @@ impl State {
             if scroll != egui::Vec2::ZERO {
                 self.cam.cancel_anim();
                 if flying {
-                    // como na Unreal: a roda ajusta a velocidade de voo
+                    // as in Unreal: the wheel adjusts flight speed
                     self.cam.speed = (self.cam.speed * (scroll.y * 0.004).exp()).clamp(0.5, 100.0);
                     self.cam.speed_flash = 1.2;
                 } else if self.cam.trackpad {
@@ -582,7 +582,7 @@ impl State {
             ctx.request_repaint();
         }
 
-        // --- atalhos ---
+        // --- shortcuts ---
         if resp.hovered() && !typing && !flying {
             let pressed = |k: Key| ctx.input(|i| i.key_pressed(k));
             if pressed(Key::F) {
@@ -598,14 +598,14 @@ impl State {
             if pressed(Key::O) && !cmd {
                 self.cam.ortho = !self.cam.ortho;
                 if !self.cam.ortho {
-                    self.cam.view_name = "";
+                    self.cam.view_name.clear();
                 }
             }
             for (i, key) in [Key::Num1, Key::Num2, Key::Num3, Key::Num4].into_iter().enumerate() {
                 if pressed(key) {
                     if cmd {
                         self.cam.bookmarks[i] = Some(self.cam.pose());
-                        self.info(format!("Marcador de câmera {} salvo.", i + 1));
+                        self.info(tr!("Camera bookmark {} saved.", "Marcador de câmera {} salvo.", i + 1));
                     } else if let Some(p) = self.cam.bookmarks[i] {
                         self.cam.animate_to(p);
                     }
@@ -633,7 +633,7 @@ impl State {
         let vp = proj * view;
         let cam_rot_inv = self.cam.rotation().inverse();
 
-        // ---------- cubo de orientação (canto superior direito) ----------
+        // ---------- orientation gizmo (top-right corner) ----------
         let widget_c = rect.right_top() + egui::vec2(-52.0, 56.0);
         let widget_r = 30.0;
         let pointer = resp.hover_pos().or(resp.interact_pointer_pos());
@@ -652,9 +652,9 @@ impl State {
         let over_widget = pointer.map(|p| (p - widget_c).length() < widget_r + 14.0).unwrap_or(false);
         if resp.clicked() {
             if let Some((i, positive)) = widget_hover {
-                let names = [["Direita", "Esquerda"], ["Topo", "Base"], ["Frente", "Trás"]];
+                let names = [[tr!("Right", "Direita"), tr!("Left", "Esquerda")], [tr!("Top", "Topo"), tr!("Bottom", "Base")], [tr!("Front", "Frente"), tr!("Back", "Trás")]];
                 let axis = if positive { AXES[i] } else { -AXES[i] };
-                self.cam.view_from(axis, names[i][!positive as usize]);
+                self.cam.view_from(axis, names[i][!positive as usize].clone());
             }
         }
 
@@ -677,7 +677,7 @@ impl State {
                 let mut best = 10.0;
                 for i in 0..3 {
                     if let Some((a, b)) = segs[i] {
-                        // ignora o trecho colado no centro para não brigar entre eixos
+                        // ignores the stretch next to the centre so the axes do not fight
                         let a2 = a + (b - a) * 0.15;
                         let d = dist_to_segment(p, a2, b);
                         if d < best {
@@ -721,7 +721,7 @@ impl State {
         }
         if resp.drag_stopped() {
             if let (Some(_), Some(id)) = (self.drag.take(), self.selected) {
-                // arredonda para evitar ruído numérico na cena salva
+                // rounds to avoid numeric noise in the saved scene
                 if let Some(e) = self.scene.get_mut(id) {
                     let r = |v: Vec3| (v * 1000.0).round() / 1000.0;
                     e.position = r(e.position);
@@ -731,7 +731,7 @@ impl State {
             }
         }
 
-        // ---------- seleção por clique (duplo clique também enquadra) ----------
+        // ---------- click selection (double-click also frames) ----------
         if resp.clicked() && hovered_axis.is_none() && widget_hover.is_none() {
             if let Some(p) = resp.interact_pointer_pos() {
                 let (o, d) = screen_ray(vp, rect, p);
@@ -742,10 +742,10 @@ impl State {
             self.focus_selected();
         }
 
-        // ---------- desenho 3D ----------
+        // ---------- 3D drawing ----------
         let mut frame = RenderFrame::from_scene(&self.scene, &mut self.assets, view, proj, self.selected);
         if self.cam.ortho {
-            // na vista ortográfica a "câmera" não tem posição útil: sombras em volta do pivô
+            // in orthographic views the "camera" has no useful position: shadows around the pivot
             frame.shadow = frame.shadow.map(|(_, r)| (self.cam.pivot(), r.max(self.cam.dist)));
         }
         if self.show_grid {
@@ -766,7 +766,7 @@ impl State {
                     frame.add_frustum(world, l.angle * 2.0, 1.0, l.range.min(6.0), [1.0, 0.9, 0.4, 0.8]);
                 }
             }
-            // colisor de caixa do objeto selecionado (verde), como nas engines conhecidas
+            // box collider of the selected object (green), as in the well-known engines
             if let Some(p) = &e.physics {
                 if p.collider == crate::scene::ColliderShape::Box {
                     let (c, h) = e.mesh.as_ref().map(|m| m.local_bounds()).unwrap_or((Vec3::ZERO, Vec3::splat(0.5)));
@@ -776,7 +776,7 @@ impl State {
         }
         self.paint_3d(ui, rect, frame);
 
-        // ---------- sobreposições 2D ----------
+        // ---------- 2D overlays ----------
         let painter = ui.painter_at(rect);
         for e in &self.scene.entities {
             let icon = if e.light.is_some() {
@@ -810,7 +810,7 @@ impl State {
             for i in 0..3 {
                 let Some((a, b)) = segs[i] else { continue };
                 if (b - a).length() < 2.0 {
-                    continue; // eixo apontando para a câmera (vistas ortográficas)
+                    continue; // axis pointing at the camera (orthographic views)
                 }
                 let hot = hovered_axis == Some(i);
                 let color = if hot { Color32::from_rgb(255, 225, 60) } else { AXIS_COLORS[i] };
@@ -839,7 +839,7 @@ impl State {
             }
         }
 
-        // cubo de orientação
+        // orientation gizmo
         painter.circle_filled(widget_c, widget_r + 13.0, Color32::from_black_alpha(if over_widget { 110 } else { 60 }));
         for (v, pos, i, positive) in &ends {
             let hot = widget_hover == Some((*i, *positive));
@@ -862,7 +862,7 @@ impl State {
                 painter.circle_filled(*pos, 5.5, col.gamma_multiply(0.75));
             }
         }
-        let proj_name = if self.cam.ortho { "Ortográfica" } else { "Perspectiva" };
+        let proj_name = if self.cam.ortho { tr!("Orthographic", "Ortográfica") } else { tr!("Perspective", "Perspectiva") };
         let label = if self.cam.view_name.is_empty() {
             proj_name.to_string()
         } else {
@@ -880,19 +880,19 @@ impl State {
             painter.text(
                 rect.center_top() + egui::vec2(0.0, 40.0),
                 Align2::CENTER_TOP,
-                format!("Velocidade da câmera: {:.1} m/s", self.cam.speed),
+                tr!("Camera speed: {:.1} m/s", "Velocidade da câmera: {:.1} m/s", self.cam.speed),
                 FontId::proportional(15.0),
                 Color32::WHITE,
             );
         }
 
-        // legenda
+        // hint line
         let hint = if self.playing() {
-            "Modo jogo em execução — veja a aba Jogo"
+            tr!("Game running — see the Game tab", "Modo jogo em execução — veja a aba Jogo")
         } else if self.cam.trackpad {
-            "Dois dedos: orbitar  |  Shift + dois dedos: deslocar  |  Pinça: zoom  |  Botão direito + WASD: voar  |  F: enquadrar"
+            tr!("Two fingers: orbit  |  Shift + two fingers: pan  |  Pinch: zoom  |  Right button + WASD: fly  |  F: frame", "Dois dedos: orbitar  |  Shift + dois dedos: deslocar  |  Pinça: zoom  |  Botão direito + WASD: voar  |  F: enquadrar")
         } else {
-            "Botão direito + WASD: voar (roda = velocidade)  |  Alt + arrastar: orbitar  |  Botão do meio: deslocar  |  Roda: zoom  |  F: enquadrar"
+            tr!("Right button + WASD: fly (wheel = speed)  |  Alt + drag: orbit  |  Middle button: pan  |  Wheel: zoom  |  F: frame", "Botão direito + WASD: voar (roda = velocidade)  |  Alt + arrastar: orbitar  |  Botão do meio: deslocar  |  Roda: zoom  |  F: enquadrar")
         };
         painter.text(
             rect.left_bottom() + egui::vec2(10.0, -8.0),
@@ -905,10 +905,10 @@ impl State {
             painter.rect_stroke(rect.shrink(1.0), 0.0, Stroke::new(2.0, ACCENT), egui::StrokeKind::Inside);
         }
 
-        // menu da câmera (canto superior esquerdo)
+        // camera menu (top-left corner)
         let bar = Rect::from_min_size(rect.left_top() + egui::vec2(8.0, 8.0), egui::vec2(260.0, 24.0));
         let mut child = ui.new_child(UiBuilder::new().max_rect(bar).layout(egui::Layout::left_to_right(egui::Align::Center)));
-        child.menu_button("🎥 Câmera", |ui| self.camera_menu(ui));
+        child.menu_button(tr!("🎥 Camera", "🎥 Câmera"), |ui| self.camera_menu(ui));
         child.label(
             egui::RichText::new(format!("{:.0} m/s", self.cam.speed)).small().color(Color32::from_white_alpha(170)),
         );
@@ -927,7 +927,7 @@ impl State {
             painter.text(
                 rect.center(),
                 Align2::CENTER_CENTER,
-                "Nenhuma câmera na cena.\nCrie uma em Objeto → Câmera.",
+                tr!("No camera in the scene.\nCreate one in Object > Camera.", "Nenhuma câmera na cena.\nCrie uma em Objeto > Câmera."),
                 FontId::proportional(15.0),
                 Color32::from_gray(170),
             );
@@ -958,12 +958,12 @@ impl State {
                     painter.text(
                         rect.center_top() + egui::vec2(0.0, 14.0),
                         Align2::CENTER_TOP,
-                        "⏸ PAUSADO",
+                        tr!("⏸ PAUSED", "⏸ PAUSADO"),
                         FontId::proportional(16.0),
                         Color32::from_rgb(255, 210, 80),
                     );
                 }
-                // no jogo exportado não há Console: mostra o último erro de script na tela
+                // the exported game has no Console: show the last script error on screen
                 if self.game_only {
                     if let Some(err) = self.logs.iter().rev().find(|l| l.level == crate::runtime::LogLevel::Error) {
                         painter.text(
@@ -980,7 +980,7 @@ impl State {
                 painter.text(
                     rect.center_bottom() + egui::vec2(0.0, -14.0),
                     Align2::CENTER_BOTTOM,
-                    "Pré-visualização da câmera — clique em ▶ Jogar (Ctrl+P) para iniciar",
+                    tr!("Camera preview — click ▶ Play (Ctrl+P) to start", "Pré-visualização da câmera — clique em ▶ Jogar (Ctrl+P) para iniciar"),
                     FontId::proportional(13.0),
                     Color32::from_white_alpha(200),
                 );

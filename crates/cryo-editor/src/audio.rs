@@ -1,4 +1,4 @@
-//! Áudio: efeitos sonoros e música (.wav, .ogg, .mp3) via rodio.
+//! Audio: sound effects and music (.wav, .ogg, .mp3) through rodio.
 
 use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player};
 use std::collections::HashMap;
@@ -14,7 +14,7 @@ pub struct Audio {
     playing: Vec<Player>,
     music: Option<Player>,
     pub volume: f32,
-    /// Quantos sons foram disparados (útil para testes e depuração).
+    /// How many sounds were triggered (useful for tests and debugging).
     pub played: usize,
 }
 
@@ -32,7 +32,7 @@ impl Audio {
         }
     }
 
-    /// Abre a saída de som na primeira vez que for necessária.
+    /// Opens the sound output the first time it is needed.
     fn open(&mut self) -> Result<(), String> {
         if self.sink.is_none() && !self.tried {
             self.tried = true;
@@ -41,7 +41,7 @@ impl Audio {
                     s.log_on_drop(false);
                     self.sink = Some(s);
                 }
-                Err(e) => return Err(format!("saída de áudio indisponível ({e}); o jogo segue sem som")),
+                Err(e) => return Err(format!("audio output unavailable ({e}); the game continues without sound")),
             }
         }
         Ok(())
@@ -52,19 +52,19 @@ impl Audio {
             return Ok(b.clone());
         }
         let data = std::fs::read(self.project_dir.join(rel))
-            .map_err(|e| format!("não foi possível ler o som `{rel}` ({e})"))?;
+            .map_err(|e| format!("could not read sound `{rel}` ({e})"))?;
         let data: Arc<[u8]> = Arc::from(data);
         self.files.insert(rel.to_string(), data.clone());
         Ok(data)
     }
 
-    /// Toca um efeito sonoro uma vez. Devolve um aviso (não fatal) se não houver saída de som.
+    /// Plays a sound effect once. Returns a (non-fatal) warning if there is no sound output.
     pub fn play(&mut self, rel: &str, volume: f32) -> Result<Option<String>, String> {
         let data = self.bytes(rel)?;
         self.played += 1;
         let warn = self.open().err();
         let Some(sink) = &self.sink else { return Ok(warn) };
-        let source = Decoder::new(Cursor::new(data)).map_err(|e| format!("som `{rel}` inválido ({e})"))?;
+        let source = Decoder::new(Cursor::new(data)).map_err(|e| format!("invalid sound `{rel}` ({e})"))?;
         let player = Player::connect_new(sink.mixer());
         player.set_volume((volume * self.volume).clamp(0.0, 4.0));
         player.append(source);
@@ -76,7 +76,7 @@ impl Audio {
         Ok(warn)
     }
 
-    /// Toca uma música em repetição (substitui a anterior).
+    /// Plays looping music (replaces the previous track).
     pub fn music(&mut self, rel: &str, volume: f32) -> Result<Option<String>, String> {
         let data = self.bytes(rel)?;
         self.played += 1;
@@ -84,7 +84,7 @@ impl Audio {
         self.music = None;
         let Some(sink) = &self.sink else { return Ok(warn) };
         let source =
-            Decoder::new_looped(Cursor::new(data)).map_err(|e| format!("música `{rel}` inválida ({e})"))?;
+            Decoder::new_looped(Cursor::new(data)).map_err(|e| format!("invalid music `{rel}` ({e})"))?;
         let player = Player::connect_new(sink.mixer());
         player.set_volume((volume * self.volume).clamp(0.0, 4.0));
         player.append(source);
@@ -112,7 +112,7 @@ impl Audio {
     }
 }
 
-/// Gera um arquivo WAV (mono, 16 bits) a partir de uma função de onda — usado nos sons de exemplo.
+/// Generates a WAV file (mono, 16-bit) from a wave function — used for the sample sounds.
 pub fn synth_wav(seconds: f32, f: impl Fn(f32) -> f32) -> Vec<u8> {
     let rate = 44_100u32;
     let n = (seconds * rate as f32) as u32;
@@ -142,10 +142,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn wav_gerado_e_decodificavel() {
+    fn generated_wav_is_decodable() {
         let wav = synth_wav(0.1, |t| (t * 440.0 * std::f32::consts::TAU).sin());
         assert_eq!(&wav[..4], b"RIFF");
-        let dec = Decoder::new(Cursor::new(wav)).expect("WAV válido");
+        let dec = Decoder::new(Cursor::new(wav)).expect("valid WAV");
         assert_eq!(dec.count(), 4410);
     }
 }

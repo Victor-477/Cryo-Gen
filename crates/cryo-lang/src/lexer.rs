@@ -1,4 +1,4 @@
-//! Lexer da linguagem Cryo.
+//! Lexer for the Cryo language.
 
 use crate::CryoError;
 
@@ -7,7 +7,7 @@ pub enum Tok {
     Num(f64),
     Str(String),
     Ident(String),
-    // palavras-chave
+    // keywords
     Script,
     Prop,
     Var,
@@ -28,7 +28,7 @@ pub enum Tok {
     And,
     Or,
     Not,
-    // símbolos
+    // symbols
     LParen,
     RParen,
     LBrace,
@@ -64,7 +64,7 @@ pub enum Tok {
 pub struct Token {
     pub tok: Tok,
     pub line: usize,
-    /// Há uma quebra de linha entre o token anterior e este.
+    /// There is a line break between the previous token and this one.
     pub newline_before: bool,
 }
 
@@ -135,7 +135,7 @@ pub fn lex(src: &str) -> Result<Vec<Token>, CryoError> {
                 while i < chars.len() && chars[i].is_ascii_digit() {
                     i += 1;
                 }
-                // parte decimal (mas não o operador `..`)
+                // decimal part (but not the `..` operator)
                 if i + 1 < chars.len() && chars[i] == '.' && chars[i + 1].is_ascii_digit() {
                     i += 1;
                     while i < chars.len() && chars[i].is_ascii_digit() {
@@ -145,7 +145,7 @@ pub fn lex(src: &str) -> Result<Vec<Token>, CryoError> {
                 let s: String = chars[start..i].iter().collect();
                 let n = s
                     .parse::<f64>()
-                    .map_err(|_| CryoError::new(line, format!("número inválido: {s}")))?;
+                    .map_err(|_| CryoError::new(line, format!("invalid number: {s}")))?;
                 push!(Tok::Num(n));
             }
             '"' => {
@@ -153,7 +153,7 @@ pub fn lex(src: &str) -> Result<Vec<Token>, CryoError> {
                 let mut s = String::new();
                 loop {
                     if i >= chars.len() || chars[i] == '\n' {
-                        return Err(CryoError::new(line, "texto sem aspas de fechamento"));
+                        return Err(CryoError::new(line, "text is missing its closing quote"));
                     }
                     match chars[i] {
                         '"' => {
@@ -217,7 +217,7 @@ pub fn lex(src: &str) -> Result<Vec<Token>, CryoError> {
                     ('<', _) => (Tok::Lt, 1),
                     ('>', _) => (Tok::Gt, 1),
                     _ => {
-                        return Err(CryoError::new(line, format!("caractere inesperado: '{c}'")))
+                        return Err(CryoError::new(line, format!("unexpected character: '{c}'")))
                     }
                 };
                 push!(tok);

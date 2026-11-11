@@ -1,0 +1,18 @@
+// Spinning coin. Kip or his cap can pick it up.
+script Coin {
+    prop spin: num = 160
+
+    on update(dt) {
+        self.rotate(vec3(0, spin * dt, 0))
+    }
+
+    on collide(other, normal) {
+        if other.name == "Player" or other.name == "Cap" {
+            let player = scene.find("Player")
+            if player != nil {
+                player.send("coin")
+            }
+            self.destroy()
+        }
+    }
+}

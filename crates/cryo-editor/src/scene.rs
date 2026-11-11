@@ -1,4 +1,4 @@
-//! Modelo de cena: entidades, componentes e serialização (.cryoscene).
+//! Scene model: entities, components and serialisation (.cryoscene).
 
 use glam::{EulerRot, Mat4, Quat, Vec3};
 use serde::{Deserialize, Serialize};
@@ -20,29 +20,29 @@ impl Shape {
 
     pub fn label(self) -> &'static str {
         match self {
-            Shape::Cube => "Cubo",
-            Shape::Sphere => "Esfera",
-            Shape::Plane => "Plano",
-            Shape::Cylinder => "Cilindro",
+            Shape::Cube => "Cube",
+            Shape::Sphere => "Sphere",
+            Shape::Plane => "Plane",
+            Shape::Cylinder => "Cylinder",
             Shape::Cone => "Cone",
-            Shape::Capsule => "Cápsula",
+            Shape::Capsule => "Capsule",
         }
     }
 
-    /// Nome usado nos scripts: `scene.spawn("cube", pos)`.
+    /// Name used in scripts: `scene.spawn("cube", pos)`.
     pub fn from_script_name(s: &str) -> Option<Shape> {
         Some(match s.to_lowercase().as_str() {
-            "cube" | "cubo" => Shape::Cube,
-            "sphere" | "esfera" => Shape::Sphere,
-            "plane" | "plano" => Shape::Plane,
-            "cylinder" | "cilindro" => Shape::Cylinder,
+            "cube" => Shape::Cube,
+            "sphere" => Shape::Sphere,
+            "plane" => Shape::Plane,
+            "cylinder" => Shape::Cylinder,
             "cone" => Shape::Cone,
-            "capsule" | "capsula" | "cápsula" => Shape::Capsule,
+            "capsule" => Shape::Capsule,
             _ => return None,
         })
     }
 
-    /// Metade das dimensões do volume que envolve a malha, em espaço local.
+    /// Half extents of the volume enclosing the mesh, in local space.
     pub fn half_extents(self) -> Vec3 {
         match self {
             Shape::Plane => Vec3::new(0.5, 0.01, 0.5),
@@ -55,22 +55,22 @@ impl Shape {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MeshRenderer {
     pub shape: Shape,
-    /// Modelo importado (.obj, .gltf, .glb), relativo ao projeto. Quando presente, substitui `shape`.
+    /// Imported model (.obj, .gltf, .glb), relative to the project. When present, replaces `shape`.
     #[serde(default)]
     pub model: Option<String>,
-    /// Textura (.png, .jpg) aplicada sobre a cor.
+    /// Texture (.png, .jpg) applied over the colour.
     #[serde(default)]
     pub texture: Option<String>,
     pub color: [f32; 3],
-    /// 0 = fosco, 1 = brilhante
+    /// 0 = matte, 1 = glossy
     #[serde(default = "default_shine")]
     pub shininess: f32,
-    /// Ignora a iluminação (bom para objetos "que brilham").
+    /// Ignores lighting (good for objects that "glow").
     #[serde(default)]
     pub unlit: bool,
     #[serde(default = "yes")]
     pub cast_shadow: bool,
-    /// Caixa envolvente do modelo importado (centro, metade do tamanho), em espaço local.
+    /// Bounding box of the imported model (centre, half size), in local space.
     #[serde(default)]
     pub model_bounds: Option<([f32; 3], [f32; 3])>,
 }
@@ -93,7 +93,7 @@ impl MeshRenderer {
         }
     }
 
-    /// (centro, metade das dimensões) do volume que envolve a malha, em espaço local.
+    /// (centre, half extents) of the volume enclosing the mesh, in local space.
     pub fn local_bounds(&self) -> (Vec3, Vec3) {
         match (&self.model, &self.model_bounds) {
             (Some(_), Some((c, h))) => (Vec3::from_array(*c), Vec3::from_array(*h)),
@@ -106,7 +106,7 @@ impl MeshRenderer {
 pub enum LightKind {
     Directional,
     Point,
-    /// Holofote: cone de luz apontando para a frente (-Z) da entidade.
+    /// Spotlight: cone of light pointing along the entity's forward (-Z).
     Spot,
 }
 
@@ -116,10 +116,10 @@ pub struct Light {
     pub color: [f32; 3],
     pub intensity: f32,
     pub range: f32,
-    /// Abertura do cone (graus) — só para holofotes.
+    /// Cone opening (degrees) — spotlights only.
     #[serde(default = "default_angle")]
     pub angle: f32,
-    /// Projeta sombras (somente a primeira luz direcional).
+    /// Casts shadows (first directional light only).
     #[serde(default = "yes")]
     pub shadows: bool,
 }
@@ -137,9 +137,9 @@ pub struct Camera {
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum BodyKind {
-    /// Não se move; outros corpos colidem com ele.
+    /// Does not move; other bodies collide with it.
     Static,
-    /// Movido pela física (gravidade, colisões).
+    /// Moved by physics (gravity, collisions).
     Dynamic,
 }
 
@@ -156,7 +156,7 @@ pub struct Physics {
     pub use_gravity: bool,
     pub bounciness: f32,
     pub friction: f32,
-    /// Gatilho: detecta contato (evento `collide`) mas não bloqueia.
+    /// Trigger: detects contact (`collide` event) but does not block.
     pub is_trigger: bool,
     #[serde(skip)]
     pub velocity: Vec3,
@@ -179,7 +179,7 @@ impl Physics {
     }
 }
 
-/// Valor de um `prop` de script salvo na cena.
+/// Value of a script `prop` saved in the scene.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum PropValue {
     Num(f64),
@@ -190,9 +190,9 @@ pub enum PropValue {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub struct ScriptRef {
-    /// Caminho relativo à pasta do projeto, ex.: `scripts/Jogador.cryo`.
+    /// Path relative to the project folder, e.g. `scripts/Player.cryo`.
     pub path: String,
-    /// Valores de `prop` alterados no Inspector.
+    /// `prop` values changed in the Inspector.
     #[serde(default)]
     pub props: BTreeMap<String, PropValue>,
 }
@@ -204,7 +204,7 @@ pub struct Entity {
     #[serde(default)]
     pub parent: Option<u64>,
     pub position: Vec3,
-    /// Ângulos de Euler em graus (X, Y, Z).
+    /// Euler angles in degrees (X, Y, Z).
     pub rotation: Vec3,
     pub scale: Vec3,
     #[serde(default = "yes")]
@@ -246,7 +246,7 @@ impl Entity {
     pub fn up(&self) -> Vec3 {
         self.rotation_quat() * Vec3::Y
     }
-    /// Gira a entidade para que a frente (-Z) aponte para `target`.
+    /// Rotates the entity so its forward (-Z) points at `target`.
     pub fn look_at(&mut self, target: Vec3) {
         let d = target - self.position;
         if d.length_squared() < 1e-10 {
@@ -286,7 +286,7 @@ impl Scene {
         }
     }
 
-    /// Cena inicial: chão, cubo, luz e câmera — como nas engines conhecidas.
+    /// Starting scene: ground, cube, light and camera — as in the well-known engines.
     pub fn default_scene() -> Self {
         let mut s = Scene::empty();
         let cam = s.add_camera();
@@ -296,7 +296,7 @@ impl Scene {
         s.add_light(LightKind::Directional);
         let ground = s.add_mesh(Shape::Cube);
         let e = s.get_mut(ground).unwrap();
-        e.name = "Chão".into();
+        e.name = "Ground".into();
         e.position = Vec3::new(0.0, -0.25, 0.0);
         e.scale = Vec3::new(20.0, 0.5, 20.0);
         e.mesh.as_mut().unwrap().color = [0.35, 0.42, 0.36];
@@ -359,10 +359,10 @@ impl Scene {
     pub fn add_light(&mut self, kind: LightKind) -> u64 {
         let (name, pos, rot) = match kind {
             LightKind::Directional => {
-                ("Luz Direcional", Vec3::new(3.0, 6.0, 3.0), Vec3::new(-50.0, 35.0, 0.0))
+                ("Directional Light", Vec3::new(3.0, 6.0, 3.0), Vec3::new(-50.0, 35.0, 0.0))
             }
-            LightKind::Point => ("Luz Pontual", Vec3::new(0.0, 3.0, 0.0), Vec3::ZERO),
-            LightKind::Spot => ("Holofote", Vec3::new(0.0, 5.0, 0.0), Vec3::new(-90.0, 0.0, 0.0)),
+            LightKind::Point => ("Point Light", Vec3::new(0.0, 3.0, 0.0), Vec3::ZERO),
+            LightKind::Spot => ("Spotlight", Vec3::new(0.0, 5.0, 0.0), Vec3::new(-90.0, 0.0, 0.0)),
         };
         let id = self.add_empty(name);
         let e = self.get_mut(id).unwrap();
@@ -380,7 +380,7 @@ impl Scene {
     }
 
     pub fn add_camera(&mut self) -> u64 {
-        let id = self.add_empty("Câmera");
+        let id = self.add_empty("Camera");
         self.get_mut(id).unwrap().camera = Some(Camera { fov: 60.0, near: 0.1, far: 500.0 });
         id
     }
@@ -405,7 +405,7 @@ impl Scene {
         false
     }
 
-    /// Remove a entidade e todos os filhos.
+    /// Removes the entity and all its children.
     pub fn remove(&mut self, id: u64) {
         for c in self.children(Some(id)) {
             self.remove(c);
@@ -459,7 +459,7 @@ impl Scene {
         }
     }
 
-    /// Define posição e rotação no mundo (convertendo para o espaço do pai).
+    /// Sets world position and rotation (converting to the parent's space).
     pub fn set_world_pose(&mut self, id: u64, pos: Vec3, rot: Quat) {
         let parent = self.parent_matrix(id);
         if parent.determinant().abs() < 1e-9 {
@@ -501,6 +501,6 @@ impl Scene {
     }
 
     pub fn from_json(s: &str) -> Result<Scene, String> {
-        serde_json::from_str(s).map_err(|e| format!("cena inválida: {e}"))
+        serde_json::from_str(s).map_err(|e| format!("invalid scene: {e}"))
     }
 }

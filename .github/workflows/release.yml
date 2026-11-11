@@ -1,0 +1,83 @@
+name: Release
+
+# Builds the editor for Windows, macOS and Linux and publishes the zips as a GitHub release.
+# Runs when a tag such as v0.2.1-beta is pushed, or by hand from the Actions tab.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (created if it does not exist)"
+        required: true
+        default: "v0.2.1-beta"
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  build:
+    name: Build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-22.04, name: linux-x86_64 }
+          - { os: windows-latest, name: windows-x86_64 }
+          - { os: macos-latest, name: macos-universal }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux dependencies (audio)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build (Linux / Windows)
+        if: runner.os != 'macOS'
+        run: cargo build --release -p cryo-editor
+
+      - name: Build (macOS, Apple Silicon + Intel)
+        if: runner.os == 'macOS'
+        run: |
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          cargo build --release -p cryo-editor --target aarch64-apple-darwin
+          cargo build --release -p cryo-editor --target x86_64-apple-darwin
+          mkdir -p target/release
+          lipo -create -output target/release/cryo \
+            target/aarch64-apple-darwin/release/cryo \
+            target/x86_64-apple-darwin/release/cryo
+
+      - name: Package
+        shell: bash
+        run: bash scripts/package.sh "$TAG" "${{ matrix.name }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: dist/*.zip
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: Cryo Engine ${{ env.TAG }}
+          prerelease: ${{ contains(env.TAG, 'beta') || contains(env.TAG, 'alpha') }}
+          body_path: docs/release-notes.md
+          files: dist/*.zip

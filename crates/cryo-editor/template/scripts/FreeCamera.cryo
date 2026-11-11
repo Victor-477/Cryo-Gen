@@ -1,0 +1,23 @@
+// Spectator camera: WASD moves, Q/E go down/up, hold the right mouse button
+// and drag to look around, Shift speeds up.
+script FreeCamera {
+    prop speed: num = 8
+    prop sensitivity: num = 0.2
+
+    on update(dt) {
+        if input.down("mouse_right") {
+            var r = self.rotation
+            r.y -= input.mouse_dx * sensitivity
+            r.x = clamp(r.x - input.mouse_dy * sensitivity, -89, 89)
+            self.rotation = r
+        }
+        var v = speed
+        if input.down("shift") {
+            v = v * 3
+        }
+        var move = self.forward * input.axis("vertical") + self.right * input.axis("horizontal")
+        if input.down("e") { move.y += 1 }
+        if input.down("q") { move.y -= 1 }
+        self.translate(move * v * dt)
+    }
+}

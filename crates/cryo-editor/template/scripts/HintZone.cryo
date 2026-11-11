@@ -1,0 +1,16 @@
+// Invisible trigger that shows a tip when the player walks in.
+script HintZone {
+    prop message: text = "Hello!"
+    var cooldown = 0
+
+    on update(dt) {
+        cooldown = max(cooldown - dt, 0)
+    }
+
+    on collide(other, normal) {
+        if other.name == "Player" and cooldown <= 0 {
+            cooldown = 10
+            other.send("hint", message)
+        }
+    }
+}

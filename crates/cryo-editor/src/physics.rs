@@ -1,7 +1,7 @@
-//! Física simples e estável: gravidade, caixas orientadas (com rotação) e esferas.
+//! Simple, stable physics: gravity, oriented boxes (with rotation) and spheres.
 //!
-//! Funciona em espaço de mundo, então entidades com pai também colidem corretamente.
-//! Limite conhecido: não há dinâmica de rotação — os corpos não tombam nem giram ao bater.
+//! Works in world space, so parented entities also collide correctly.
+//! Known limit: no rotational dynamics — bodies do not tip over or spin on impact.
 
 use crate::scene::{BodyKind, ColliderShape, Scene};
 use glam::{Mat3, Mat4, Quat, Vec3};
@@ -15,15 +15,15 @@ enum Col {
 struct Body {
     idx: usize,
     id: u64,
-    /// Centro do colisor no mundo.
+    /// Collider centre in world space.
     pos: Vec3,
     rot: Quat,
-    /// A caixa está alinhada aos eixos do mundo (caminho rápido e mais estável).
+    /// The box is aligned with the world axes (fast, more stable path).
     aligned: bool,
     col: Col,
     dynamic: bool,
     trigger: bool,
-    /// Converte um deslocamento do mundo para o espaço do pai.
+    /// Converts a world-space displacement into the parent's space.
     parent_inv: Mat4,
 }
 
@@ -75,7 +75,7 @@ fn sign(v: f32) -> f32 {
     }
 }
 
-/// Caixas alinhadas aos eixos.
+/// Axis-aligned boxes.
 fn aabb(d: Vec3, ha: Vec3, hb: Vec3) -> Option<(Vec3, f32)> {
     let pen = ha + hb - d.abs();
     if pen.x <= 0.0 || pen.y <= 0.0 || pen.z <= 0.0 {
@@ -90,7 +90,7 @@ fn aabb(d: Vec3, ha: Vec3, hb: Vec3) -> Option<(Vec3, f32)> {
     }
 }
 
-/// Caixas orientadas: teorema do eixo separador (15 eixos).
+/// Oriented boxes: separating axis theorem (15 axes).
 fn obb(a: &Body, ha: Vec3, b: &Body, hb: Vec3) -> Option<(Vec3, f32)> {
     let ma = Mat3::from_quat(a.rot);
     let mb = Mat3::from_quat(b.rot);
@@ -101,7 +101,7 @@ fn obb(a: &Body, ha: Vec3, b: &Body, hb: Vec3) -> Option<(Vec3, f32)> {
     let mut test = |axis: Vec3, penalty: f32| -> bool {
         let len = axis.length();
         if len < 1e-5 {
-            return true; // eixos paralelos: já coberto pelos eixos das faces
+            return true; // parallel axes: already covered by the face axes
         }
         let l = axis / len;
         let ra = ha.x * ax[0].dot(l).abs() + ha.y * ax[1].dot(l).abs() + ha.z * ax[2].dot(l).abs();
@@ -111,7 +111,7 @@ fn obb(a: &Body, ha: Vec3, b: &Body, hb: Vec3) -> Option<(Vec3, f32)> {
         if overlap <= 0.0 {
             return false;
         }
-        // leve preferência pelos eixos das faces (contatos mais estáveis)
+        // slight preference for face axes (more stable contacts)
         if best.map(|(_, o)| overlap * penalty < o).unwrap_or(true) {
             best = Some((l * sign(dist), overlap * penalty));
         }
@@ -132,7 +132,7 @@ fn obb(a: &Body, ha: Vec3, b: &Body, hb: Vec3) -> Option<(Vec3, f32)> {
     best
 }
 
-/// Retorna (normal apontando de B para A, profundidade) se houver sobreposição.
+/// Returns (normal pointing from B to A, depth) if they overlap.
 fn overlap(a: &Body, b: &Body) -> Option<(Vec3, f32)> {
     match (a.col, b.col) {
         (Col::Box { half: ha }, Col::Box { half: hb }) => {
@@ -157,9 +157,9 @@ fn overlap(a: &Body, b: &Body) -> Option<(Vec3, f32)> {
     }
 }
 
-/// Normal apontando da caixa para a esfera.
+/// Normal pointing from the box to the sphere.
 fn sphere_box(sp: Vec3, r: f32, bx: &Body, half: Vec3) -> Option<(Vec3, f32)> {
-    // trabalha no espaço local da caixa
+    // works in the box's local space
     let inv = bx.rot.inverse();
     let local = inv * (sp - bx.pos);
     let closest = local.clamp(-half, half);
@@ -171,7 +171,7 @@ fn sphere_box(sp: Vec3, r: f32, bx: &Body, half: Vec3) -> Option<(Vec3, f32)> {
         }
         Some((bx.rot * (d / dist), r - dist))
     } else {
-        // centro da esfera dentro da caixa: sai pelo lado mais próximo
+        // sphere centre inside the box: exit through the nearest side
         let pen = half - local.abs();
         let (n, depth) = if pen.x <= pen.y && pen.x <= pen.z {
             (Vec3::X * sign(local.x), pen.x + r)
@@ -184,9 +184,17 @@ fn sphere_box(sp: Vec3, r: f32, bx: &Body, half: Vec3) -> Option<(Vec3, f32)> {
     }
 }
 
-/// Avança a simulação e devolve os pares de entidades que se tocaram.
-pub fn step(scene: &mut Scene, dt: f32) -> Vec<(u64, u64)> {
-    let mut contacts: Vec<(u64, u64)> = vec![];
+/// Advances the simulation and returns the contacts found.
+/// One touch between two entities. `normal` points from `b` towards `a`.
+#[derive(Clone, Copy, Debug)]
+pub struct Contact {
+    pub a: u64,
+    pub b: u64,
+    pub normal: Vec3,
+}
+
+pub fn step(scene: &mut Scene, dt: f32) -> Vec<Contact> {
+    let mut contacts: Vec<Contact> = vec![];
     let dt = dt.min(1.0 / 20.0);
     const SUB: usize = 3;
     let h = dt / SUB as f32;
@@ -199,7 +207,7 @@ pub fn step(scene: &mut Scene, dt: f32) -> Vec<(u64, u64)> {
     }
 
     for _ in 0..SUB {
-        // integração
+        // integration
         for e in &mut scene.entities {
             let Some(p) = &mut e.physics else { continue };
             if p.kind != BodyKind::Dynamic {
@@ -211,7 +219,7 @@ pub fn step(scene: &mut Scene, dt: f32) -> Vec<(u64, u64)> {
             let step = p.velocity * h;
             e.position += match e.parent {
                 None => step,
-                Some(_) => Vec3::ZERO, // aplicado abaixo, convertido para o espaço do pai
+                Some(_) => Vec3::ZERO, // applied below, converted to the parent's space
             };
         }
         let moved: Vec<(usize, Vec3)> = scene
@@ -229,7 +237,7 @@ pub fn step(scene: &mut Scene, dt: f32) -> Vec<(u64, u64)> {
             scene.entities[i].position += d;
         }
 
-        // colisões
+        // collisions
         let mut bodies = gather(scene);
         for i in 0..bodies.len() {
             for j in (i + 1)..bodies.len() {
@@ -238,8 +246,8 @@ pub fn step(scene: &mut Scene, dt: f32) -> Vec<(u64, u64)> {
                 }
                 let Some((n, depth)) = overlap(&bodies[i], &bodies[j]) else { continue };
                 let pair = (bodies[i].id, bodies[j].id);
-                if !contacts.contains(&pair) {
-                    contacts.push(pair);
+                if !contacts.iter().any(|c| (c.a, c.b) == pair) {
+                    contacts.push(Contact { a: pair.0, b: pair.1, normal: n });
                 }
                 if bodies[i].trigger || bodies[j].trigger {
                     continue;
@@ -278,7 +286,7 @@ pub fn step(scene: &mut Scene, dt: f32) -> Vec<(u64, u64)> {
                     }
                     let Some(p) = scene.entities[idx].physics.as_mut() else { continue };
                     if rel < 0.0 {
-                        // remove a velocidade de aproximação (com quique opcional)
+                        // removes the approach velocity (with optional bounce)
                         let vn = p.velocity.dot(normal);
                         let restitution = if vn.abs() > 1.0 { bounce } else { 0.0 };
                         if vn < 0.0 {
@@ -287,7 +295,7 @@ pub fn step(scene: &mut Scene, dt: f32) -> Vec<(u64, u64)> {
                     }
                     if normal.y > 0.6 {
                         p.grounded = true;
-                        // atrito no chão
+                        // ground friction
                         let k = (1.0 - friction * 6.0 * h).clamp(0.0, 1.0);
                         p.velocity.x *= k;
                         p.velocity.z *= k;
@@ -305,9 +313,9 @@ mod tests {
     use crate::scene::{Physics, Shape};
 
     #[test]
-    fn cubo_cai_e_para_no_chao() {
+    fn cube_falls_and_rests_on_ground() {
         let mut s = Scene::default_scene();
-        let cube = s.find_by_name("Cubo").unwrap();
+        let cube = s.find_by_name("Cube").unwrap();
         let e = s.get_mut(cube).unwrap();
         e.position.y = 5.0;
         e.physics = Some(Physics::new(BodyKind::Dynamic, ColliderShape::Box));
@@ -320,7 +328,7 @@ mod tests {
     }
 
     #[test]
-    fn esfera_para_sobre_caixa() {
+    fn sphere_rests_on_box() {
         let mut s = Scene::default_scene();
         let id = s.add_mesh(Shape::Sphere);
         let e = s.get_mut(id).unwrap();
@@ -333,8 +341,8 @@ mod tests {
     }
 
     #[test]
-    fn cubo_desliza_e_para_em_rampa_inclinada() {
-        // rampa girada 30 graus: o cubo precisa parar sobre a face inclinada, não atravessar
+    fn cube_rests_on_tilted_ramp() {
+        // ramp rotated 30 degrees: the cube must rest on the sloped face, not pass through
         let mut s = Scene::empty();
         let ramp = s.add_mesh(Shape::Cube);
         let e = s.get_mut(ramp).unwrap();
@@ -352,21 +360,21 @@ mod tests {
             touched |= !step(&mut s, 1.0 / 60.0).is_empty();
         }
         assert!(touched);
-        // a face de cima da rampa passa por y = x·tan(30°) + 0,577; o cubo tem de estar acima dela
+        // the top face of the ramp passes through y = x·tan(30°) + 0.577; the cube must be above it
         let p = s.get(cube).unwrap().position;
         let surface = p.x * 30f32.to_radians().tan() + 0.577;
-        assert!(p.y > surface + 0.3 && p.y < surface + 1.2, "pos = {p:?}, superfície = {surface}");
+        assert!(p.y > surface + 0.3 && p.y < surface + 1.2, "pos = {p:?}, surface = {surface}");
     }
 
     #[test]
-    fn filho_de_pai_transladado_colide_no_mundo() {
+    fn child_of_moved_parent_collides_in_world_space() {
         let mut s = Scene::default_scene();
-        let parent = s.add_empty("Pai");
+        let parent = s.add_empty("Parent");
         s.get_mut(parent).unwrap().position = Vec3::new(4.0, 10.0, 0.0);
         let id = s.add_mesh(Shape::Sphere);
         let e = s.get_mut(id).unwrap();
         e.parent = Some(parent);
-        e.position = Vec3::new(0.0, -6.0, 0.0); // mundo: y = 4
+        e.position = Vec3::new(0.0, -6.0, 0.0); // world: y = 4
         e.physics = Some(Physics::new(BodyKind::Dynamic, ColliderShape::Sphere));
         for _ in 0..300 {
             step(&mut s, 1.0 / 60.0);

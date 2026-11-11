@@ -1,4 +1,4 @@
-//! Interpretador (tree-walking) da linguagem Cryo.
+//! Tree-walking interpreter for the Cryo language.
 
 use crate::ast::*;
 use crate::CryoError;
@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
 
-/// Valor em tempo de execução.
+/// Runtime value.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Nil,
@@ -15,10 +15,10 @@ pub enum Value {
     Bool(bool),
     Text(Rc<str>),
     Vec3([f64; 3]),
-    /// Referência a uma entidade da cena (id).
+    /// Reference to a scene entity (id).
     Entity(u64),
     List(Rc<RefCell<Vec<Value>>>),
-    /// Objeto fornecido pela engine (`input`, `scene`, `time`...).
+    /// Object provided by the engine (`input`, `scene`, `time`...).
     Object(Rc<str>),
 }
 
@@ -38,7 +38,7 @@ impl Value {
             Value::Vec3(_) => "vec3",
             Value::Entity(_) => "entity",
             Value::List(_) => "list",
-            Value::Object(_) => "objeto",
+            Value::Object(_) => "object",
         }
     }
     pub fn matches(&self, ty: Type) -> bool {
@@ -90,19 +90,19 @@ impl fmt::Display for Value {
     }
 }
 
-/// Ponte entre o script e a engine. Tudo que o Cryo não conhece
-/// (entidades, `input`, `scene`, `log`...) é resolvido aqui.
+/// Bridge between the script and the engine. Everything Cryo does not know
+/// (entities, `input`, `scene`, `log`...) is resolved here.
 pub trait Host {
-    /// Nomes globais como `self`, `input`, `scene`, `time`.
+    /// Global names such as `self`, `input`, `scene`, `time`.
     fn global(&mut self, name: &str) -> Option<Value>;
     fn get_member(&mut self, target: &Value, name: &str) -> Result<Value, String>;
     fn set_member(&mut self, target: &Value, name: &str, value: Value) -> Result<(), String>;
-    /// `target = None` para funções globais (`log(...)`).
+    /// `target = None` for global functions (`log(...)`).
     fn call(&mut self, target: Option<&Value>, name: &str, args: &[Value])
         -> Result<Value, String>;
 }
 
-/// Host vazio: útil para testes e para avaliar valores padrão de `prop`.
+/// Empty host: useful for tests and for evaluating `prop` defaults.
 pub struct NullHost {
     pub logs: Vec<String>,
 }
@@ -124,10 +124,10 @@ impl Host for NullHost {
         None
     }
     fn get_member(&mut self, target: &Value, name: &str) -> Result<Value, String> {
-        Err(format!("`{}` não tem o membro `{name}`", target.type_name()))
+        Err(format!("`{}` has no member `{name}`", target.type_name()))
     }
     fn set_member(&mut self, target: &Value, name: &str, _v: Value) -> Result<(), String> {
-        Err(format!("`{}` não tem o membro `{name}`", target.type_name()))
+        Err(format!("`{}` has no member `{name}`", target.type_name()))
     }
     fn call(&mut self, target: Option<&Value>, name: &str, args: &[Value]) -> Result<Value, String> {
         if target.is_none() && name == "log" {
@@ -135,22 +135,22 @@ impl Host for NullHost {
             self.logs.push(parts.join(" "));
             return Ok(Value::Nil);
         }
-        Err(format!("função desconhecida `{name}`"))
+        Err(format!("unknown function `{name}`"))
     }
 }
 
-/// Funções embutidas (usado também pelo realce de sintaxe do editor).
+/// Built-in functions (also used by the editor's syntax highlighting).
 pub const BUILTINS: &[&str] = &[
     "vec3", "abs", "sign", "sin", "cos", "tan", "atan2", "sqrt", "pow", "floor", "ceil", "round",
     "min", "max", "clamp", "lerp", "random", "length", "normalize", "dot", "cross", "distance",
     "str", "num", "len", "log",
 ];
 
-/// Limite de instruções por chamada de evento: impede que um `while` infinito trave o editor.
+/// Statement limit per event call: stops an infinite `while` from freezing the editor.
 const BUDGET: u64 = 2_000_000;
 const MAX_DEPTH: usize = 120;
 
-/// Uma instância de script anexada a uma entidade.
+/// A script instance attached to an entity.
 pub struct Instance {
     pub script: Rc<Script>,
     pub fields: HashMap<String, Value>,
@@ -158,7 +158,7 @@ pub struct Instance {
 }
 
 impl Instance {
-    /// Cria a instância avaliando os valores iniciais de `prop` e `var`.
+    /// Creates the instance by evaluating the initial values of `prop` and `var`.
     pub fn new(script: Rc<Script>, host: &mut dyn Host) -> Result<Self, CryoError> {
         let mut inst = Instance { script: script.clone(), fields: HashMap::new(), rng: 0x9E3779B97F4A7C15 };
         for f in &script.fields {
@@ -166,7 +166,7 @@ impl Instance {
                 let mut ex = Exec::new(&mut inst, host);
                 ex.eval(&f.default)?
             };
-            check_type(f.ty, &v, f.line, &format!("campo `{}`", f.name))?;
+            check_type(f.ty, &v, f.line, &format!("field `{}`", f.name))?;
             inst.fields.insert(f.name.clone(), v);
         }
         Ok(inst)
@@ -176,17 +176,17 @@ impl Instance {
         self.script.handlers.contains_key(event)
     }
 
-    /// Define o valor de um `prop` (vindo do Inspector), respeitando o tipo declarado.
+    /// Sets the value of a `prop` (from the Inspector), respecting the declared type.
     pub fn set_prop(&mut self, name: &str, value: Value) -> Result<(), CryoError> {
         let Some(f) = self.script.fields.iter().find(|f| f.name == name) else {
-            return Ok(()); // prop antigo que não existe mais no script
+            return Ok(()); // old prop that no longer exists in the script
         };
-        check_type(f.ty, &value, f.line, &format!("campo `{}`", f.name))?;
+        check_type(f.ty, &value, f.line, &format!("field `{}`", f.name))?;
         self.fields.insert(name.to_string(), value);
         Ok(())
     }
 
-    /// Dispara um evento (`start`, `update`, ...). Eventos não declarados são ignorados.
+    /// Fires an event (`start`, `update`, ...). Undeclared events are ignored.
     pub fn call_event(
         &mut self,
         event: &str,
@@ -197,14 +197,14 @@ impl Instance {
         let Some(func) = script.handlers.get(event) else {
             return Ok(Value::Nil);
         };
-        // Eventos aceitam menos argumentos do que os declarados? Não: mas aceitam
-        // ser declarados com menos parâmetros do que a engine envia.
+        // Handlers may be declared with fewer parameters than the engine sends;
+        // the extra arguments are simply dropped.
         let n = func.params.len().min(args.len());
         let mut ex = Exec::new(self, host);
         ex.call_func(func, &args[..n], func.line, true)
     }
 
-    /// Chama uma função `fn` do script pelo nome.
+    /// Calls a script `fn` by name.
     pub fn call_fn(
         &mut self,
         name: &str,
@@ -213,14 +213,14 @@ impl Instance {
     ) -> Result<Value, CryoError> {
         let script = self.script.clone();
         let Some(func) = script.funcs.get(name) else {
-            return Err(CryoError::new(0, format!("função `{name}` não existe no script")));
+            return Err(CryoError::new(0, format!("function `{name}` does not exist in the script")));
         };
         let mut ex = Exec::new(self, host);
         ex.call_func(func, args, func.line, false)
     }
 }
 
-/// Avalia os valores padrão dos campos `prop` sem precisar da engine.
+/// Evaluates the default values of `prop` fields without needing the engine.
 pub fn default_props(script: &Rc<Script>) -> Vec<(String, Option<Type>, Value)> {
     let mut host = NullHost::new();
     let mut inst = Instance { script: script.clone(), fields: HashMap::new(), rng: 1 };
@@ -242,7 +242,7 @@ fn check_type(ty: Option<Type>, v: &Value, line: usize, what: &str) -> Result<()
     match ty {
         Some(t) if !v.matches(t) => Err(CryoError::new(
             line,
-            format!("{what} espera `{}`, mas recebeu `{}`", t.name(), v.type_name()),
+            format!("{what} expects `{}`, but got `{}`", t.name(), v.type_name()),
         )),
         _ => Ok(()),
     }
@@ -281,7 +281,7 @@ impl<'a> Exec<'a> {
             return Err(CryoError::new(
                 line,
                 format!(
-                    "`{}` espera {} argumento(s), mas recebeu {}",
+                    "`{}` expects {} argument(s), but got {}",
                     f.name,
                     f.params.len(),
                     args.len()
@@ -289,11 +289,11 @@ impl<'a> Exec<'a> {
             ));
         }
         if self.depth >= MAX_DEPTH {
-            return Err(CryoError::new(line, "recursão profunda demais"));
+            return Err(CryoError::new(line, "recursion too deep"));
         }
         let mut scope = HashMap::new();
         for (p, a) in f.params.iter().zip(args) {
-            check_type(p.ty, a, line, &format!("parâmetro `{}` de `{}`", p.name, f.name))?;
+            check_type(p.ty, a, line, &format!("parameter `{}` of `{}`", p.name, f.name))?;
             scope.insert(p.name.clone(), Local { value: a.clone(), mutable: false, ty: p.ty });
         }
         let saved = std::mem::replace(&mut self.scopes, vec![scope]);
@@ -306,7 +306,7 @@ impl<'a> Exec<'a> {
             _ => Value::Nil,
         };
         if f.ret.is_some() {
-            check_type(f.ret, &v, f.line, &format!("retorno de `{}`", f.name))?;
+            check_type(f.ret, &v, f.line, &format!("return value of `{}`", f.name))?;
         }
         Ok(v)
     }
@@ -332,7 +332,7 @@ impl<'a> Exec<'a> {
         if self.budget == 0 {
             return Err(CryoError::new(
                 line,
-                "execução longa demais (laço infinito?) — o evento foi interrompido",
+                "execution took too long (infinite loop?) — the event was stopped",
             ));
         }
         self.budget -= 1;
@@ -344,7 +344,7 @@ impl<'a> Exec<'a> {
             Value::Bool(b) => Ok(b),
             v => Err(CryoError::new(
                 e.line,
-                format!("a condição precisa ser `bool`, mas é `{}`", v.type_name()),
+                format!("the condition must be `bool`, but it is `{}`", v.type_name()),
             )),
         }
     }
@@ -354,7 +354,7 @@ impl<'a> Exec<'a> {
         match &s.kind {
             StmtKind::Decl { name, ty, value, mutable } => {
                 let v = self.eval(value)?;
-                check_type(*ty, &v, s.line, &format!("variável `{name}`"))?;
+                check_type(*ty, &v, s.line, &format!("variable `{name}`"))?;
                 self.scopes
                     .last_mut()
                     .unwrap()
@@ -403,7 +403,7 @@ impl<'a> Exec<'a> {
                     v => {
                         return Err(CryoError::new(
                             iter.line,
-                            format!("`for ... in` espera uma lista, mas recebeu `{}`", v.type_name()),
+                            format!("`for ... in` expects a list, but got `{}`", v.type_name()),
                         ))
                     }
                 };
@@ -446,7 +446,7 @@ impl<'a> Exec<'a> {
             Value::Num(n) => Ok(n),
             v => Err(CryoError::new(
                 e.line,
-                format!("esperado `num`, mas recebeu `{}`", v.type_name()),
+                format!("expected `num`, but got `{}`", v.type_name()),
             )),
         }
     }
@@ -460,20 +460,20 @@ impl<'a> Exec<'a> {
                         if !l.mutable {
                             return Err(CryoError::new(
                                 line,
-                                format!("`{name}` é imutável (`let`); declare com `var` para poder alterar"),
+                                format!("`{name}` is immutable (`let`); declare it with `var` to change it"),
                             ));
                         }
-                        check_type(l.ty, &v, line, &format!("variável `{name}`"))?;
+                        check_type(l.ty, &v, line, &format!("variable `{name}`"))?;
                         l.value = v;
                         return Ok(());
                     }
                 }
                 if let Some(f) = self.inst.script.fields.iter().find(|f| &f.name == name) {
-                    check_type(f.ty, &v, line, &format!("campo `{name}`"))?;
+                    check_type(f.ty, &v, line, &format!("field `{name}`"))?;
                     self.inst.fields.insert(name.clone(), v);
                     return Ok(());
                 }
-                Err(CryoError::new(line, format!("variável `{name}` não foi declarada")))
+                Err(CryoError::new(line, format!("variable `{name}` was not declared")))
             }
             ExprKind::Member(obj, name) => {
                 let base = self.eval(obj)?;
@@ -486,18 +486,18 @@ impl<'a> Exec<'a> {
                             _ => {
                                 return Err(CryoError::new(
                                     line,
-                                    format!("`vec3` não tem o membro `{name}` (use x, y ou z)"),
+                                    format!("`vec3` has no member `{name}` (use x, y or z)"),
                                 ))
                             }
                         };
                         let Value::Num(n) = v else {
                             return Err(CryoError::new(
                                 line,
-                                format!("`{name}` de um vec3 precisa ser `num`"),
+                                format!("`{name}` of a vec3 must be `num`"),
                             ));
                         };
                         a[i] = n;
-                        // escreve o vetor modificado de volta (ex.: self.position.y = 2)
+                        // writes the modified vector back (e.g. self.position.y = 2)
                         self.assign(obj, Value::Vec3(a))
                     }
                     Value::Entity(_) | Value::Object(_) => self
@@ -506,7 +506,7 @@ impl<'a> Exec<'a> {
                         .map_err(|m| CryoError::new(line, m)),
                     other => Err(CryoError::new(
                         line,
-                        format!("não é possível alterar `{name}` em `{}`", other.type_name()),
+                        format!("cannot set `{name}` on `{}`", other.type_name()),
                     )),
                 }
             }
@@ -523,11 +523,11 @@ impl<'a> Exec<'a> {
                     }
                     other => Err(CryoError::new(
                         line,
-                        format!("`{}` não pode ser indexado", other.type_name()),
+                        format!("`{}` cannot be indexed", other.type_name()),
                     )),
                 }
             }
-            _ => Err(CryoError::new(line, "destino de atribuição inválido")),
+            _ => Err(CryoError::new(line, "invalid assignment target")),
         }
     }
 
@@ -547,7 +547,7 @@ impl<'a> Exec<'a> {
         if let Some(v) = self.host.global(name) {
             return Ok(v);
         }
-        Err(CryoError::new(line, format!("`{name}` não foi declarado")))
+        Err(CryoError::new(line, format!("`{name}` was not declared")))
     }
 
     fn eval(&mut self, e: &Expr) -> R<Value> {
@@ -571,7 +571,7 @@ impl<'a> Exec<'a> {
                 v => {
                     return Err(CryoError::new(
                         line,
-                        format!("não é possível negar `{}`", v.type_name()),
+                        format!("cannot negate `{}`", v.type_name()),
                     ))
                 }
             },
@@ -598,7 +598,7 @@ impl<'a> Exec<'a> {
                     other => {
                         return Err(CryoError::new(
                             line,
-                            format!("`{}` não pode ser indexado", other.type_name()),
+                            format!("`{}` cannot be indexed", other.type_name()),
                         ))
                     }
                 }
@@ -614,7 +614,7 @@ impl<'a> Exec<'a> {
                         let base = self.eval(obj)?;
                         self.call_method(&base, name, &argv, line)?
                     }
-                    _ => return Err(CryoError::new(line, "isto não é uma função")),
+                    _ => return Err(CryoError::new(line, "this is not a function")),
                 }
             }
         })
@@ -627,18 +627,18 @@ impl<'a> Exec<'a> {
             (Value::Vec3(v), "z") => Ok(Value::Num(v[2])),
             (Value::Vec3(_), _) => Err(CryoError::new(
                 line,
-                format!("`vec3` não tem o membro `{name}` (use x, y ou z)"),
+                format!("`vec3` has no member `{name}` (use x, y or z)"),
             )),
             (Value::Entity(_) | Value::Object(_), _) => {
                 self.host.get_member(base, name).map_err(|m| CryoError::new(line, m))
             }
             (Value::Nil, _) => Err(CryoError::new(
                 line,
-                format!("tentou ler `{name}` de `nil` (a entidade existe?)"),
+                format!("tried to read `{name}` of `nil` (does the entity exist?)"),
             )),
             (other, _) => Err(CryoError::new(
                 line,
-                format!("`{}` não tem o membro `{name}`", other.type_name()),
+                format!("`{}` has no member `{name}`", other.type_name()),
             )),
         }
     }
@@ -663,25 +663,25 @@ impl<'a> Exec<'a> {
                     let n = l.len();
                     Ok(l.remove(index(*i, n, line)?))
                 }
-                _ => Err(err(format!("`list` não tem o método `{name}` com esses argumentos"))),
+                _ => Err(err(format!("`list` has no method `{name}` with these arguments"))),
             },
             Value::Text(s) => match (name, args) {
                 ("len", []) => Ok(Value::Num(s.chars().count() as f64)),
                 ("upper", []) => Ok(Value::text(s.to_uppercase())),
                 ("lower", []) => Ok(Value::text(s.to_lowercase())),
                 ("contains", [Value::Text(t)]) => Ok(Value::Bool(s.contains(&**t))),
-                _ => Err(err(format!("`text` não tem o método `{name}` com esses argumentos"))),
+                _ => Err(err(format!("`text` has no method `{name}` with these arguments"))),
             },
             Value::Vec3(v) => match (name, args) {
                 ("length", []) => Ok(Value::Num(vlen(*v))),
                 ("normalized", []) => Ok(Value::Vec3(vnorm(*v))),
-                _ => Err(err(format!("`vec3` não tem o método `{name}`"))),
+                _ => Err(err(format!("`vec3` has no method `{name}`"))),
             },
             Value::Entity(_) | Value::Object(_) => {
                 self.host.call(Some(base), name, args).map_err(err)
             }
-            Value::Nil => Err(err(format!("tentou chamar `{name}` em `nil` (a entidade existe?)"))),
-            other => Err(err(format!("`{}` não tem o método `{name}`", other.type_name()))),
+            Value::Nil => Err(err(format!("tried to call `{name}` on `nil` (does the entity exist?)"))),
+            other => Err(err(format!("`{}` has no method `{name}`", other.type_name()))),
         }
     }
 
@@ -696,16 +696,16 @@ impl<'a> Exec<'a> {
     }
 
     fn call_global(&mut self, name: &str, args: &[Value], line: usize) -> R<Value> {
-        // 1) funções do próprio script
+        // 1) the script's own functions
         let script = self.inst.script.clone();
         if let Some(f) = script.funcs.get(name) {
             return self.call_func(f, args, line, false);
         }
-        // 2) funções embutidas
+        // 2) built-in functions
         use Value::*;
         let bad = || {
             let tys: Vec<&str> = args.iter().map(|a| a.type_name()).collect();
-            CryoError::new(line, format!("`{name}` não aceita os argumentos ({})", tys.join(", ")))
+            CryoError::new(line, format!("`{name}` does not accept the arguments ({})", tys.join(", ")))
         };
         let v = match (name, args) {
             ("vec3", [Num(x), Num(y), Num(z)]) => Vec3([*x, *y, *z]),
@@ -725,7 +725,7 @@ impl<'a> Exec<'a> {
             ("atan2", [Num(y), Num(x)]) => Num(y.atan2(*x)),
             ("sqrt", [Num(x)]) if *x >= 0.0 => Num(x.sqrt()),
             ("sqrt", [Num(_)]) => {
-                return Err(CryoError::new(line, "raiz quadrada de número negativo"))
+                return Err(CryoError::new(line, "square root of a negative number"))
             }
             ("pow", [Num(a), Num(b)]) => Num(a.powf(*b)),
             ("floor", [Num(x)]) => Num(x.floor()),
@@ -760,7 +760,7 @@ impl<'a> Exec<'a> {
             ("len", [List(l)]) => Num(l.borrow().len() as f64),
             ("len", [Text(s)]) => Num(s.chars().count() as f64),
             _ if BUILTINS.contains(&name) && name != "log" => return Err(bad()),
-            // 3) funções da engine
+            // 3) engine functions
             _ => return self.host.call(None, name, args).map_err(|m| CryoError::new(line, m)),
         };
         Ok(v)
@@ -771,7 +771,7 @@ fn index(i: f64, len: usize, line: usize) -> R<usize> {
     if i.fract() != 0.0 || i < 0.0 || i as usize >= len {
         return Err(CryoError::new(
             line,
-            format!("índice {} fora da lista (tamanho {len})", fmt_num(i)),
+            format!("index {} out of range (list length {len})", fmt_num(i)),
         ));
     }
     Ok(i as usize)
@@ -800,7 +800,7 @@ fn binary(op: BinOp, a: Value, b: Value, line: usize) -> R<Value> {
         (Sub, Num(x), Num(y)) => Num(x - y),
         (Mul, Num(x), Num(y)) => Num(x * y),
         (Div | Mod, Num(_), Num(y)) if *y == 0.0 => {
-            return Err(CryoError::new(line, "divisão por zero"))
+            return Err(CryoError::new(line, "division by zero"))
         }
         (Div, Num(x), Num(y)) => Num(x / y),
         (Mod, Num(x), Num(y)) => Num(x.rem_euclid(*y)),
@@ -814,7 +814,7 @@ fn binary(op: BinOp, a: Value, b: Value, line: usize) -> R<Value> {
         (Mul, Vec3(x), Vec3(y)) => Vec3([x[0] * y[0], x[1] * y[1], x[2] * y[2]]),
         (Mul, Vec3(x), Num(s)) | (Mul, Num(s), Vec3(x)) => Vec3([x[0] * s, x[1] * s, x[2] * s]),
         (Div, Vec3(_), Num(s)) if *s == 0.0 => {
-            return Err(CryoError::new(line, "divisão por zero"))
+            return Err(CryoError::new(line, "division by zero"))
         }
         (Div, Vec3(x), Num(s)) => Vec3([x[0] / s, x[1] / s, x[2] / s]),
         _ => {
@@ -832,7 +832,7 @@ fn binary(op: BinOp, a: Value, b: Value, line: usize) -> R<Value> {
             };
             return Err(CryoError::new(
                 line,
-                format!("operador `{sym}` não funciona entre `{}` e `{}`", a.type_name(), b.type_name()),
+                format!("operator `{sym}` does not work between `{}` and `{}`", a.type_name(), b.type_name()),
             ));
         }
     };

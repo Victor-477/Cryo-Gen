@@ -1,7 +1,9 @@
-//! Estado do editor, barra de menus, barra de ferramentas e layout de painéis.
+//! Editor state, menu bar, toolbar and panel layout.
 
 use crate::assets::{self, Assets};
 use crate::project;
+use crate::settings::Settings;
+use crate::tutorial::{self, Focus};
 use crate::render::Renderer;
 use crate::runtime::{log, InputState, LogLevel, LogLine, Runtime};
 use crate::scene::{LightKind, Scene, Shape};
@@ -75,9 +77,18 @@ pub struct State {
     pub prop_cache: HashMap<String, PropCache>,
     pub focus_tab: Option<Tab>,
     pub show_about: bool,
+    pub settings: Settings,
+    /// Tutorial list window.
+    pub show_tutorials: bool,
+    /// Running tutorial: (id, step index).
+    pub tutorial: Option<(&'static str, usize)>,
+    /// Where each panel is on screen, so tutorials can point at it.
+    pub tab_rects: HashMap<Tab, egui::Rect>,
+    pub toolbar_rect: egui::Rect,
+    pub menu_rect: egui::Rect,
     pub show_grid: bool,
     pub assets: Assets,
-    /// Jogo exportado: sem editor, só a tela do jogo.
+    /// Exported game: no editor, only the game screen.
     pub game_only: bool,
 }
 
@@ -116,15 +127,15 @@ impl State {
                 self.scene_path = rel.to_string();
                 self.selected = None;
                 self.reset_history();
-                self.info(format!("Cena aberta: {rel}"));
+                self.info(tr!("Scene opened: {rel}", "Cena aberta: {rel}"));
             }
-            Err(e) => self.error(format!("Não foi possível abrir {rel}: {e}")),
+            Err(e) => self.error(tr!("Could not open {rel}: {e}", "Não foi possível abrir {rel}: {e}")),
         }
     }
 
     pub fn save_scene(&mut self) {
         if self.playing() {
-            self.info("Pare o jogo antes de salvar a cena.");
+            self.info(tr!("Stop the game before saving the scene.", "Pare o jogo antes de salvar a cena."));
             return;
         }
         let json = self.scene.to_json();
@@ -136,9 +147,9 @@ impl State {
             Ok(()) => {
                 self.saved_json = json.clone();
                 self.last_json = json;
-                self.info(format!("Cena salva: {}", self.scene_path));
+                self.info(tr!("Scene saved: {}", "Cena salva: {}", self.scene_path));
             }
-            Err(e) => self.error(format!("Erro ao salvar a cena: {e}")),
+            Err(e) => self.error(tr!("Error saving the scene: {e}", "Erro ao salvar a cena: {e}")),
         }
     }
 
@@ -158,8 +169,8 @@ impl State {
         self.scene_path = rel;
         self.selected = None;
         self.reset_history();
-        self.saved_json.clear(); // ainda não está em disco
-        self.info("Nova cena criada (salve com Ctrl+S).");
+        self.saved_json.clear(); // not on disk yet
+        self.info(tr!("New scene created (save it with Ctrl+S).", "Nova cena criada (salve com Ctrl+S)."));
     }
 
     pub fn open_script(&mut self, rel: &str) {
@@ -171,7 +182,7 @@ impl State {
                 self.editor.path = Some(rel.to_string());
                 self.focus_tab = Some(Tab::Script);
             }
-            Err(e) => self.error(format!("Não foi possível abrir {rel}: {e}")),
+            Err(e) => self.error(tr!("Could not open {rel}: {e}", "Não foi possível abrir {rel}: {e}")),
         }
     }
 
@@ -182,18 +193,18 @@ impl State {
                 self.editor.saved = self.editor.text.clone();
                 self.prop_cache.remove(&rel);
                 match &self.editor.error {
-                    None => self.info(format!("Script salvo: {rel}")),
+                    None => self.info(tr!("Script saved: {rel}", "Script salvo: {rel}")),
                     Some(e) => {
-                        let msg = format!("{rel} salvo com erro, {e}");
+                        let msg = tr!("{rel} saved with an error, {e}", "{rel} salvo com erro, {e}");
                         log(&mut self.logs, LogLevel::Warn, msg);
                     }
                 }
             }
-            Err(e) => self.error(format!("Erro ao salvar {rel}: {e}")),
+            Err(e) => self.error(tr!("Error saving {rel}: {e}", "Erro ao salvar {rel}: {e}")),
         }
     }
 
-    /// Importa arquivos externos para o projeto (modelos, texturas, sons).
+    /// Imports external files into the project (models, textures, sounds).
     pub fn import_paths(&mut self, paths: &[PathBuf]) {
         for src in paths {
             match project::import_file(&self.project_dir, src) {
@@ -204,7 +215,7 @@ impl State {
                     if assets::MODEL_EXTS.contains(&ext.as_str()) {
                         match self.assets.model(&rel) {
                             Some(m) => {
-                                self.info(format!("Modelo importado: {rel} ({} triângulos)", m.triangles));
+                                self.info(tr!("Model imported: {rel} ({} triangles)", "Modelo importado: {rel} ({} triângulos)", m.triangles));
                                 if !self.playing() {
                                     self.add_model_to_scene(&rel);
                                 }
@@ -212,13 +223,13 @@ impl State {
                             None => self.focus_tab = Some(Tab::Console),
                         }
                     } else {
-                        self.info(format!("Arquivo importado: {rel}"));
+                        self.info(tr!("File imported: {rel}", "Arquivo importado: {rel}"));
                     }
                     if self.focus_tab.is_none() {
                         self.focus_tab = Some(Tab::Content);
                     }
                 }
-                Err(e) => self.error(format!("Importação: {e}")),
+                Err(e) => self.error(tr!("Import: {e}", "Importação: {e}")),
             }
         }
     }
@@ -231,27 +242,27 @@ impl State {
             .copied()
             .collect();
         let picked = rfd::FileDialog::new()
-            .set_title("Importar para o projeto")
-            .add_filter("Tudo que a Cryo importa", &all)
-            .add_filter("Modelos 3D (.obj, .gltf, .glb)", assets::MODEL_EXTS)
-            .add_filter("Imagens (.png, .jpg)", assets::IMAGE_EXTS)
-            .add_filter("Sons (.wav, .ogg, .mp3)", assets::SOUND_EXTS)
+            .set_title(tr!("Import into the project", "Importar para o projeto"))
+            .add_filter(tr!("Everything Cryo can import", "Tudo que a Cryo importa"), &all)
+            .add_filter(tr!("3D models (.obj, .gltf, .glb)", "Modelos 3D (.obj, .gltf, .glb)"), assets::MODEL_EXTS)
+            .add_filter(tr!("Images (.png, .jpg)", "Imagens (.png, .jpg)"), assets::IMAGE_EXTS)
+            .add_filter(tr!("Sounds (.wav, .ogg, .mp3)", "Sons (.wav, .ogg, .mp3)"), assets::SOUND_EXTS)
             .pick_files();
         if let Some(paths) = picked {
             self.import_paths(&paths);
         }
     }
 
-    /// Cria uma entidade com o modelo, já em tamanho razoável e à frente da câmera.
+    /// Creates an entity with the model, at a reasonable size and in front of the camera.
     pub fn add_model_to_scene(&mut self, rel: &str) {
         let Some(model) = self.assets.model(rel) else {
             self.focus_tab = Some(Tab::Console);
             return;
         };
-        let name = std::path::Path::new(rel).file_stem().and_then(|s| s.to_str()).unwrap_or("Modelo").to_string();
+        let name = std::path::Path::new(rel).file_stem().and_then(|s| s.to_str()).unwrap_or("Model").to_string();
         let id = self.scene.add_mesh(Shape::Cube);
         let biggest = (model.half * 2.0).max_element();
-        // modelos gigantes ou minúsculos (unidades diferentes) entram com ~2 m
+        // huge or tiny models (different units) come in at ~2 m
         let scale = if !(0.05..=50.0).contains(&biggest) { 2.0 / biggest } else { 1.0 };
         if let Some(e) = self.scene.get_mut(id) {
             e.name = name;
@@ -262,12 +273,12 @@ impl State {
             m.model_bounds = Some((model.center.to_array(), model.half.to_array()));
         }
         self.place_new(id);
-        // apoia a base do modelo no chão
+        // rests the base of the model on the ground
         if let Some(e) = self.scene.get_mut(id) {
             e.position.y = (model.half.y - model.center.y) * scale;
         }
         if scale != 1.0 {
-            self.info(format!("O modelo tinha {biggest:.2} unidades; a escala foi ajustada para {scale:.4}."));
+            self.info(tr!("The model was {biggest:.2} units across; its scale was set to {scale:.4}.", "O modelo tinha {biggest:.2} unidades; a escala foi ajustada para {scale:.4}."));
         }
     }
 
@@ -275,21 +286,21 @@ impl State {
         if self.scene_dirty() {
             self.save_scene();
         }
-        let Some(dest) = rfd::FileDialog::new().set_title("Escolha onde salvar o jogo exportado").pick_folder()
+        let Some(dest) = rfd::FileDialog::new().set_title(tr!("Choose where to save the exported game", "Escolha onde salvar o jogo exportado")).pick_folder()
         else {
             return;
         };
-        let title = self.project_dir.file_name().and_then(|n| n.to_str()).unwrap_or("Jogo").to_string();
+        let title = self.project_dir.file_name().and_then(|n| n.to_str()).unwrap_or("Game").to_string();
         match project::export_game(&self.project_dir, &self.scene_path, &title, &dest) {
             Ok(out) => {
-                self.info(format!("Jogo exportado: {}", out.display()));
+                self.info(tr!("Game exported: {}", "Jogo exportado: {}", out.display()));
                 self.focus_tab = Some(Tab::Console);
             }
             Err(e) => self.error(e),
         }
     }
 
-    /// Mantém a caixa envolvente salva na cena igual à do modelo em disco e mostra erros de carregamento.
+    /// Keeps the bounding box saved in the scene equal to the model on disk and reports loading errors.
     fn sync_assets(&mut self) {
         let paths: Vec<(u64, String)> = self
             .scene
@@ -311,6 +322,182 @@ impl State {
         }
     }
 
+    /// Switches the editor to another project folder (an empty folder gets the example game).
+    pub fn open_project(&mut self, dir: PathBuf) {
+        self.stop_play();
+        let dir = std::fs::canonicalize(&dir).unwrap_or(dir);
+        match project::ensure_project(&dir) {
+            Ok(scene) => {
+                self.project_dir = dir.clone();
+                self.assets = Assets::new(dir.clone());
+                self.editor = ScriptEditor::default();
+                self.browser_dir.clear();
+                self.prop_cache.clear();
+                self.load_scene(&scene);
+                self.settings.last_project = Some(dir.to_string_lossy().to_string());
+                self.settings.save();
+                self.info(tr!("Project opened: {}", "Projeto aberto: {}", dir.display()));
+            }
+            Err(e) => self.error(e),
+        }
+    }
+
+    pub fn open_project_dialog(&mut self) {
+        let picked = rfd::FileDialog::new()
+            .set_title(tr!("Choose a project folder (an empty folder becomes a new project)", "Escolha a pasta do projeto (uma pasta vazia vira um projeto novo)"))
+            .pick_folder();
+        if let Some(dir) = picked {
+            self.open_project(dir);
+        }
+    }
+
+    pub fn set_language(&mut self, lang: crate::i18n::Lang) {
+        crate::i18n::set_lang(lang);
+        self.settings.language = lang.code().to_string();
+        self.settings.save();
+    }
+
+    pub fn start_tutorial(&mut self, id: &'static str) {
+        self.tutorial = Some((id, 0));
+        self.show_tutorials = false;
+    }
+
+    fn end_tutorial(&mut self, finished: bool) {
+        if let Some((id, _)) = self.tutorial.take() {
+            if finished && !self.settings.tutorials_done.iter().any(|d| d == id) {
+                self.settings.tutorials_done.push(id.to_string());
+            }
+            self.settings.tour_seen = true;
+            self.settings.save();
+        }
+    }
+
+    /// Tutorial list, the running tutorial's card and the highlight around what it talks about.
+    fn tutorial_ui(&mut self, ctx: &egui::Context) {
+        let tutorials = tutorial::all();
+
+        if self.show_tutorials {
+            let mut open = true;
+            let mut start: Option<&'static str> = None;
+            egui::Window::new(tr!("Tutorials", "Tutoriais"))
+                .collapsible(false)
+                .resizable(false)
+                .default_width(430.0)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .open(&mut open)
+                .show(ctx, |ui| {
+                    ui.label(
+                        RichText::new(tr!(
+                            "Short guided tours. Each one points at the part of the editor it explains.",
+                            "Tours guiados e curtos. Cada um aponta para a parte do editor que explica."
+                        ))
+                        .weak(),
+                    );
+                    ui.add_space(6.0);
+                    for t in &tutorials {
+                        let done = self.settings.tutorials_done.iter().any(|d| d == t.id);
+                        ui.horizontal(|ui| {
+                            let mark = if done { "✔" } else { "○" };
+                            ui.label(RichText::new(mark).color(if done { Color32::from_rgb(110, 210, 130) } else { Color32::GRAY }));
+                            ui.vertical(|ui| {
+                                if ui.link(RichText::new(&t.title).strong()).clicked() {
+                                    start = Some(t.id);
+                                }
+                                ui.label(
+                                    RichText::new(format!("{} · {} {}", t.summary, t.steps.len(), tr!("steps", "passos")))
+                                        .small()
+                                        .weak(),
+                                );
+                            });
+                        });
+                        ui.add_space(4.0);
+                    }
+                });
+            self.show_tutorials = open;
+            if let Some(id) = start {
+                self.start_tutorial(id);
+            }
+        }
+
+        let Some((id, index)) = self.tutorial else { return };
+        let Some(t) = tutorials.iter().find(|t| t.id == id) else {
+            self.tutorial = None;
+            return;
+        };
+        let index = index.min(t.steps.len() - 1);
+        let step = &t.steps[index];
+
+        // highlight the panel the step refers to
+        let target = match step.focus {
+            Focus::None => None,
+            Focus::Tab(tab) => self.tab_rects.get(&tab).copied(),
+            Focus::Toolbar => Some(self.toolbar_rect),
+            Focus::MenuBar => Some(self.menu_rect),
+        }
+        .filter(|r| r.is_positive());
+        if let Some(rect) = target {
+            let pulse = (ctx.input(|i| i.time) * 3.0).sin() as f32 * 0.5 + 0.5;
+            let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("tutorial_focus")));
+            painter.rect_stroke(
+                rect.shrink(2.0),
+                4.0,
+                egui::Stroke::new(2.0 + pulse * 2.0, ACCENT.gamma_multiply(0.6 + 0.4 * pulse)),
+                egui::StrokeKind::Inside,
+            );
+            ctx.request_repaint();
+        }
+
+        let mut go: i32 = 0;
+        let mut close = false;
+        egui::Window::new(format!("🎓 {}", t.title))
+            .id(egui::Id::new("tutorial_card"))
+            .collapsible(false)
+            .resizable(false)
+            .default_width(360.0)
+            .anchor(egui::Align2::RIGHT_BOTTOM, [-18.0, -40.0])
+            .show(ctx, |ui| {
+                ui.set_width(360.0);
+                ui.label(
+                    RichText::new(tr!("Step {} of {}", "Passo {} de {}", index + 1, t.steps.len())).small().weak(),
+                );
+                ui.label(RichText::new(&step.title).heading().color(ACCENT));
+                ui.add_space(4.0);
+                ui.label(&step.body);
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.add_enabled(index > 0, egui::Button::new(tr!("◀ Back", "◀ Voltar"))).clicked() {
+                        go = -1;
+                    }
+                    let last = index + 1 == t.steps.len();
+                    let next = if last { tr!("Finish ✔", "Concluir ✔") } else { tr!("Next ▶", "Próximo ▶") };
+                    if ui.button(RichText::new(next).strong()).clicked() {
+                        go = 1;
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button(tr!("Close", "Fechar")).clicked() {
+                            close = true;
+                        }
+                    });
+                });
+            });
+
+        if close {
+            self.end_tutorial(false);
+        } else if go != 0 {
+            let next = index as i32 + go;
+            if next >= t.steps.len() as i32 {
+                self.end_tutorial(true);
+            } else {
+                let next = next.max(0) as usize;
+                self.tutorial = Some((id, next));
+                // bring the panel the next step talks about to the front
+                if let Focus::Tab(tab) = t.steps[next].focus {
+                    self.focus_tab = Some(tab);
+                }
+            }
+        }
+    }
+
     pub fn start_play(&mut self) {
         if self.playing() {
             return;
@@ -319,7 +506,7 @@ impl State {
             self.save_script();
         }
         let backup = self.scene.clone();
-        self.info("▶ Jogo iniciado");
+        self.info(tr!("▶ Game started", "▶ Jogo iniciado"));
         let rt = Runtime::start(&mut self.scene, &self.project_dir, &mut self.logs);
         if self.logs.iter().rev().take(20).any(|l| l.level == LogLevel::Error) {
             self.focus_tab = Some(Tab::Console);
@@ -334,7 +521,7 @@ impl State {
         if let Some(p) = self.play.take() {
             self.scene = p.backup;
             self.selected = p.backup_selected;
-            self.info("■ Jogo parado");
+            self.info(tr!("■ Game stopped", "■ Jogo parado"));
             self.focus_tab = Some(Tab::Scene);
         }
     }
@@ -373,7 +560,7 @@ impl State {
         }
     }
 
-    /// Registra um passo de desfazer quando a cena muda e nenhuma edição está em andamento.
+    /// Records an undo step when the scene changes and no edit is in progress.
     fn track_history(&mut self, ctx: &egui::Context) {
         if self.playing() {
             return;
@@ -404,7 +591,7 @@ impl State {
         }
     }
 
-    /// Posiciona um objeto recém-criado à frente da câmera do editor.
+    /// Places a newly created object in front of the editor camera.
     fn place_new(&mut self, id: u64) {
         let mut p = self.cam.pos + self.cam.forward() * 8.0;
         p.y = p.y.max(0.5);
@@ -418,36 +605,36 @@ impl State {
     }
 
     pub fn create_menu(&mut self, ui: &mut egui::Ui) {
-        if ui.button("○  Vazio").clicked() {
-            let id = self.scene.add_empty("Vazio");
+        if ui.button(tr!("○  Empty", "○  Vazio")).clicked() {
+            let id = self.scene.add_empty("Empty");
             self.place_new(id);
             ui.close();
         }
         ui.separator();
         for shape in Shape::ALL {
-            if ui.button(format!("■  {}", shape.label())).clicked() {
+            if ui.button(format!("■  {}", shape_name(shape))).clicked() {
                 let id = self.scene.add_mesh(shape);
                 self.place_new(id);
                 ui.close();
             }
         }
         ui.separator();
-        if ui.button("☀  Luz direcional").clicked() {
+        if ui.button(tr!("☀  Directional light", "☀  Luz direcional")).clicked() {
             let id = self.scene.add_light(LightKind::Directional);
             self.place_new(id);
             ui.close();
         }
-        if ui.button("💡  Luz pontual").clicked() {
+        if ui.button(tr!("💡  Point light", "💡  Luz pontual")).clicked() {
             let id = self.scene.add_light(LightKind::Point);
             self.place_new(id);
             ui.close();
         }
-        if ui.button("🔦  Holofote").clicked() {
+        if ui.button(tr!("🔦  Spotlight", "🔦  Holofote")).clicked() {
             let id = self.scene.add_light(LightKind::Spot);
             self.place_new(id);
             ui.close();
         }
-        if ui.button("🎥  Câmera").clicked() {
+        if ui.button(tr!("🎥  Camera", "🎥  Câmera")).clicked() {
             let id = self.scene.add_camera();
             self.place_new(id);
             ui.close();
@@ -571,6 +758,18 @@ impl State {
     }
 }
 
+/// Shape name in the interface language (entity names stay in English).
+pub fn shape_name(shape: Shape) -> String {
+    match shape {
+        Shape::Cube => tr!("Cube", "Cubo"),
+        Shape::Sphere => tr!("Sphere", "Esfera"),
+        Shape::Plane => tr!("Plane", "Plano"),
+        Shape::Cylinder => tr!("Cylinder", "Cilindro"),
+        Shape::Cone => tr!("Cone", "Cone"),
+        Shape::Capsule => tr!("Capsule", "Cápsula"),
+    }
+}
+
 pub struct App {
     dock: DockState<Tab>,
     st: State,
@@ -594,6 +793,7 @@ impl App {
         project_dir: PathBuf,
         autoplay: bool,
         game: Option<project::GameConfig>,
+        settings: Settings,
     ) -> Self {
         apply_theme(&cc.egui_ctx);
         let (renderer, render_error) = match cc.gl.as_ref() {
@@ -601,7 +801,7 @@ impl App {
                 Ok(r) => (Some(Arc::new(Mutex::new(r))), None),
                 Err(e) => (None, Some(e)),
             },
-            None => (None, Some("OpenGL indisponível".to_string())),
+            None => (None, Some(tr!("OpenGL unavailable", "OpenGL indisponível").to_string())),
         };
         let project_dir = std::fs::canonicalize(&project_dir).unwrap_or_else(|_| {
             std::env::current_dir().map(|d| d.join(&project_dir)).unwrap_or(project_dir.clone())
@@ -632,9 +832,15 @@ impl App {
             prop_cache: HashMap::new(),
             focus_tab: None,
             show_about: false,
+            settings,
+            show_tutorials: false,
+            tutorial: None,
+            tab_rects: HashMap::new(),
+            toolbar_rect: egui::Rect::NOTHING,
+            menu_rect: egui::Rect::NOTHING,
             show_grid: true,
         };
-        st.info(format!("Cryo Engine {} — projeto: {}", env!("CARGO_PKG_VERSION"), st.project_dir.display()));
+        st.info(tr!("Cryo Engine {} — project: {}", "Cryo Engine {} — projeto: {}", env!("CARGO_PKG_VERSION"), st.project_dir.display()));
         let opened = match &game {
             Some(g) => Ok(g.scene.clone()),
             None => project::ensure_project(&st.project_dir),
@@ -647,21 +853,31 @@ impl App {
             }
         }
         if let Some(e) = st.render_error.clone() {
-            st.error(format!("Renderizador: {e}"));
+            st.error(tr!("Renderer: {e}", "Renderizador: {e}"));
         }
-        if let Some(first) = project::list_files(&st.project_dir, project::SCRIPT_EXT).first().cloned() {
+        let scripts = project::list_files(&st.project_dir, project::SCRIPT_EXT);
+        let preferred = scripts.iter().find(|s| s.ends_with("/Player.cryo")).or(scripts.first()).cloned();
+        if let Some(first) = preferred {
             st.open_script(&first);
         }
         st.focus_tab = Some(Tab::Scene);
-        // Útil para testes automatizados: CRYO_SELECT="Nome da entidade"
+        // Useful for automated tests: CRYO_SELECT="Entity name"
         if let Ok(name) = std::env::var("CRYO_SELECT") {
             st.selected = st.scene.find_by_name(&name);
         }
         if std::env::var("CRYO_VIEW").as_deref() == Ok("top") {
-            st.cam.view_from(glam::Vec3::Y, "Topo");
+            st.cam.view_from(glam::Vec3::Y, tr!("Top", "Topo"));
         }
         if std::env::var("CRYO_TAB").as_deref() == Ok("script") {
             st.focus_tab = Some(Tab::Script);
+        }
+        // first launch: start the welcome tour
+        if !st.settings.tour_seen && !game_only && !autoplay && std::env::var("CRYO_NO_TOUR").is_err() {
+            st.tutorial = Some(("welcome", 0));
+        }
+        if !game_only {
+            st.settings.last_project = Some(st.project_dir.to_string_lossy().to_string());
+            st.settings.save();
         }
         if autoplay || game_only {
             st.start_play();
@@ -674,25 +890,30 @@ impl App {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.label(RichText::new("❄ CRYO").strong().color(ACCENT));
             ui.separator();
-            ui.menu_button("Arquivo", |ui| {
-                if ui.button("Nova cena").clicked() {
+            ui.menu_button(tr!("File", "Arquivo"), |ui| {
+                if ui.button(tr!("Open or create project…", "Abrir ou criar projeto…")).clicked() {
+                    ui.close();
+                    st.open_project_dialog();
+                }
+                ui.separator();
+                if ui.button(tr!("New scene", "Nova cena")).clicked() {
                     st.new_scene();
                     ui.close();
                 }
-                if ui.button("Salvar cena        Ctrl+S").clicked() {
+                if ui.button(tr!("Save scene        Ctrl+S", "Salvar cena        Ctrl+S")).clicked() {
                     st.save_scene();
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("Importar modelo, textura ou som…").clicked() {
+                if ui.button(tr!("Import model, texture or sound…", "Importar modelo, textura ou som…")).clicked() {
                     ui.close();
                     st.import_dialog();
                 }
-                if ui.button("Exportar jogo…").on_hover_text("Gera uma pasta com o jogo pronto para rodar sem o editor").clicked() {
+                if ui.button(tr!("Export game…", "Exportar jogo…")).on_hover_text(tr!("Creates a folder with the game ready to run without the editor", "Gera uma pasta com o jogo pronto para rodar sem o editor")).clicked() {
                     ui.close();
                     st.export_dialog();
                 }
-                ui.menu_button("Abrir cena", |ui| {
+                ui.menu_button(tr!("Open scene", "Abrir cena"), |ui| {
                     for rel in project::list_files(&st.project_dir, project::SCENE_EXT) {
                         if ui.button(&rel).clicked() {
                             st.load_scene(&rel);
@@ -701,42 +922,67 @@ impl App {
                     }
                 });
                 ui.separator();
-                if ui.button("Sair").clicked() {
+                if ui.button(tr!("Quit", "Sair")).clicked() {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             });
-            ui.menu_button("Editar", |ui| {
-                if ui.button("Desfazer           Ctrl+Z").clicked() {
+            ui.menu_button(tr!("Edit", "Editar"), |ui| {
+                if ui.button(tr!("Undo               Ctrl+Z", "Desfazer           Ctrl+Z")).clicked() {
                     st.undo();
                     ui.close();
                 }
-                if ui.button("Refazer      Ctrl+Shift+Z").clicked() {
+                if ui.button(tr!("Redo         Ctrl+Shift+Z", "Refazer      Ctrl+Shift+Z")).clicked() {
                     st.redo();
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("Duplicar           Ctrl+D").clicked() {
+                if ui.button(tr!("Duplicate          Ctrl+D", "Duplicar           Ctrl+D")).clicked() {
                     st.duplicate_selected();
                     ui.close();
                 }
-                if ui.button("Excluir               Del").clicked() {
+                if ui.button(tr!("Delete                Del", "Excluir               Del")).clicked() {
                     st.delete_selected();
                     ui.close();
                 }
             });
-            ui.menu_button("Objeto", |ui| st.create_menu(ui));
-            ui.menu_button("Janela", |ui| {
-                if ui.button("Restaurar layout padrão").clicked() {
+            ui.menu_button(tr!("Object", "Objeto"), |ui| st.create_menu(ui));
+            ui.menu_button(tr!("Window", "Janela"), |ui| {
+                if ui.button(tr!("Reset default layout", "Restaurar layout padrão")).clicked() {
                     self.dock = default_layout();
                     ui.close();
                 }
-                ui.checkbox(&mut st.show_grid, "Mostrar grade");
+                ui.checkbox(&mut st.show_grid, tr!("Show grid", "Mostrar grade"));
             });
-            ui.menu_button("Ajuda", |ui| {
-                if ui.button("Sobre a Cryo Engine").clicked() {
+            ui.menu_button(tr!("Help", "Ajuda"), |ui| {
+                if ui.button(tr!("Tutorials…                F1", "Tutoriais…                F1")).clicked() {
+                    st.show_tutorials = true;
+                    ui.close();
+                }
+                if ui.button(tr!("Welcome tour", "Tour de boas-vindas")).clicked() {
+                    st.start_tutorial("welcome");
+                    ui.close();
+                }
+                ui.hyperlink_to(
+                    tr!("Online documentation", "Documentação online"),
+                    "https://victor-477.github.io/Cryo-Gen/",
+                );
+                ui.separator();
+                if ui.button(tr!("About Cryo Engine", "Sobre a Cryo Engine")).clicked() {
                     st.show_about = true;
                     ui.close();
                 }
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.menu_button(format!("🌐 {}", crate::i18n::lang().name()), |ui| {
+                    for lang in crate::i18n::Lang::ALL {
+                        if ui.selectable_label(crate::i18n::lang() == lang, lang.name()).clicked() {
+                            st.set_language(lang);
+                            ui.close();
+                        }
+                    }
+                })
+                .response
+                .on_hover_text("Language / Idioma");
             });
         });
     }
@@ -746,34 +992,34 @@ impl App {
         ui.horizontal(|ui| {
             ui.add_space(4.0);
             for (tool, label, tip) in [
-                (Tool::Move, "Mover", "Mover (W)"),
-                (Tool::Rotate, "Girar", "Girar (E)"),
-                (Tool::Scale, "Escala", "Escala (R)"),
+                (Tool::Move, tr!("Move", "Mover"), tr!("Move (W)", "Mover (W)")),
+                (Tool::Rotate, tr!("Rotate", "Girar"), tr!("Rotate (E)", "Girar (E)")),
+                (Tool::Scale, tr!("Scale", "Escala"), tr!("Scale (R)", "Escala (R)")),
             ] {
                 if ui.selectable_label(st.tool == tool, label).on_hover_text(tip).clicked() {
                     st.tool = tool;
                 }
             }
             ui.separator();
-            ui.menu_button("+ Criar", |ui| st.create_menu(ui));
+            ui.menu_button(tr!("+ Create", "+ Criar"), |ui| st.create_menu(ui));
 
-            // Play / Pause / Stop no centro, como na Unity e na Unreal
+            // Play / Pause / Stop in the centre, as in Unity and Unreal
             let w = ui.available_width();
             ui.add_space((w * 0.5 - 150.0).max(8.0));
             let playing = st.playing();
             let paused = st.play.as_ref().map(|p| p.paused).unwrap_or(false);
             let green = Color32::from_rgb(70, 200, 110);
-            let play_text = RichText::new("▶ Jogar").color(if playing { Color32::WHITE } else { green }).strong();
+            let play_text = RichText::new(tr!("▶ Play", "▶ Jogar")).color(if playing { Color32::WHITE } else { green }).strong();
             if ui.add(egui::Button::new(play_text).selected(playing)).on_hover_text("Ctrl+P").clicked() && !playing {
                 st.start_play();
             }
-            if ui.add_enabled(playing, egui::Button::new("⏸ Pausar").selected(paused)).clicked() {
+            if ui.add_enabled(playing, egui::Button::new(tr!("⏸ Pause", "⏸ Pausar")).selected(paused)).clicked() {
                 if let Some(p) = &mut st.play {
                     p.paused = !p.paused;
                     p.rt.audio.set_paused(p.paused);
                 }
             }
-            let stop = RichText::new("⏹ Parar").color(if playing { Color32::from_rgb(235, 90, 90) } else { Color32::GRAY });
+            let stop = RichText::new(tr!("⏹ Stop", "⏹ Parar")).color(if playing { Color32::from_rgb(235, 90, 90) } else { Color32::GRAY });
             if ui.add_enabled(playing, egui::Button::new(stop)).on_hover_text("Esc").clicked() {
                 st.stop_play();
             }
@@ -786,10 +1032,10 @@ impl App {
             let star = if st.scene_dirty() { " *" } else { "" };
             ui.label(RichText::new(format!("🎬 {}{star}", st.scene_path)).small());
             ui.separator();
-            ui.label(RichText::new(format!("{} entidades", st.scene.entities.len())).small());
+            ui.label(RichText::new(tr!("{} entities", "{} entidades", st.scene.entities.len())).small());
             if st.playing() {
                 ui.separator();
-                ui.label(RichText::new("▶ MODO JOGO — alterações serão descartadas ao parar").small().color(ACCENT));
+                ui.label(RichText::new(tr!("▶ PLAY MODE — changes are discarded when you stop", "▶ MODO JOGO — alterações serão descartadas ao parar")).small().color(ACCENT));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(RichText::new(format!("{:.0} fps", self.fps)).small());
@@ -812,14 +1058,14 @@ impl eframe::App for App {
             self.fps_at = Instant::now();
         }
 
-        // arquivos arrastados para a janela são importados para o projeto
+        // files dropped on the window are imported into the project
         let dropped: Vec<PathBuf> = ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).collect());
         if !dropped.is_empty() && !self.st.game_only {
             self.st.import_paths(&dropped);
         }
         self.st.sync_assets();
 
-        // --- simulação ---
+        // --- simulation ---
         self.st.collect_input(&ctx);
         self.st.shortcuts(&ctx);
         if let Some(play) = &mut self.st.play {
@@ -835,7 +1081,7 @@ impl eframe::App for App {
             ctx.request_repaint();
         }
 
-        // --- jogo exportado: só a tela do jogo ---
+        // --- exported game: only the game screen ---
         if self.st.game_only {
             egui::CentralPanel::no_frame().show(ui, |ui| self.st.game_view(ui));
             return;
@@ -843,9 +1089,9 @@ impl eframe::App for App {
 
         // --- interface ---
         let bar = egui::Frame::new().fill(Color32::from_rgb(21, 21, 23)).inner_margin(egui::Margin::symmetric(6, 3));
-        egui::Panel::top("menu").frame(bar).show(ui, |ui| self.menu_bar(ui));
+        self.st.menu_rect = egui::Panel::top("menu").frame(bar).show(ui, |ui| self.menu_bar(ui)).response.rect;
         let tb = egui::Frame::new().fill(Color32::from_rgb(36, 36, 39)).inner_margin(egui::Margin::symmetric(6, 5));
-        egui::Panel::top("toolbar").frame(tb).show(ui, |ui| self.toolbar(ui));
+        self.st.toolbar_rect = egui::Panel::top("toolbar").frame(tb).show(ui, |ui| self.toolbar(ui)).response.rect;
         egui::Panel::bottom("status").frame(bar).show(ui, |ui| self.status_bar(ui));
 
         if let Some(tab) = self.st.focus_tab.take() {
@@ -866,19 +1112,24 @@ impl eframe::App for App {
                 .show_inside(ui, &mut self.st);
         });
 
+        if ctx.input(|i| i.key_pressed(Key::F1)) {
+            self.st.show_tutorials = !self.st.show_tutorials;
+        }
+        self.st.tutorial_ui(&ctx);
+
         if self.st.show_about {
-            egui::Window::new("Sobre a Cryo Engine")
+            egui::Window::new(tr!("About Cryo Engine", "Sobre a Cryo Engine"))
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .open(&mut self.st.show_about)
                 .show(&ctx, |ui| {
                     ui.heading(RichText::new("❄ Cryo Engine").color(ACCENT));
-                    ui.label(format!("Versão {}", env!("CARGO_PKG_VERSION")));
+                    ui.label(tr!("Version {}", "Versão {}", env!("CARGO_PKG_VERSION")));
                     ui.add_space(6.0);
-                    ui.label("Engine 3D com editor visual e scripts na linguagem Cryo.");
-                    ui.label("Importe modelos (.obj, .gltf, .glb), texturas e sons arrastando");
-                    ui.label("os arquivos para a janela. Controles da câmera: menu 🎥 Câmera na aba Cena.");
+                    ui.label(tr!("3D engine with a visual editor and scripting in the Cryo language.", "Engine 3D com editor visual e scripts na linguagem Cryo."));
+                    ui.label(tr!("Import models (.obj, .gltf, .glb), textures and sounds by dragging", "Importe modelos (.obj, .gltf, .glb), texturas e sons arrastando"));
+                    ui.label(tr!("the files onto the window. Camera controls: 🎥 Camera menu in the Scene tab.", "os arquivos para a janela. Controles da câmera: menu 🎥 Câmera na aba Cena."));
                 });
         }
 
@@ -895,16 +1146,16 @@ impl egui_dock::TabViewer for State {
 
     fn title(&mut self, tab: &mut Tab) -> egui::WidgetText {
         match tab {
-            Tab::Scene => "🌐 Cena".into(),
-            Tab::Game => "🎮 Jogo".into(),
+            Tab::Scene => tr!("🌐 Scene", "🌐 Cena").into(),
+            Tab::Game => tr!("🎮 Game", "🎮 Jogo").into(),
             Tab::Script => {
                 let star = if self.editor.dirty() { " *" } else { "" };
                 let name = self.editor.path.as_deref().and_then(|p| p.rsplit('/').next()).unwrap_or("Script");
                 format!("📜 {name}{star}").into()
             }
-            Tab::Hierarchy => "☰ Hierarquia".into(),
-            Tab::Inspector => "ℹ Inspetor".into(),
-            Tab::Content => "📁 Conteúdo".into(),
+            Tab::Hierarchy => tr!("☰ Hierarchy", "☰ Hierarquia").into(),
+            Tab::Inspector => tr!("ℹ Inspector", "ℹ Inspetor").into(),
+            Tab::Content => tr!("📁 Content", "📁 Conteúdo").into(),
             Tab::Console => {
                 let errors = self.logs.iter().filter(|l| l.level == LogLevel::Error).count();
                 if errors > 0 {
@@ -917,6 +1168,7 @@ impl egui_dock::TabViewer for State {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Tab) {
+        self.tab_rects.insert(*tab, ui.max_rect());
         match tab {
             Tab::Scene => self.scene_view(ui),
             Tab::Game => self.game_view(ui),

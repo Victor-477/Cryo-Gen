@@ -1,5 +1,5 @@
-//! Renderizador 3D em OpenGL (via glow): primitivas e modelos importados, texturas,
-//! luzes direcionais/pontuais/holofotes, sombras, céu, grade e contorno de seleção.
+//! OpenGL 3D renderer (through glow): primitives and imported models, textures,
+//! directional/point/spot lights, shadows, sky, grid and selection outline.
 
 use crate::assets::{Assets, ModelData, TextureData};
 use crate::scene::{LightKind, Scene, Shape};
@@ -28,32 +28,32 @@ pub struct DrawItem {
     pub cast_shadow: bool,
 }
 
-/// Luz pontual ou holofote.
+/// Point light or spotlight.
 pub struct LocalLight {
     pub pos: Vec3,
     pub color: [f32; 3],
     pub range: f32,
-    /// Direção do holofote (ignorada em luz pontual).
+    /// Spotlight direction (ignored for point lights).
     pub dir: Vec3,
-    /// Cosseno do ângulo externo do cone; -2 = luz pontual (sem cone).
+    /// Cosine of the cone's outer angle; -2 = point light (no cone).
     pub cos_outer: f32,
 }
 
-/// Tudo que é necessário para desenhar um quadro (montado na thread da interface).
+/// Everything needed to draw one frame (assembled on the UI thread).
 pub struct RenderFrame {
     pub view: Mat4,
     pub proj: Mat4,
     pub cam_pos: Vec3,
     pub items: Vec<DrawItem>,
-    /// (direção para onde a luz viaja, cor * intensidade)
+    /// (direction the light travels, colour * intensity)
     pub dir_lights: Vec<(Vec3, [f32; 3])>,
     pub locals: Vec<LocalLight>,
     pub ambient: [f32; 3],
     pub sky_top: [f32; 3],
     pub sky_horizon: [f32; 3],
-    /// Linhas: x, y, z, r, g, b, a por vértice.
+    /// Lines: x, y, z, r, g, b, a per vertex.
     pub lines: Vec<f32>,
-    /// Sombras da primeira luz direcional: (centro da área coberta, raio).
+    /// Shadows from the first directional light: (centre of the covered area, radius).
     pub shadow: Option<(Vec3, f32)>,
 }
 
@@ -74,7 +74,7 @@ impl RenderFrame {
                     Some(path) => assets.model(path).map(MeshRef::Model),
                     None => Some(MeshRef::Shape(m.shape)),
                 };
-                // modelo com erro de carregamento: mostra um cubo magenta no lugar
+                // model that failed to load: show a magenta cube instead
                 let (mesh, color) = match mesh {
                     Some(mesh) => (mesh, m.color),
                     None => (MeshRef::Shape(Shape::Cube), [1.0, 0.0, 1.0]),
@@ -117,7 +117,7 @@ impl RenderFrame {
                 }
             }
         }
-        // área de sombra centrada um pouco à frente da câmera
+        // shadow area centred a little ahead of the camera
         let forward = view.inverse().transform_vector3(Vec3::NEG_Z).normalize_or_zero();
         let shadow = first_dir_shadows.then_some((cam_pos + forward * 14.0, 26.0));
         RenderFrame {
@@ -140,7 +140,7 @@ impl RenderFrame {
         self.lines.extend_from_slice(&[b.x, b.y, b.z, c[0], c[1], c[2], c[3]]);
     }
 
-    /// Grade do editor no plano XZ, com os eixos X (vermelho) e Z (azul).
+    /// Editor grid on the XZ plane, with the X (red) and Z (blue) axes.
     pub fn add_grid(&mut self, half: i32) {
         let h = half as f32;
         for i in -half..=half {
@@ -158,7 +158,7 @@ impl RenderFrame {
         }
     }
 
-    /// Desenha o volume de visão de uma câmera ou o cone de um holofote (no editor).
+    /// Draws a camera's view volume or a spotlight's cone (in the editor).
     pub fn add_frustum(&mut self, world: Mat4, fov_deg: f32, aspect: f32, depth: f32, c: [f32; 4]) {
         let hh = (fov_deg.to_radians() * 0.5).tan() * depth;
         let hw = hh * aspect;
@@ -176,7 +176,7 @@ impl RenderFrame {
         }
     }
 
-    /// Caixa de arame (colisores, limites de modelos).
+    /// Wireframe box (colliders, model bounds).
     pub fn add_box(&mut self, world: Mat4, center: Vec3, half: Vec3, c: [f32; 4]) {
         let p = |x: f32, y: f32, z: f32| world.transform_point3(center + half * Vec3::new(x, y, z));
         for (a, b) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
@@ -187,7 +187,7 @@ impl RenderFrame {
     }
 }
 
-/// Matriz de visão olhando na direção `dir` a partir de `eye`.
+/// View matrix looking along `dir` from `eye`.
 pub fn look_to(eye: Vec3, dir: Vec3, up: Vec3) -> Mat4 {
     let f = dir.normalize_or_zero();
     let up = if f.cross(up).length_squared() < 1e-6 { Vec3::X } else { up };
@@ -201,7 +201,7 @@ pub fn look_to(eye: Vec3, dir: Vec3, up: Vec3) -> Mat4 {
     ])
 }
 
-/// Projeção ortográfica simétrica no padrão OpenGL.
+/// Symmetric orthographic projection, OpenGL convention.
 pub fn ortho(half_w: f32, half_h: f32, near: f32, far: f32) -> Mat4 {
     Mat4::from_cols_array(&[
         1.0 / half_w, 0.0, 0.0, 0.0,
@@ -231,6 +231,9 @@ pub struct Renderer {
     empty_vao: glow::VertexArray,
     shadow_fbo: Option<glow::Framebuffer>,
     shadow_tex: Option<glow::Texture>,
+    /// 1×1 white texture bound when a mesh has no texture (some drivers, notably on macOS,
+    /// complain about a sampler with nothing bound even if it is never sampled).
+    white_tex: Option<glow::Texture>,
 }
 
 const MESH_VS: &str = r#"
@@ -277,7 +280,7 @@ uniform float u_prange[16];
 uniform vec3 u_pdir[16];
 uniform float u_pcone[16];
 uniform float u_shine;
-uniform int u_mode; // 0 = iluminado, 1 = sem luz, 2 = cor chapada (contorno)
+uniform int u_mode; // 0 = lit, 1 = unlit, 2 = flat colour (outline)
 uniform sampler2D u_tex;
 uniform int u_has_tex;
 uniform sampler2DShadow u_shadow;
@@ -301,7 +304,7 @@ float shadow_factor(vec3 n) {
     for (int x = -1; x <= 1; x++)
         for (int y = -1; y <= 1; y++)
             sum += texture(u_shadow, vec3(p.xy + vec2(float(x), float(y)) * texel * 1.3, p.z - 0.0015));
-    // suaviza a borda da área coberta
+    // softens the edge of the covered area
     vec2 e = abs(p.xy * 2.0 - 1.0);
     float fade = smoothstep(0.85, 1.0, max(e.x, e.y));
     return mix(sum / 9.0, 1.0, fade);
@@ -340,7 +343,7 @@ void main() {
         }
         col += shade(n, v, l, u_pcolor[i] * att, base);
     }
-    col = col / (col + vec3(0.6)) * 1.6; // tone mapping suave
+    col = col / (col + vec3(0.6)) * 1.6; // soft tone mapping
     frag = vec4(pow(clamp(col, 0.0, 1.0), vec3(1.0 / 2.2)), 1.0);
 }
 "#;
@@ -399,7 +402,7 @@ void main() {
 "#;
 
 fn bytes<T>(v: &[T]) -> &[u8] {
-    // Seguro para f32/u32: tipos simples, sem padding.
+    // Safe for f32/u32: plain types, no padding.
     unsafe { std::slice::from_raw_parts(v.as_ptr() as *const u8, std::mem::size_of_val(v)) }
 }
 
@@ -412,7 +415,7 @@ unsafe fn compile(gl: &glow::Context, vs: &str, fs: &str, attribs: &[&str]) -> R
         gl.shader_source(sh, &format!("{header}{src}"));
         gl.compile_shader(sh);
         if !gl.get_shader_compile_status(sh) {
-            return Err(format!("erro de shader: {}", gl.get_shader_info_log(sh)));
+            return Err(format!("shader error: {}", gl.get_shader_info_log(sh)));
         }
         gl.attach_shader(program, sh);
         shaders.push(sh);
@@ -422,7 +425,7 @@ unsafe fn compile(gl: &glow::Context, vs: &str, fs: &str, attribs: &[&str]) -> R
     }
     gl.link_program(program);
     if !gl.get_program_link_status(program) {
-        return Err(format!("erro ao ligar shader: {}", gl.get_program_info_log(program)));
+        return Err(format!("shader link error: {}", gl.get_program_info_log(program)));
     }
     for sh in shaders {
         gl.detach_shader(program, sh);
@@ -475,7 +478,7 @@ impl Renderer {
             let empty_vao = gl.create_vertex_array()?;
             gl.bind_vertex_array(None);
 
-            // mapa de sombras (se a placa não suportar, a engine segue sem sombras)
+            // shadow map (if the card does not support it, the engine carries on without shadows)
             let (shadow_fbo, shadow_tex) = match Self::create_shadow_map(gl) {
                 Ok((f, t)) => (Some(f), Some(t)),
                 Err(_) => (None, None),
@@ -494,6 +497,7 @@ impl Renderer {
                 empty_vao,
                 shadow_fbo,
                 shadow_tex,
+                white_tex: None,
             })
         }
     }
@@ -530,7 +534,7 @@ impl Renderer {
         if ok {
             Ok((fbo, tex))
         } else {
-            Err("framebuffer de sombras incompleto".into())
+            Err("incomplete shadow framebuffer".into())
         }
     }
 
@@ -578,11 +582,11 @@ impl Renderer {
         self.models.insert(m.id, parts);
     }
 
-    /// Desenha o quadro. `viewport` = [x, y, largura, altura] em pixels (já configurado pelo egui).
+    /// Draws the frame. `viewport` = [x, y, width, height] in pixels (already set up by egui).
     pub fn paint(&mut self, gl: &glow::Context, f: &RenderFrame, viewport: [i32; 4]) {
         let view_proj = f.proj * f.view;
         unsafe {
-            // envia para a GPU o que ainda não foi enviado
+            // uploads to the GPU whatever has not been uploaded yet
             for item in &f.items {
                 if let MeshRef::Model(m) = &item.mesh {
                     self.ensure_model(gl, m);
@@ -603,7 +607,7 @@ impl Renderer {
             gl.disable(glow::BLEND);
             gl.front_face(glow::CCW);
 
-            // --- passada de sombras ---
+            // --- shadow pass ---
             let mut light_vp = Mat4::IDENTITY;
             let mut has_shadow = false;
             if let (Some((center, radius)), Some((dir, _)), Some(fbo)) = (f.shadow, f.dir_lights.first(), self.shadow_fbo) {
@@ -649,7 +653,7 @@ impl Renderer {
             gl.disable(glow::CULL_FACE);
             let loc = |p, name: &str| gl.get_uniform_location(p, name);
 
-            // --- céu ---
+            // --- sky ---
             gl.use_program(Some(self.sky_prog));
             gl.uniform_matrix_4_f32_slice(
                 loc(self.sky_prog, "u_inv_view_proj").as_ref(),
@@ -663,7 +667,7 @@ impl Renderer {
             gl.draw_arrays(glow::TRIANGLES, 0, 3);
             gl.depth_mask(true);
 
-            // --- malhas ---
+            // --- meshes ---
             let p = self.mesh_prog;
             gl.use_program(Some(p));
             gl.uniform_matrix_4_f32_slice(loc(p, "u_view_proj").as_ref(), false, &view_proj.to_cols_array());
@@ -686,7 +690,7 @@ impl Renderer {
             gl.uniform_1_i32(loc(p, "u_shadow").as_ref(), 1);
             gl.uniform_1_i32(loc(p, "u_has_shadow").as_ref(), has_shadow as i32);
             gl.uniform_matrix_4_f32_slice(loc(p, "u_light_vp").as_ref(), false, &light_vp.to_cols_array());
-            // a unidade 1 precisa sempre de uma textura de profundidade válida
+            // unit 1 always needs a valid depth texture
             gl.active_texture(glow::TEXTURE1);
             gl.bind_texture(glow::TEXTURE_2D, self.shadow_tex);
             gl.active_texture(glow::TEXTURE0);
@@ -698,6 +702,26 @@ impl Renderer {
             let u_mode = loc(p, "u_mode");
             let u_outline = loc(p, "u_outline");
             let u_has_tex = loc(p, "u_has_tex");
+            if self.white_tex.is_none() {
+                if let Ok(t) = gl.create_texture() {
+                    gl.bind_texture(glow::TEXTURE_2D, Some(t));
+                    gl.tex_image_2d(
+                        glow::TEXTURE_2D,
+                        0,
+                        glow::RGBA8 as i32,
+                        1,
+                        1,
+                        0,
+                        glow::RGBA,
+                        glow::UNSIGNED_BYTE,
+                        glow::PixelUnpackData::Slice(Some(&[255, 255, 255, 255])),
+                    );
+                    gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::NEAREST as i32);
+                    gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::NEAREST as i32);
+                    self.white_tex = Some(t);
+                }
+            }
+            let white = self.white_tex;
 
             for item in &f.items {
                 let parts: &[GpuMesh] = match &item.mesh {
@@ -707,13 +731,13 @@ impl Renderer {
                 gl.uniform_matrix_4_f32_slice(u_model.as_ref(), false, &item.model.to_cols_array());
                 let nm = Mat3::from_mat4(item.model).inverse().transpose();
                 gl.uniform_matrix_3_f32_slice(u_normal.as_ref(), false, &nm.to_cols_array());
-                // escala negativa inverte a orientação das faces
+                // negative scale flips face winding
                 let flipped = item.model.determinant() < 0.0;
-                // modelos importados nem sempre têm faces orientadas de forma consistente
+                // imported models do not always have consistently oriented faces
                 let two_sided = matches!(item.mesh, MeshRef::Shape(Shape::Plane) | MeshRef::Model(_));
 
                 if item.selected {
-                    // contorno laranja: casca invertida ligeiramente maior
+                    // orange outline: slightly larger inverted hull
                     gl.enable(glow::CULL_FACE);
                     gl.cull_face(if flipped { glow::BACK } else { glow::FRONT });
                     gl.uniform_1_i32(u_mode.as_ref(), 2);
@@ -739,14 +763,14 @@ impl Renderer {
                 for m in parts {
                     let c = [item.color[0] * m.color[0], item.color[1] * m.color[1], item.color[2] * m.color[2]];
                     gl.uniform_3_f32_slice(u_color.as_ref(), &c);
-                    // a textura escolhida no Inspetor tem prioridade sobre a do modelo
+                    // the texture chosen in the Inspector takes priority over the model's
                     let tex = item
                         .texture
                         .as_ref()
                         .or(m.texture.as_ref())
                         .and_then(|t| self.textures.get(&t.id).copied());
                     gl.uniform_1_i32(u_has_tex.as_ref(), tex.is_some() as i32);
-                    gl.bind_texture(glow::TEXTURE_2D, tex);
+                    gl.bind_texture(glow::TEXTURE_2D, tex.or(white));
                     gl.bind_vertex_array(Some(m.vao));
                     gl.draw_elements(glow::TRIANGLES, m.count, glow::UNSIGNED_INT, 0);
                 }
@@ -757,7 +781,7 @@ impl Renderer {
             gl.bind_texture(glow::TEXTURE_2D, None);
             gl.active_texture(glow::TEXTURE0);
 
-            // --- linhas (grade, gizmos de câmera, colisores) ---
+            // --- lines (grid, camera gizmos, colliders) ---
             if !f.lines.is_empty() {
                 gl.enable(glow::BLEND);
                 gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
@@ -783,7 +807,7 @@ impl Renderer {
 }
 
 // ---------------------------------------------------------------------------
-// Geração das malhas primitivas (posição + normal + uv, índices u32)
+// Primitive mesh generation (position + normal + uv, u32 indices)
 // ---------------------------------------------------------------------------
 
 struct Builder {
@@ -796,7 +820,7 @@ impl Builder {
         self.v.extend_from_slice(&[p.x, p.y, p.z, n.x, n.y, n.z, u, v]);
         (self.v.len() / 8 - 1) as u32
     }
-    /// Triângulo com orientação corrigida automaticamente para apontar na direção da normal.
+    /// Triangle whose winding is fixed automatically to face along the normal.
     fn tri(&mut self, a: u32, b: u32, c: u32) {
         let p = |i: u32| {
             let k = i as usize * 8;
@@ -873,7 +897,7 @@ fn build_mesh(shape: Shape) -> (Vec<f32>, Vec<u32>) {
     (b.v, b.i)
 }
 
-/// Esfera de raio 0.5 (ou só o hemisfério de cima/baixo), deslocada em Y.
+/// Sphere of radius 0.5 (or only the top/bottom hemisphere), offset in Y.
 fn sphere_part(b: &mut Builder, y_off: f32, top: bool, bottom: bool) {
     let stacks = SEG / 2;
     let (s0, s1) = match (top, bottom) {
@@ -899,7 +923,7 @@ fn sphere_part(b: &mut Builder, y_off: f32, top: bool, bottom: bool) {
     }
 }
 
-/// Lateral de um tronco de cone entre y0 (raio r0) e y1 (raio r1).
+/// Side of a truncated cone between y0 (radius r0) and y1 (radius r1).
 fn side(b: &mut Builder, r0: f32, r1: f32, y0: f32, y1: f32) {
     let slope = (r0 - r1) / (y1 - y0);
     let mut lo = vec![];

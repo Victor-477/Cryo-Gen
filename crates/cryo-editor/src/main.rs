@@ -1,7 +1,12 @@
-//! Cryo Engine — editor 3D com scripts na linguagem Cryo.
+//! Cryo Engine — 3D editor with scripting in the Cryo language.
 //!
-//! Uso: `cryo [pasta_do_projeto] [--play | --game]`
+//! Usage: `cryo [project_folder] [--play | --game]`
 
+// Release builds on Windows should not open a console window next to the editor.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
+#[macro_use]
+mod i18n;
 mod app;
 mod assets;
 mod audio;
@@ -12,6 +17,8 @@ mod project;
 mod render;
 mod runtime;
 mod scene;
+mod settings;
+mod tutorial;
 mod viewport;
 
 use eframe::egui;
@@ -26,29 +33,39 @@ fn main() -> eframe::Result {
             "--play" => autoplay = true,
             "--game" => game_flag = true,
             "-h" | "--help" => {
-                println!("Cryo Engine\n\nUso: cryo [pasta_do_projeto] [--play | --game]\n\n  --play   abre o projeto já em modo Play\n  --game   roda só o jogo, sem o editor");
+                println!("Cryo Engine\n\nUsage: cryo [project_folder] [--play | --game]\n\n  --play   open the project already in Play mode\n  --game   run only the game, without the editor");
                 return Ok(());
             }
             other => project_dir = Some(PathBuf::from(other)),
         }
     }
-    // Executável exportado: encontra a pasta `game/` ao lado e abre direto no jogo.
+    // Exported executable: finds the `game/` folder next to it and opens straight into the game.
     let bundled = if project_dir.is_none() { project::bundled_game() } else { None };
     let game = match (&bundled, game_flag, &project_dir) {
         (Some(dir), _, _) => project::read_game_config(dir),
         (None, true, Some(dir)) => Some(project::read_game_config(dir).unwrap_or_else(|| project::GameConfig {
-            title: dir.file_name().and_then(|n| n.to_str()).unwrap_or("Jogo").to_string(),
+            title: dir.file_name().and_then(|n| n.to_str()).unwrap_or("Game").to_string(),
             scene: project::list_files(dir, project::SCENE_EXT).into_iter().next().unwrap_or_default(),
         })),
         _ => None,
     };
-    let project_dir = bundled.or(project_dir).unwrap_or_else(|| PathBuf::from("ProjetoExemplo"));
+    let settings = settings::Settings::load();
+    i18n::set_lang(i18n::Lang::from_code(&settings.language));
+    // No folder given: reopen the last project, or fall back to the example in the user's home.
+    let project_dir = bundled.or(project_dir).unwrap_or_else(|| {
+        settings
+            .last_project
+            .as_ref()
+            .map(PathBuf::from)
+            .filter(|p| p.is_dir())
+            .unwrap_or_else(settings::default_project_dir)
+    });
     let title = match &game {
         Some(g) => g.title.clone(),
         None => "Cryo Engine".to_string(),
     };
 
-    // Anti-aliasing (MSAA). Se a placa de vídeo não suportar, rode com CRYO_MSAA=0.
+    // Anti-aliasing (MSAA). If the graphics card does not support it, run with CRYO_MSAA=0.
     let msaa: u16 = std::env::var("CRYO_MSAA").ok().and_then(|v| v.parse().ok()).unwrap_or(4);
 
     let options = eframe::NativeOptions {
@@ -63,10 +80,10 @@ fn main() -> eframe::Result {
     let result = eframe::run_native(
         "Cryo Engine",
         options,
-        Box::new(move |cc| Ok(Box::new(app::App::new(cc, project_dir, autoplay, game)))),
+        Box::new(move |cc| Ok(Box::new(app::App::new(cc, project_dir, autoplay, game, settings)))),
     );
     if result.is_err() && msaa > 0 {
-        eprintln!("Dica: se o erro for de configuração gráfica, tente novamente com CRYO_MSAA=0");
+        eprintln!("Hint: if this is a graphics configuration error, try again with CRYO_MSAA=0");
     }
     result
 }

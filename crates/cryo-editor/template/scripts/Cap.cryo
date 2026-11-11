@@ -1,0 +1,91 @@
+// Kip's cap. Thrown with F (or a click): flies out, hovers while the button
+// is held, then comes back. Jump onto it while it hovers to bounce.
+script Cap {
+    prop speed: num = 16
+    prop reach: num = 5.5
+    var state = "home"        // home | out | hover | back
+    var dir = vec3(0, 0, -1)
+    var travelled = 0
+    var hover_time = 0
+    var spin = 0
+
+    on start() {
+        self.visible = false
+    }
+
+    on throw(origin, direction) {
+        if state != "home" {
+            return
+        }
+        state = "out"
+        dir = direction
+        travelled = 0
+        hover_time = 0
+        self.position = origin + direction * 0.9
+        self.visible = true
+        audio.play("sounds/throw.wav", 0.5)
+    }
+
+    // The cap captured something: disappear without telling the player it is home.
+    on vanish() {
+        state = "home"
+        self.visible = false
+    }
+
+    on update(dt) {
+        if state == "home" {
+            return
+        }
+        spin += 900 * dt
+        self.rotation = vec3(0, spin, 0)
+        let player = scene.find("Player")
+        if player == nil {
+            return
+        }
+        if state == "out" {
+            let step = speed * dt
+            self.translate(dir * step)
+            travelled += step
+            if travelled >= reach {
+                state = "hover"
+            }
+        } else if state == "hover" {
+            hover_time += dt
+            var limit = 0.4
+            if input.down("f") or input.down("mouse_left") {
+                limit = 2.2
+            }
+            if hover_time > limit {
+                state = "back"
+            }
+        } else {
+            let to = player.position + vec3(0, 0.4, 0) - self.position
+            let d = length(to)
+            if d < 0.9 {
+                state = "home"
+                self.visible = false
+                player.send("cap_home")
+                return
+            }
+            self.translate(normalize(to) * min((speed + 6) * dt, d))
+        }
+    }
+
+    on collide(other, normal) {
+        if state == "home" {
+            return
+        }
+        if other.name == "Player" {
+            // bounce only when the player drops onto the hovering cap
+            if state == "hover" and not other.grounded {
+                other.send("cap_bounce")
+                state = "back"
+            }
+            return
+        }
+        // hit something solid on the way out: stop there
+        if state == "out" and not other.trigger {
+            state = "hover"
+        }
+    }
+}

@@ -1,4 +1,4 @@
-//! Recursos importados: modelos 3D (.obj, .gltf, .glb) e texturas (.png, .jpg).
+//! Imported assets: 3D models (.obj, .gltf, .glb) and textures (.png, .jpg).
 
 use glam::{Mat3, Mat4, Vec2, Vec3};
 use std::collections::HashMap;
@@ -27,9 +27,9 @@ pub struct TextureData {
     pub rgba: Vec<u8>,
 }
 
-/// Parte de um modelo com um único material.
+/// Part of a model with a single material.
 pub struct SubMesh {
-    /// Intercalado: posição (3), normal (3), uv (2).
+    /// Interleaved: position (3), normal (3), uv (2).
     pub vertices: Vec<f32>,
     pub indices: Vec<u32>,
     pub color: [f32; 3],
@@ -44,12 +44,12 @@ pub struct ModelData {
     pub triangles: usize,
 }
 
-/// Cache de recursos carregados do disco (lado da CPU; a GPU é preenchida pelo renderizador).
+/// Cache of assets loaded from disk (CPU side; the GPU side is filled by the renderer).
 pub struct Assets {
     pub project_dir: PathBuf,
     models: HashMap<String, Option<Arc<ModelData>>>,
     textures: HashMap<String, Option<Arc<TextureData>>>,
-    /// Erros de carregamento ainda não mostrados no Console.
+    /// Loading errors not yet shown in the Console.
     pub errors: Vec<String>,
 }
 
@@ -88,7 +88,7 @@ impl Assets {
         loaded
     }
 
-    /// Esquece um recurso para que seja relido do disco (após reimportar).
+    /// Forgets an asset so it is read from disk again (after re-importing).
     pub fn invalidate(&mut self, rel: &str) {
         self.models.remove(rel);
         self.textures.remove(rel);
@@ -96,7 +96,7 @@ impl Assets {
 }
 
 pub fn load_texture(path: &Path) -> Result<TextureData, String> {
-    let img = image::open(path).map_err(|e| format!("imagem inválida ({e})"))?;
+    let img = image::open(path).map_err(|e| format!("invalid image ({e})"))?;
     let img = if img.width().max(img.height()) > 4096 {
         img.resize(4096, 4096, image::imageops::FilterType::Triangle)
     } else {
@@ -111,7 +111,7 @@ pub fn load_model(path: &Path) -> Result<ModelData, String> {
     let subs = match ext.as_str() {
         "obj" => load_obj(path)?,
         "gltf" | "glb" => load_gltf(path)?,
-        other => return Err(format!("formato `.{other}` não suportado (use .obj, .gltf ou .glb)")),
+        other => return Err(format!("format `.{other}` is not supported (use .obj, .gltf or .glb)")),
     };
     finish(subs)
 }
@@ -126,14 +126,14 @@ fn finish(subs: Vec<SubMesh>) -> Result<ModelData, String> {
         for v in s.vertices.chunks_exact(8) {
             let p = Vec3::new(v[0], v[1], v[2]);
             if !p.is_finite() {
-                return Err("o modelo contém coordenadas inválidas".into());
+                return Err("the model contains invalid coordinates".into());
             }
             min = min.min(p);
             max = max.max(p);
         }
     }
     if triangles == 0 {
-        return Err("o modelo não contém triângulos".into());
+        return Err("the model contains no triangles".into());
     }
     Ok(ModelData {
         id: next_id(),
@@ -180,7 +180,7 @@ fn load_mtl(path: &Path) -> HashMap<String, Material> {
                 }
             }
             "map_Kd" => {
-                // o nome do arquivo é o último item (opções vêm antes)
+                // the file name is the last item (options come first)
                 if let (Some(name), Some(file)) = (&current, rest.split_whitespace().last()) {
                     if let Some(m) = out.get_mut(name) {
                         m.texture = Some(file.replace('\\', "/"));
@@ -194,7 +194,7 @@ fn load_mtl(path: &Path) -> HashMap<String, Material> {
 }
 
 fn load_obj(path: &Path) -> Result<Vec<SubMesh>, String> {
-    let src = std::fs::read_to_string(path).map_err(|e| format!("não foi possível ler ({e})"))?;
+    let src = std::fs::read_to_string(path).map_err(|e| format!("could not read ({e})"))?;
     let dir = path.parent().unwrap_or(Path::new("."));
     let mut pos: Vec<Vec3> = vec![];
     let mut nor: Vec<Vec3> = vec![];
@@ -239,7 +239,7 @@ fn load_obj(path: &Path) -> Result<Vec<SubMesh>, String> {
             "v" => {
                 let v = nums(it);
                 if v.len() < 3 {
-                    return Err(format!("linha {}: vértice incompleto", ln + 1));
+                    return Err(format!("line {}: incomplete vertex", ln + 1));
                 }
                 pos.push(Vec3::new(v[0], v[1], v[2]));
             }
@@ -280,7 +280,7 @@ fn load_obj(path: &Path) -> Result<Vec<SubMesh>, String> {
                     let n = parts.next().and_then(|t| t.parse::<i64>().ok()).and_then(|i| resolve(i, nor.len()));
                     match p {
                         Some(p) => corners.push((p, t, n)),
-                        None => return Err(format!("linha {}: índice de vértice inválido", ln + 1)),
+                        None => return Err(format!("line {}: invalid vertex index", ln + 1)),
                     }
                 }
                 if corners.len() < 3 {
@@ -293,7 +293,7 @@ fn load_obj(path: &Path) -> Result<Vec<SubMesh>, String> {
                 let mut ids = Vec::with_capacity(corners.len());
                 for (p, t, n) in &corners {
                     let id = match n {
-                        // com normal própria: vértices iguais são compartilhados
+                        // with its own normal: identical vertices are shared
                         Some(n) => {
                             let key = (*p, t.map(|t| t + 1).unwrap_or(0), *n + 1);
                             match g.lookup.get(&key) {
@@ -307,7 +307,7 @@ fn load_obj(path: &Path) -> Result<Vec<SubMesh>, String> {
                                 }
                             }
                         }
-                        // sem normal: usa a normal da face
+                        // no normal: use the face normal
                         None => {
                             let id = (g.vertices.len() / 8) as u32;
                             let uv = t.map(|t| uvs[t]).unwrap_or(Vec2::ZERO);
@@ -336,7 +336,7 @@ fn load_obj(path: &Path) -> Result<Vec<SubMesh>, String> {
                     .or_insert_with(|| load_texture(&dir.join(&file)).ok().map(Arc::new))
                     .clone()
             });
-            // com textura, a cor difusa costuma ser só um multiplicador neutro
+            // with a texture, the diffuse colour is usually just a neutral multiplier
             let color = match (mat, &texture) {
                 (Some(_), Some(_)) => [1.0; 3],
                 (Some(m), None) => m.color,
@@ -352,7 +352,7 @@ fn load_obj(path: &Path) -> Result<Vec<SubMesh>, String> {
 // ---------------------------------------------------------------------------
 
 fn load_gltf(path: &Path) -> Result<Vec<SubMesh>, String> {
-    let (doc, buffers, images) = gltf::import(path).map_err(|e| format!("glTF inválido ({e})"))?;
+    let (doc, buffers, images) = gltf::import(path).map_err(|e| format!("invalid glTF ({e})"))?;
     let mut textures: HashMap<usize, Option<Arc<TextureData>>> = HashMap::new();
     let mut subs = vec![];
 
@@ -374,7 +374,7 @@ fn load_gltf(path: &Path) -> Result<Vec<SubMesh>, String> {
             .clone()
     };
 
-    // percorre a hierarquia de nós acumulando as transformações
+    // walks the node hierarchy accumulating transforms
     let mut stack: Vec<(gltf::Node, Mat4)> = vec![];
     let scenes: Vec<gltf::Scene> = match doc.default_scene() {
         Some(s) => vec![s],
@@ -414,7 +414,7 @@ fn load_gltf(path: &Path) -> Result<Vec<SubMesh>, String> {
                 None => (0..positions.len() as u32).collect(),
             };
             if indices.iter().any(|i| *i as usize >= positions.len()) {
-                return Err("índices fora do intervalo no modelo".into());
+                return Err("indices out of range in the model".into());
             }
 
             let pbr = prim.material().pbr_metallic_roughness();
@@ -432,7 +432,7 @@ fn load_gltf(path: &Path) -> Result<Vec<SubMesh>, String> {
                     out_idx = indices;
                 }
                 _ => {
-                    // sem normais: calcula uma por face
+                    // no normals: compute one per face
                     for tri in indices.chunks_exact(3) {
                         let [a, b, c] = [tri[0] as usize, tri[1] as usize, tri[2] as usize];
                         let n = (positions[b] - positions[a]).cross(positions[c] - positions[a]).normalize_or_zero();
@@ -444,7 +444,7 @@ fn load_gltf(path: &Path) -> Result<Vec<SubMesh>, String> {
                     }
                 }
             }
-            // escala negativa no nó inverte a orientação dos triângulos
+            // negative scale on the node flips triangle winding
             if world.determinant() < 0.0 {
                 for tri in out_idx.chunks_exact_mut(3) {
                     tri.swap(1, 2);
@@ -467,13 +467,13 @@ mod tests {
     }
 
     #[test]
-    fn obj_com_quad_material_e_indices_negativos() {
+    fn obj_with_quad_material_and_negative_indices() {
         let d = tmp("obj");
-        std::fs::write(d.join("m.mtl"), "newmtl vermelho\nKd 1 0 0\n").unwrap();
+        std::fs::write(d.join("m.mtl"), "newmtl red\nKd 1 0 0\n").unwrap();
         std::fs::write(
             d.join("q.obj"),
             "mtllib m.mtl\nv 0 0 0\nv 2 0 0\nv 2 0 -4\nv 0 0 -4\nvt 0 0\nvt 1 0\nvt 1 1\nvt 0 1\n\
-             usemtl vermelho\nf 1/1 2/2 3/3 4/4\nf -4 -3 -2\n",
+             usemtl red\nf 1/1 2/2 3/3 4/4\nf -4 -3 -2\n",
         )
         .unwrap();
         let m = load_model(&d.join("q.obj")).unwrap();
@@ -481,15 +481,15 @@ mod tests {
         assert_eq!(m.subs.len(), 1);
         assert_eq!(m.subs[0].color, [1.0, 0.0, 0.0]);
         assert!((m.center - Vec3::new(1.0, 0.0, -2.0)).length() < 1e-5);
-        // normal calculada da face aponta para cima
+        // the computed face normal points up
         assert!((m.subs[0].vertices[4] - 1.0).abs() < 1e-5);
         std::fs::remove_dir_all(d).ok();
     }
 
     #[test]
-    fn gltf_com_no_transformado() {
+    fn gltf_with_transformed_node() {
         let d = tmp("gltf");
-        // um triângulo: 3 posições f32 (36 bytes) + 3 índices u16 (6 bytes)
+        // one triangle: 3 f32 positions (36 bytes) + 3 u16 indices (6 bytes)
         let mut bin: Vec<u8> = vec![];
         for v in [[0f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]] {
             for c in v {
@@ -515,18 +515,18 @@ mod tests {
         let m = load_model(&d.join("t.gltf")).unwrap();
         assert_eq!(m.triangles, 1);
         assert_eq!(m.subs[0].color, [0.0, 1.0, 0.0]);
-        // a transformação do nó foi aplicada: x vai de 10 a 12
+        // the node transform was applied: x goes from 10 to 12
         assert!((m.center.x - 11.0).abs() < 1e-4, "{:?}", m.center);
         assert!((m.subs[0].vertices[5] - 1.0).abs() < 1e-5, "normal +Z");
         std::fs::remove_dir_all(d).ok();
     }
 
     #[test]
-    fn arquivo_invalido_vira_erro() {
+    fn invalid_file_becomes_error() {
         let d = tmp("bad");
         std::fs::write(d.join("x.obj"), "v 0 0 0\n").unwrap();
         assert!(load_model(&d.join("x.obj")).is_err());
-        std::fs::write(d.join("x.glb"), "lixo").unwrap();
+        std::fs::write(d.join("x.glb"), "garbage").unwrap();
         assert!(load_model(&d.join("x.glb")).is_err());
         std::fs::remove_dir_all(d).ok();
     }

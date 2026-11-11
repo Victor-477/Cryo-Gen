@@ -1,0 +1,8 @@
+// Rotating obstacle.
+script Spinner {
+    prop speed: num = 70
+
+    on update(dt) {
+        self.rotate(vec3(0, speed * dt, 0))
+    }
+}
