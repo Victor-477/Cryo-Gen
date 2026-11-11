@@ -331,6 +331,210 @@ pub fn all() -> Vec<Tutorial> {
             ],
         },
         Tutorial {
+            id: "animation",
+            title: tr!("Animation, cutscenes and timed events", "Animação, cutscenes e eventos sincronizados"),
+            summary: tr!("Keyframes on a timeline, with sounds and script events in sync.", "Keyframes em uma linha do tempo, com sons e eventos de script sincronizados."),
+            steps: vec![
+                step(
+                    tr!("The Timeline", "A Linha do tempo"),
+                    tr!(
+                        "Open the Timeline tab. An animation (clip) moves objects over time and fires events at exact instants. The example has two: Intro, the opening cutscene, and Victory, started by a script.",
+                        "Abra a aba Linha do tempo. Uma animação (clipe) move objetos ao longo do tempo e dispara eventos em instantes exatos. O exemplo tem duas: Intro, a cutscene de abertura, e Victory, iniciada por um script."
+                    ),
+                    Focus::Tab(Tab::Timeline),
+                ),
+                step(
+                    tr!("Set keyframes", "Crie keyframes"),
+                    tr!(
+                        "Click + New animation. Select an object, then click + Position: that records where it is now. Drag the ruler to another time, move the object in the Scene and click + Position again. Press Preview to watch it travel between the two keys.",
+                        "Clique em + Nova animação. Selecione um objeto e clique em + Posição: isso grava onde ele está agora. Arraste a régua para outro tempo, mova o objeto na Cena e clique em + Posição de novo. Pressione Prévia para vê-lo ir de uma chave à outra."
+                    ),
+                    Focus::Tab(Tab::Timeline),
+                ),
+                step(
+                    tr!("Edit keys", "Edite as chaves"),
+                    tr!(
+                        "Click a key to change its time, value and what happens after it: Smooth, Linear or Step (hold). Drag a key sideways to retime it. Rotation, Scale, Colour and a camera's Field of view are animated the same way.",
+                        "Clique em uma chave para mudar o tempo, o valor e o que acontece depois dela: Suave, Linear ou Degrau (segura). Arraste a chave para os lados para mudar o tempo. Rotação, Escala, Cor e o Campo de visão de uma câmera são animados do mesmo jeito."
+                    ),
+                    Focus::Tab(Tab::Timeline),
+                ),
+                step(
+                    tr!("Events in sync", "Eventos sincronizados"),
+                    tr!(
+                        "Move the playhead and choose + Event to make something happen at that exact instant: play a Sound, send a Script event to an object (it runs `on my_event()` there), cut to another Camera, or show Screen text.",
+                        "Mova o cursor de tempo e escolha + Evento para algo acontecer naquele instante exato: tocar um Som, enviar um Evento de script a um objeto (executa `on my_event()` nele), cortar para outra Câmera ou mostrar Texto na tela."
+                    ),
+                    Focus::Tab(Tab::Timeline),
+                ),
+                step(
+                    tr!("Cutscenes", "Cutscenes"),
+                    tr!(
+                        "Tick Cutscene to block the player's input and show cinema bars while the clip plays (Enter skips it). Tick Autoplay to start it with the game. A typical cutscene animates a second camera and uses Camera cut events to switch to it and back.",
+                        "Marque Cutscene para bloquear os comandos do jogador e mostrar faixas de cinema enquanto o clipe toca (Enter pula). Marque Tocar ao iniciar para começar junto com o jogo. Uma cutscene típica anima uma segunda câmera e usa eventos de Corte de câmera para trocar para ela e voltar."
+                    ),
+                    Focus::Tab(Tab::Timeline),
+                ),
+                step(
+                    tr!("Animations in real time", "Animações em tempo real"),
+                    tr!(
+                        "Start a clip from any script:\n\nanim.play(\"Victory\")\nanim.stop(\"Victory\")\nanim.playing(\"Victory\")\n\nWhen a clip ends, every script receives `on animation_end(name)`. Doors, lifts and effects are usually done this way.",
+                        "Inicie um clipe de qualquer script:\n\nanim.play(\"Victory\")\nanim.stop(\"Victory\")\nanim.playing(\"Victory\")\n\nQuando um clipe termina, todo script recebe `on animation_end(name)`. Portas, elevadores e efeitos costumam ser feitos assim."
+                    ),
+                    Focus::Tab(Tab::Script),
+                ),
+                step(
+                    tr!("Timers in scripts", "Temporizadores nos scripts"),
+                    tr!(
+                        "For timing without a timeline:\n\nafter(2, \"explode\")      once, 2 seconds from now\nevery(0.5, \"blink\")      again and again\ncancel(\"blink\")\n\nEach one runs the matching `on` handler of the same script. HintZone.cryo uses after() to re-arm itself.",
+                        "Para sincronizar sem linha do tempo:\n\nafter(2, \"explode\")      uma vez, daqui a 2 segundos\nevery(0.5, \"blink\")      repetidamente\ncancel(\"blink\")\n\nCada um executa o `on` correspondente do mesmo script. HintZone.cryo usa after() para se rearmar."
+                    ),
+                    Focus::Tab(Tab::Script),
+                ),
+            ],
+        },
+        Tutorial {
+            id: "modelling",
+            title: tr!("Modelling in the engine", "Modelando dentro da engine"),
+            summary: tr!("Shape your own meshes: extrude, inset, subdivide and more.", "Crie suas próprias malhas: extrudar, inserir, subdividir e mais."),
+            steps: vec![
+                step(
+                    tr!("Enter Edit Mesh", "Entre em Editar malha"),
+                    tr!(
+                        "Choose + Create > Editable mesh, or select any object with a Mesh and click Edit mesh in the Inspector. A primitive is first saved as a model file in models/, so the original shapes are never changed.",
+                        "Escolha + Criar > Malha editável, ou selecione um objeto com Malha e clique em Editar malha no Inspetor. Uma primitiva é salva antes como arquivo de modelo em models/, então as formas originais nunca são alteradas."
+                    ),
+                    Focus::Tab(Tab::Inspector),
+                ),
+                step(
+                    tr!("Select faces or vertices", "Selecione faces ou vértices"),
+                    tr!(
+                        "The bar at the top of the Scene switches between Faces and Vertices. Click to select, Shift + click to add or remove, A selects everything. The camera works as usual.",
+                        "A barra no topo da Cena alterna entre Faces e Vértices. Clique para selecionar, Shift + clique para adicionar ou remover, A seleciona tudo. A câmera funciona como sempre."
+                    ),
+                    Focus::Tab(Tab::Scene),
+                ),
+                step(
+                    tr!("Move, rotate, scale", "Mova, gire, escale"),
+                    tr!(
+                        "The gizmo appears on the selection. Use the Move, Rotate and Scale tools (W, E, R) and drag an axis to reshape the mesh.",
+                        "O gizmo aparece sobre a seleção. Use as ferramentas Mover, Girar e Escala (W, E, R) e arraste um eixo para remodelar a malha."
+                    ),
+                    Focus::Tab(Tab::Scene),
+                ),
+                step(
+                    tr!("Extrude and inset", "Extrudar e inserir"),
+                    tr!(
+                        "Extrude (X) pulls the selected faces outwards, creating new sides: select the top of a cube, extrude and drag it up to make a tower. Inset (I) creates a smaller face inside each one, the usual start for windows, rims and steps.",
+                        "Extrudar (X) puxa as faces selecionadas para fora, criando novas laterais: selecione o topo de um cubo, extrude e arraste para cima para fazer uma torre. Inserir (I) cria uma face menor dentro de cada uma, o começo usual de janelas, bordas e degraus."
+                    ),
+                    Focus::Tab(Tab::Scene),
+                ),
+                step(
+                    tr!("More tools", "Mais ferramentas"),
+                    tr!(
+                        "Subdivide (U) splits faces for more detail. Delete removes the selection. In Vertices mode, Merge (M) joins vertices at their centre and Fill builds a face from three or more vertices. Flip (N) turns faces that look dark or see-through. Smooth switches between flat and rounded shading.",
+                        "Subdividir (U) divide as faces para ter mais detalhe. Excluir remove a seleção. No modo Vértices, Unir (M) junta vértices no centro e Preencher cria uma face a partir de três ou mais vértices. Inverter (N) vira faces que aparecem escuras ou transparentes. Suave alterna entre sombreamento plano e arredondado."
+                    ),
+                    Focus::Tab(Tab::Scene),
+                ),
+                step(
+                    tr!("Finish", "Conclua"),
+                    tr!(
+                        "Ctrl+Z undoes modelling steps. Done saves the model as an .obj in models/ (every object using that file updates); Cancel goes back to how it was. The box collider and textures follow the new shape.",
+                        "Ctrl+Z desfaz os passos de modelagem. Concluir salva o modelo como .obj em models/ (todos os objetos que usam o arquivo são atualizados); Cancelar volta ao que era. O colisor de caixa e as texturas acompanham a nova forma."
+                    ),
+                    Focus::Tab(Tab::Scene),
+                ),
+            ],
+        },
+        Tutorial {
+            id: "events",
+            title: tr!("Events and quick time events", "Eventos e quick time events"),
+            summary: tr!("Make scripts talk to each other and ask the player to react in time.", "Faça os scripts conversarem e peça ao jogador para reagir a tempo."),
+            steps: vec![
+                step(
+                    tr!("Events between scripts", "Eventos entre scripts"),
+                    tr!(
+                        "other.send(\"hit\", 2) runs on hit(amount) in one object. emit(\"alarm\") runs on alarm() in every script of the scene, so a lever can warn all the doors without knowing them. global.score keeps a value that every script can read and change.",
+                        "other.send(\"hit\", 2) executa on hit(amount) em um objeto. emit(\"alarm\") executa on alarm() em todos os scripts da cena, então uma alavanca avisa todas as portas sem conhecê-las. global.score guarda um valor que todos os scripts leem e alteram."
+                    ),
+                    Focus::Tab(Tab::Script),
+                ),
+                step(
+                    tr!("Events the engine sends", "Eventos que a engine envia"),
+                    tr!(
+                        "Besides start, update and collide, a script can declare on touch_start(other) and on touch_end(other), fired once when a contact begins and ends, and on key_down(key) and on key_up(key). Give objects a Tag in the Inspector and find them all with scene.tagged(\"enemy\").",
+                        "Além de start, update e collide, um script pode declarar on touch_start(other) e on touch_end(other), disparados uma vez quando um contato começa e termina, e on key_down(key) e on key_up(key). Dê uma Etiqueta aos objetos no Inspetor e encontre todos com scene.tagged(\"enemy\")."
+                    ),
+                    Focus::Tab(Tab::Inspector),
+                ),
+                step(
+                    tr!("A quick time event in one line", "Um quick time event em uma linha"),
+                    tr!(
+                        "qte.press(\"e\", 1.5) shows the key on screen with a ring that runs out in 1.5 seconds. There are also qte.mash(key, presses, seconds), qte.hold(key, hold_seconds, seconds) and qte.sequence([\"w\", \"a\", \"d\"], seconds). The answer arrives as on qte_success(name) or on qte_fail(name). Set time.scale = 0.3 for slow motion while the player decides.",
+                        "qte.press(\"e\", 1.5) mostra a tecla na tela com um anel que se esgota em 1,5 segundo. Há também qte.mash(tecla, apertos, segundos), qte.hold(tecla, segundos_segurando, segundos) e qte.sequence([\"w\", \"a\", \"d\"], segundos). A resposta chega como on qte_success(nome) ou on qte_fail(nome). Use time.scale = 0.3 para câmera lenta enquanto o jogador decide."
+                    ),
+                    Focus::Tab(Tab::Script),
+                ),
+                step(
+                    tr!("Quick time events in cutscenes", "Quick time events em cutscenes"),
+                    tr!(
+                        "In the Timeline, + Event > Quick time event places one at an exact instant of a clip. The clip waits there until the player answers, then goes on; every script hears the result, so one can start a different animation on failure. The same menu has Event for everyone, Play animation and Game speed.",
+                        "Na Timeline, + Evento > Quick time event coloca um em um instante exato do clipe. O clipe espera ali até o jogador responder e então continua; todos os scripts recebem o resultado, então um deles pode iniciar outra animação em caso de falha. O mesmo menu tem Evento para todos, Tocar animação e Velocidade do jogo."
+                    ),
+                    Focus::Tab(Tab::Timeline),
+                ),
+                step(
+                    tr!("State machines", "Máquinas de estado"),
+                    tr!(
+                        "Inside a script, state patrol and state chase blocks group their own on enter(), on update(dt) and on exit(). The script is in one state at a time and goto chase switches. It keeps enemy and door logic short and readable.",
+                        "Dentro de um script, blocos state patrol e state chase agrupam seus próprios on enter(), on update(dt) e on exit(). O script fica em um estado por vez e goto chase troca. Isso mantém a lógica de inimigos e portas curta e legível."
+                    ),
+                    Focus::Tab(Tab::Script),
+                ),
+            ],
+        },
+        Tutorial {
+            id: "firstperson",
+            title: tr!("First person and animated models", "Primeira pessoa e modelos animados"),
+            summary: tr!("A first-person camera in one click, and models that move with their skeleton.", "Uma câmera em primeira pessoa em um clique, e modelos que se movem com o esqueleto."),
+            steps: vec![
+                step(
+                    tr!("Create the player", "Crie o jogador"),
+                    tr!(
+                        "Choose + Create > First-person player. It adds a body with physics, a camera called Head at eye height and the FirstPerson script. Press Play: the mouse looks around, WASD walks, Shift runs, Space jumps. Tab frees the mouse and Esc stops the game.",
+                        "Escolha + Criar > Jogador em primeira pessoa. Isso adiciona um corpo com física, uma câmera chamada Head na altura dos olhos e o script FirstPerson. Aperte Play: o mouse olha em volta, WASD anda, Shift corre, Espaço pula. Tab solta o mouse e Esc para o jogo."
+                    ),
+                    Focus::Tab(Tab::Scene),
+                ),
+                step(
+                    tr!("Tune it", "Ajuste"),
+                    tr!(
+                        "Select the player: speed, jump height, mouse sensitivity and head bob are properties of the script in the Inspector. In your own scripts, input.lock_mouse(true) holds the mouse and input.mouse_dx and input.mouse_dy give its movement.",
+                        "Selecione o jogador: velocidade, altura do pulo, sensibilidade do mouse e balanço da cabeça são propriedades do script no Inspetor. Nos seus scripts, input.lock_mouse(true) prende o mouse e input.mouse_dx e input.mouse_dy dão o movimento."
+                    ),
+                    Focus::Tab(Tab::Inspector),
+                ),
+                step(
+                    tr!("Animated models", "Modelos animados"),
+                    tr!(
+                        "A glTF model with a skeleton brings its animation clips along. Try + Create > Animated model (example), then pick a clip in Mesh > Animation in the Inspector: the selected model previews it in the Scene. From a script, self.animate(\"Walk\") switches clips with a short blend.",
+                        "Um modelo glTF com esqueleto traz seus clipes de animação. Experimente + Criar > Modelo animado (exemplo) e escolha um clipe em Malha > Animação no Inspetor: o modelo selecionado mostra a prévia na Cena. Em um script, self.animate(\"Walk\") troca de clipe com uma transição curta."
+                    ),
+                    Focus::Tab(Tab::Inspector),
+                ),
+                step(
+                    tr!("Levels as colliders, bodies that tumble", "Fases como colisor, corpos que tombam"),
+                    tr!(
+                        "In Physics, the Mesh collider makes a static imported model solid triangle by triangle, so the player walks on the real shape of a level. Can rotate lets a dynamic body spin, roll and tip over when hit.",
+                        "Em Física, o colisor Malha torna um modelo importado estático sólido triângulo por triângulo, então o jogador anda sobre a forma real da fase. Pode girar deixa um corpo dinâmico girar, rolar e tombar quando atingido."
+                    ),
+                    Focus::Tab(Tab::Inspector),
+                ),
+            ],
+        },
+        Tutorial {
             id: "platformer",
             title: tr!("Inside the example platformer", "Por dentro do jogo de exemplo"),
             summary: tr!("How Frostpeak Isles is put together.", "Como o Frostpeak Isles é montado."),

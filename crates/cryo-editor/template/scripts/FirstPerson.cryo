@@ -1,0 +1,70 @@
+// First-person controller: the mouse looks around, WASD walks, Shift runs,
+// Space jumps, Tab frees the mouse and takes it back.
+// Put it on an entity with dynamic Physics that has a child camera named "Head"
+// (Create > First-person player builds all of it).
+script FirstPerson {
+    prop speed: num = 5
+    prop run_speed: num = 8.5
+    prop jump: num = 6.5
+    prop sensitivity: num = 0.12
+    prop head_bob: num = 0.04
+
+    var head: entity = nil
+    var yaw = 0
+    var pitch = 0
+    var head_y = 0
+    var steps = 0
+
+    on start() {
+        head = self.child("Head")
+        if head != nil {
+            head_y = head.position.y
+            yaw = head.rotation.y
+            scene.set_camera(head)
+        }
+        input.lock_mouse(true)
+    }
+
+    on key_down(key) {
+        if key == "tab" {
+            input.lock_mouse(not input.mouse_locked)
+        }
+    }
+
+    on update(dt) {
+        if input.mouse_locked {
+            yaw -= input.mouse_dx * sensitivity
+            pitch = clamp(pitch - input.mouse_dy * sensitivity, -85, 85)
+        }
+
+        // walk where the camera looks, but never up or down
+        let a = rad(yaw)
+        let forward = vec3(-sin(a), 0, -cos(a))
+        let right = vec3(cos(a), 0, -sin(a))
+        var move = forward * input.axis("vertical") + right * input.axis("horizontal")
+        if length(move) > 1 {
+            move = normalize(move)
+        }
+        var pace = speed
+        if input.down("shift") {
+            pace = run_speed
+        }
+        var v = self.velocity
+        v.x = move.x * pace
+        v.z = move.z * pace
+        if self.grounded and input.pressed("space") {
+            v.y = jump
+        }
+        self.velocity = v
+
+        if head != nil {
+            if self.grounded and length(move) > 0.1 {
+                steps += dt * pace * 1.8
+            }
+            head.rotation = vec3(pitch, yaw, 0)
+            var p = head.position
+            p.y = head_y + sin(steps) * head_bob
+            head.position = p
+        }
+    }
+}

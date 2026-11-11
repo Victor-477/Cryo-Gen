@@ -45,12 +45,16 @@ If you get a graphics configuration error, run with `CRYO_MSAA=0`.
 |---|---|
 | **Editor** | Dockable panels (Hierarchy, Scene, Game, Inspector, Content, Console, script editor), move/rotate/scale gizmos, undo/redo, parent/child entities, Play/Pause/Stop. |
 | **Rendering** | Primitives and imported models (`.obj`, `.gltf`, `.glb`), textures, directional/point/spot lights, shadows, sky gradient. |
-| **Physics** | Gravity, oriented box and sphere colliders, triggers, contact events with normals. |
-| **Scripting** | The Cryo language, with live error checking and script properties editable in the Inspector. |
+| **Physics** | Gravity, box, sphere and triangle-mesh colliders, triggers, contact events with normals, optional rotation (bodies that roll and tip over). |
+| **Scripting** | The Cryo language: typed, with maps, `match`, state machines, global events and live error checking. Script properties are editable in the Inspector. |
+| **Animation** | Timeline with keyframes, real-time clips started from scripts, cutscenes with camera cuts, and events fired at exact instants. Timers in scripts (`after`, `every`). Skeletal animation from rigged glTF models, with blending between clips. |
+| **Quick time events** | `qte.press("e", 1.5)` shows the prompt and answers with `on qte_success` / `on qte_fail`; also mash, hold and sequences, from scripts or from the Timeline. |
+| **First person** | One menu item creates a first-person player: mouse look, walk, run, jump. |
+| **Modelling** | Edit Mesh mode: select faces or vertices, move, extrude, inset, subdivide, merge, fill; saved as `.obj`. |
 | **Audio** | Sound effects and looping music (`.wav`, `.ogg`, `.mp3`). |
 | **Camera tools** | Fly, orbit, pan, zoom, trackpad gestures, orthographic axis views, framing, bookmarks. |
-| **Export** | One menu item produces a standalone game for the system you are on. |
-| **Tutorials** | Eight guided tours inside the editor (Help > Tutorials, or F1). |
+| **Export** | One menu item produces a standalone game, for your system or for another one. |
+| **Tutorials** | Twelve guided tours inside the editor (Help > Tutorials, or F1). |
 | **Languages** | English interface, with Portuguese as a second language (🌐 menu, top right). |
 
 ## The Cryo language
@@ -75,14 +79,14 @@ script Coin {
 }
 ```
 
-- **Types:** `num`, `bool`, `text`, `vec3`, `entity`, `list`, `any`. Annotations are optional and checked when present.
+- **Types:** `num`, `bool`, `text`, `vec3`, `entity`, `list`, `map`, `any`. Annotations are optional and checked when present.
 - **Safe by default:** `let` is immutable, conditions must be `bool`, and division by zero, out-of-range indexes, `nil` access and runaway loops become clear errors with a line number. A broken script is disabled; the editor keeps running.
 
 The full reference (syntax, built-in functions and the engine API) is in the [documentation](https://victor-477.github.io/Cryo-Gen/#language).
 
 ## Example game: Frostpeak Isles
 
-A small 3D platformer that ships as the default project, built only with editor primitives and twelve short Cryo scripts.
+A small 3D platformer that ships as the default project, built only with editor primitives and a dozen short Cryo scripts. It opens with a cutscene made in the Timeline.
 
 ![Frostpeak Isles](docs/img/game.png)
 
@@ -110,6 +114,12 @@ crates/
     src/render.rs    OpenGL renderer: meshes, textures, lights, shadows, sky, grid
     src/physics.rs   gravity and collisions (oriented boxes and spheres)
     src/audio.rs     sound effects and music
+    src/anim.rs      animation clips: tracks, keys, timed events
+    src/skel.rs      skeletal animation of rigged glTF models
+    src/qte.rs       quick time events
+    src/timeline.rs  Timeline panel
+    src/mesh_edit.rs editable polygon mesh and modelling operations
+    src/meshmode.rs  Edit Mesh mode in the Scene
     src/runtime.rs   Play mode: connects Cryo scripts to the scene
     src/viewport.rs  Scene and Game tabs, editor camera, gizmos, picking
     src/panels.rs    Hierarchy, Inspector, Content, Console, script editor
@@ -121,13 +131,15 @@ crates/
 docs/              documentation site (GitHub Pages)
 ```
 
-## Known limits (0.2.1-beta)
+## Known limits (0.4.0-beta)
 
-- Models: mesh, base colour and base texture. glTF animations, skeletons and full PBR materials are not read yet.
-- Shadows: first directional light only, covering about 50 m around the camera.
-- Lights: up to 4 directional and 16 point/spot lights per scene.
-- Physics: no rotational dynamics (bodies do not tip over). A model's collider is its bounding box, not its mesh.
-- Export targets the system the editor is running on. The macOS app is not signed.
+- Skeletal animation is computed on the CPU: fine for a few characters, slow for crowds. One clip per model at a time (blended when switching); no morph targets.
+- Modelling: `.obj` models, one material, automatic texture coordinates. No loop cuts, bevels or booleans yet.
+- Models use base colour and base texture; full PBR materials are not read yet.
+- Shadows: first directional light only (its reach is adjustable).
+- Lights: 4 directional, and the 16 point/spot lights nearest the camera, per view.
+- Physics: mesh colliders are for static bodies; rotating bodies use a simplified model, so stacks of boxes are not stable.
+- The macOS app is not signed.
 - Script error messages are in English only.
 
 ## License

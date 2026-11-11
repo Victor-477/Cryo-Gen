@@ -75,10 +75,11 @@ impl Parser {
             "vec3" => Type::Vec3,
             "entity" => Type::Entity,
             "list" => Type::List,
+            "map" => Type::Map,
             "any" => Type::Any,
             _ => {
                 return Err(self.err(format!(
-                    "unknown type `{name}` (use num, bool, text, vec3, entity, list or any)"
+                    "unknown type `{name}` (use num, bool, text, vec3, entity, list, map or any)"
                 )))
             }
         })
@@ -97,7 +98,13 @@ impl Parser {
         let name = self.ident("the script name")?;
         self.expect(Tok::LBrace, "`{`")?;
         let mut s =
-            Script { name, fields: vec![], handlers: HashMap::new(), funcs: HashMap::new() };
+            Script {
+            name,
+            fields: vec![],
+            handlers: HashMap::new(),
+            funcs: HashMap::new(),
+            states: vec![],
+        };
         loop {
             let line = self.line();
             match self.peek().clone() {
@@ -139,10 +146,38 @@ impl Parser {
                     }
                     s.funcs.insert(f.name.clone(), f);
                 }
+                // `state` is only a keyword here, so scripts may still use it as a name
+                Tok::Ident(w) if w == "state" => {
+                    self.next();
+                    let name = self.ident("the state name")?;
+                    if s.states.iter().any(|st| st.name == name) {
+                        return Err(CryoError::new(line, format!("state `{name}` declared twice")));
+                    }
+                    self.expect(Tok::LBrace, "`{`")?;
+                    let mut handlers = HashMap::new();
+                    while !self.eat(&Tok::RBrace) {
+                        let l = self.line();
+                        if !self.eat(&Tok::On) {
+                            return Err(self.err(format!(
+                                "only `on` events are allowed inside a state; found {}",
+                                describe(self.peek())
+                            )));
+                        }
+                        let f = self.func()?;
+                        if handlers.contains_key(&f.name) {
+                            return Err(CryoError::new(
+                                l,
+                                format!("event `{}` declared twice in state `{name}`", f.name),
+                            ));
+                        }
+                        handlers.insert(f.name.clone(), f);
+                    }
+                    s.states.push(StateDecl { name, handlers, line });
+                }
                 Tok::Eof => return Err(self.err("missing `}` to close the script")),
                 t => {
                     return Err(self.err(format!(
-                        "only `prop`, `var`, `on` and `fn` are allowed inside a script; found {}",
+                        "only `prop`, `var`, `on`, `fn` and `state` are allowed inside a script; found {}",
                         describe(&t)
                     )))
                 }
@@ -219,6 +254,35 @@ impl Parser {
                     StmtKind::ForEach { var, iter: first, body }
                 }
             }
+            Tok::Match => {
+                self.next();
+                let value = self.expr()?;
+                self.expect(Tok::LBrace, "`{`")?;
+                let mut arms = vec![];
+                let mut otherwise = None;
+                while !self.eat(&Tok::RBrace) {
+                    if self.peek() == &Tok::Eof {
+                        return Err(self.err("missing `}` to close the `match`"));
+                    }
+                    if self.eat(&Tok::Else) {
+                        self.expect(Tok::FatArrow, "`=>`")?;
+                        otherwise = Some(self.arm_body()?);
+                    } else {
+                        let mut values = vec![self.expr()?];
+                        while self.eat(&Tok::Comma) {
+                            values.push(self.expr()?);
+                        }
+                        self.expect(Tok::FatArrow, "`=>`")?;
+                        arms.push((values, self.arm_body()?));
+                    }
+                    while self.eat(&Tok::Semi) || self.eat(&Tok::Comma) {}
+                }
+                StmtKind::Match { value, arms, otherwise }
+            }
+            Tok::Goto => {
+                self.next();
+                StmtKind::Goto(self.ident("the state name")?)
+            }
             Tok::Return => {
                 self.next();
                 let has_value = !self.newline_before()
@@ -260,6 +324,15 @@ impl Parser {
             }
         };
         Ok(Stmt { kind, line })
+    }
+
+    /// The body of a `match` arm: a block, or a single statement.
+    fn arm_body(&mut self) -> Result<Vec<Stmt>, CryoError> {
+        if self.peek() == &Tok::LBrace {
+            self.block()
+        } else {
+            Ok(vec![self.stmt()?])
+        }
     }
 
     fn if_rest(&mut self, line: usize) -> Result<Stmt, CryoError> {
@@ -389,6 +462,29 @@ impl Parser {
                 return Ok(e);
             }
             Tok::LBracket => ExprKind::List(self.args(Tok::RBracket)?),
+            Tok::LBrace => {
+                let mut pairs = vec![];
+                while self.peek() != &Tok::RBrace {
+                    let kline = self.line();
+                    let key = match self.next() {
+                        Tok::Ident(s) | Tok::Str(s) => Expr { kind: ExprKind::Str(s), line: kline },
+                        Tok::Num(n) => Expr { kind: ExprKind::Num(n), line: kline },
+                        t => {
+                            return Err(CryoError::new(
+                                kline,
+                                format!("expected a map key (a name or a text), found {}", describe(&t)),
+                            ))
+                        }
+                    };
+                    self.expect(Tok::Colon, "`:` after the map key")?;
+                    pairs.push((key, self.expr()?));
+                    if !self.eat(&Tok::Comma) {
+                        break;
+                    }
+                }
+                self.expect(Tok::RBrace, "`}` to close the map")?;
+                ExprKind::Map(pairs)
+            }
             t => {
                 return Err(CryoError::new(
                     line,

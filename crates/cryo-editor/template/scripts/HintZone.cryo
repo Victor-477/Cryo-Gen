@@ -1,16 +1,18 @@
 // Invisible trigger that shows a tip when the player walks in.
+// After showing it, a timer re-arms the zone ten seconds later.
 script HintZone {
     prop message: text = "Hello!"
-    var cooldown = 0
-
-    on update(dt) {
-        cooldown = max(cooldown - dt, 0)
-    }
+    var armed = true
 
     on collide(other, normal) {
-        if other.name == "Player" and cooldown <= 0 {
-            cooldown = 10
+        if other.name == "Player" and armed {
+            armed = false
             other.send("hint", message)
+            after(10, "rearm")
         }
+    }
+
+    on rearm() {
+        armed = true
     }
 }

@@ -27,6 +27,7 @@ pub enum Tab {
     Inspector,
     Content,
     Console,
+    Timeline,
 }
 
 pub struct Play {
@@ -67,6 +68,8 @@ pub struct State {
     pub drag: Option<GizmoDrag>,
     pub play: Option<Play>,
     pub input: InputState,
+    /// The game is holding the mouse pointer (first-person cameras).
+    pub mouse_grabbed: bool,
     pub logs: Vec<LogLine>,
     undo: Vec<String>,
     redo: Vec<String>,
@@ -77,6 +80,9 @@ pub struct State {
     pub prop_cache: HashMap<String, PropCache>,
     pub focus_tab: Option<Tab>,
     pub show_about: bool,
+    /// Edit Mesh mode, when active.
+    pub mesh_edit: Option<crate::meshmode::MeshSession>,
+    pub timeline: crate::timeline::TimelineState,
     pub settings: Settings,
     /// Tutorial list window.
     pub show_tutorials: bool,
@@ -283,15 +289,34 @@ impl State {
     }
 
     pub fn export_dialog(&mut self) {
+        self.export_with(false);
+    }
+
+    /// `other_system`: first asks for the engine program of the system to export for.
+    pub fn export_with(&mut self, other_system: bool) {
         if self.scene_dirty() {
             self.save_scene();
         }
+        let runtime = if other_system {
+            let picked = rfd::FileDialog::new()
+                .set_title(tr!(
+                    "Choose the `cryo` program downloaded for the other system (cryo.exe, or cryo from the Linux or macOS download)",
+                    "Escolha o programa `cryo` baixado para o outro sistema (cryo.exe, ou cryo do download de Linux ou macOS)"
+                ))
+                .pick_file();
+            match picked {
+                Some(p) => Some(p),
+                None => return,
+            }
+        } else {
+            None
+        };
         let Some(dest) = rfd::FileDialog::new().set_title(tr!("Choose where to save the exported game", "Escolha onde salvar o jogo exportado")).pick_folder()
         else {
             return;
         };
         let title = self.project_dir.file_name().and_then(|n| n.to_str()).unwrap_or("Game").to_string();
-        match project::export_game(&self.project_dir, &self.scene_path, &title, &dest) {
+        match project::export_game_with(&self.project_dir, &self.scene_path, &title, &dest, runtime.as_deref()) {
             Ok(out) => {
                 self.info(tr!("Game exported: {}", "Jogo exportado: {}", out.display()));
                 self.focus_tab = Some(Tab::Console);
@@ -498,14 +523,52 @@ impl State {
         }
     }
 
+    /// Gives every Mesh collider the triangles of its model.
+    fn fill_mesh_colliders(&mut self) {
+        for e in &mut self.scene.entities {
+            let (Some(p), Some(m)) = (&mut e.physics, &e.mesh) else { continue };
+            p.mesh = None;
+            if p.collider != crate::scene::ColliderShape::Mesh {
+                continue;
+            }
+            let Some(model) = m.model.as_ref().and_then(|path| self.assets.model(path)) else { continue };
+            let mut tris = vec![];
+            for s in &model.subs {
+                let v = |i: u32| {
+                    let o = i as usize * 8;
+                    glam::Vec3::new(s.vertices[o], s.vertices[o + 1], s.vertices[o + 2])
+                };
+                for t in s.indices.chunks_exact(3) {
+                    tris.push([v(t[0]), v(t[1]), v(t[2])]);
+                }
+            }
+            if tris.len() > 60_000 {
+                log(
+                    &mut self.logs,
+                    LogLevel::Warn,
+                    tr!(
+                        "{}: the model has {} triangles, too many for a Mesh collider (60000); using a box.",
+                        "{}: o modelo tem {} triângulos, demais para um colisor de Malha (60000); usando caixa.",
+                        e.name,
+                        tris.len()
+                    ),
+                );
+                continue;
+            }
+            p.mesh = Some(std::sync::Arc::new(tris));
+        }
+    }
+
     pub fn start_play(&mut self) {
         if self.playing() {
             return;
         }
+        self.finish_mesh_edit(true);
         if self.editor.dirty() {
             self.save_script();
         }
         let backup = self.scene.clone();
+        self.fill_mesh_colliders();
         self.info(tr!("▶ Game started", "▶ Jogo iniciado"));
         let rt = Runtime::start(&mut self.scene, &self.project_dir, &mut self.logs);
         if self.logs.iter().rev().take(20).any(|l| l.level == LogLevel::Error) {
@@ -604,6 +667,80 @@ impl State {
         self.selected = Some(id);
     }
 
+    /// Writes the example rigged model into the project and places it in the scene.
+    pub fn add_rig_example(&mut self) {
+        let rel = "models/Stalk.gltf";
+        let path = self.project_dir.join(rel);
+        if !path.exists() {
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            if let Err(e) = std::fs::write(&path, crate::skel::demo_rig_gltf()) {
+                log(&mut self.logs, LogLevel::Error, format!("{rel}: {e}"));
+                return;
+            }
+        }
+        let id = self.scene.add_mesh(Shape::Cube);
+        self.place_new(id);
+        let bounds = self.assets.model(rel).map(|m| (m.center.to_array(), m.half.to_array()));
+        if let Some(e) = self.scene.get_mut(id) {
+            e.name = "Stalk".into();
+            e.position.y = 0.0;
+            if let Some(m) = &mut e.mesh {
+                m.model = Some(rel.into());
+                m.model_bounds = bounds;
+                m.color = [1.0; 3];
+                m.animation = "Wave".into();
+            }
+        }
+    }
+
+    /// Creates a ready-to-play first-person character at the editor camera's target.
+    pub fn add_first_person(&mut self) {
+        let script = "scripts/FirstPerson.cryo";
+        let path = self.project_dir.join(script);
+        if !path.exists() {
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            if let Err(e) = std::fs::write(&path, crate::project::FIRST_PERSON) {
+                log(&mut self.logs, LogLevel::Error, format!("{script}: {e}"));
+            }
+        }
+        let body = self.scene.add_empty("First Person Player");
+        self.place_new(body);
+        let head = self.scene.add_camera();
+        if let Some(e) = self.scene.get_mut(body) {
+            e.scale = glam::Vec3::new(0.6, 1.8, 0.6);
+            e.position.y += 0.9;
+            e.tag = "player".into();
+            let mut p = crate::scene::Physics::new(crate::scene::BodyKind::Dynamic, crate::scene::ColliderShape::Box);
+            p.friction = 0.0;
+            e.physics = Some(p);
+            e.script = Some(crate::scene::ScriptRef { path: script.into(), props: Default::default() });
+        }
+        if let Some(e) = self.scene.get_mut(head) {
+            e.name = "Head".into();
+            e.parent = Some(body);
+            // local space of the body: 0.4 x 1.8 m above its centre is eye height (1.62 m)
+            e.position = glam::Vec3::new(0.0, 0.4, 0.0);
+            e.rotation = glam::Vec3::ZERO;
+            if let Some(c) = &mut e.camera {
+                c.fov = 75.0;
+                c.near = 0.05;
+            }
+        }
+        self.selected = Some(body);
+        log(
+            &mut self.logs,
+            LogLevel::Info,
+            tr!(
+                "First-person player created. Press Play: the mouse looks, WASD walks, Space jumps, Tab frees the mouse.",
+                "Jogador em primeira pessoa criado. Aperte Play: o mouse olha, WASD anda, Espaço pula, Tab solta o mouse."
+            ),
+        );
+    }
+
     pub fn create_menu(&mut self, ui: &mut egui::Ui) {
         if ui.button(tr!("○  Empty", "○  Vazio")).clicked() {
             let id = self.scene.add_empty("Empty");
@@ -617,6 +754,19 @@ impl State {
                 self.place_new(id);
                 ui.close();
             }
+        }
+        if ui
+            .button(tr!("✏  Editable mesh", "✏  Malha editável"))
+            .on_hover_text(tr!("A cube you can model: extrude, inset, subdivide...", "Um cubo que você pode modelar: extrudar, inserir, subdividir..."))
+            .clicked()
+        {
+            let id = self.scene.add_mesh(Shape::Cube);
+            if let Some(e) = self.scene.get_mut(id) {
+                e.name = "Mesh".into();
+            }
+            self.place_new(id);
+            self.start_mesh_edit(id);
+            ui.close();
         }
         ui.separator();
         if ui.button(tr!("☀  Directional light", "☀  Luz direcional")).clicked() {
@@ -639,6 +789,48 @@ impl State {
             self.place_new(id);
             ui.close();
         }
+        if ui
+            .button(tr!("■  Animated model (example)", "■  Modelo animado (exemplo)"))
+            .on_hover_text(tr!(
+                "A small rigged model with three clips (Wave, Curl, Nod), to try skeletal animation.",
+                "Um pequeno modelo com esqueleto e três clipes (Wave, Curl, Nod), para testar animação de esqueleto."
+            ))
+            .clicked()
+        {
+            self.add_rig_example();
+            ui.close();
+        }
+        if ui
+            .button(tr!("🎥  First-person player", "🎥  Jogador em primeira pessoa"))
+            .on_hover_text(tr!(
+                "A body with physics, a camera at eye height and the FirstPerson script: mouse looks, WASD walks, Space jumps.",
+                "Um corpo com física, uma câmera na altura dos olhos e o script FirstPerson: o mouse olha, WASD anda, Espaço pula."
+            ))
+            .clicked()
+        {
+            self.add_first_person();
+            ui.close();
+        }
+    }
+
+    /// Holds or frees the mouse pointer, as the running game asked (`input.lock_mouse`).
+    fn apply_mouse_lock(&mut self, ctx: &egui::Context) {
+        let focused = ctx.input(|i| i.focused);
+        let want = focused && self.play.as_ref().map(|p| !p.paused && p.rt.mouse_locked()).unwrap_or(false);
+        if want == self.mouse_grabbed {
+            return;
+        }
+        self.mouse_grabbed = want;
+        // macOS can pin the pointer; elsewhere it is kept inside the window
+        let grab = if !want {
+            egui::CursorGrab::None
+        } else if cfg!(target_os = "macos") {
+            egui::CursorGrab::Locked
+        } else {
+            egui::CursorGrab::Confined
+        };
+        ctx.send_viewport_cmd(egui::ViewportCommand::CursorGrab(grab));
+        ctx.send_viewport_cmd(egui::ViewportCommand::CursorVisible(!want));
     }
 
     fn collect_input(&mut self, ctx: &egui::Context) {
@@ -679,7 +871,17 @@ impl State {
                     self.input.down.remove(name);
                 }
             }
-            let d = i.pointer.delta();
+            let mut d = i.pointer.delta();
+            if self.mouse_grabbed {
+                // the pointer is held in place: read the mouse itself
+                let raw = i.events.iter().fold(egui::Vec2::ZERO, |acc, ev| match ev {
+                    egui::Event::MouseMoved(m) => acc + *m,
+                    _ => acc,
+                });
+                if raw != egui::Vec2::ZERO {
+                    d = raw;
+                }
+            }
             self.input.mouse_dx = d.x;
             self.input.mouse_dy = d.y;
             self.input.scroll = i.smooth_scroll_delta.y;
@@ -727,21 +929,24 @@ impl State {
         if typing {
             return;
         }
-        if cmd && pressed(Key::Z) {
-            if shift {
-                self.redo();
-            } else {
-                self.undo();
+        // while editing a mesh, Undo and Delete belong to the mesh tools (see meshmode.rs)
+        if self.mesh_edit.is_none() {
+            if cmd && pressed(Key::Z) {
+                if shift {
+                    self.redo();
+                } else {
+                    self.undo();
+                }
             }
-        }
-        if cmd && pressed(Key::Y) {
-            self.redo();
-        }
-        if cmd && pressed(Key::D) {
-            self.duplicate_selected();
-        }
-        if pressed(Key::Delete) || pressed(Key::Backspace) {
-            self.delete_selected();
+            if cmd && pressed(Key::Y) {
+                self.redo();
+            }
+            if cmd && pressed(Key::D) {
+                self.duplicate_selected();
+            }
+            if pressed(Key::Delete) || pressed(Key::Backspace) {
+                self.delete_selected();
+            }
         }
         let flying = ctx.input(|i| i.pointer.secondary_down());
         if !cmd && !flying {
@@ -783,7 +988,7 @@ fn default_layout() -> DockState<Tab> {
     let tree = dock.main_surface_mut();
     let [center, _right] = tree.split_right(NodeIndex::root(), 0.78, vec![Tab::Inspector]);
     let [center, _left] = tree.split_left(center, 0.19, vec![Tab::Hierarchy]);
-    let [_center, _bottom] = tree.split_below(center, 0.70, vec![Tab::Content, Tab::Console]);
+    let [_center, _bottom] = tree.split_below(center, 0.70, vec![Tab::Content, Tab::Console, Tab::Timeline]);
     dock
 }
 
@@ -822,6 +1027,7 @@ impl App {
             drag: None,
             play: None,
             input: InputState::default(),
+            mouse_grabbed: false,
             logs: vec![],
             undo: vec![],
             redo: vec![],
@@ -832,6 +1038,8 @@ impl App {
             prop_cache: HashMap::new(),
             focus_tab: None,
             show_about: false,
+            mesh_edit: None,
+            timeline: Default::default(),
             settings,
             show_tutorials: false,
             tutorial: None,
@@ -868,8 +1076,32 @@ impl App {
         if std::env::var("CRYO_VIEW").as_deref() == Ok("top") {
             st.cam.view_from(glam::Vec3::Y, tr!("Top", "Topo"));
         }
-        if std::env::var("CRYO_TAB").as_deref() == Ok("script") {
-            st.focus_tab = Some(Tab::Script);
+        match std::env::var("CRYO_TAB").as_deref() {
+            Ok("script") => st.focus_tab = Some(Tab::Script),
+            Ok("timeline") => {
+                st.focus_tab = Some(Tab::Timeline);
+                st.timeline.time = 2.6;
+            }
+            _ => {}
+        }
+        // Also for automated tests: CRYO_EDIT_MESH=1 opens Edit Mesh on the selection and models a little.
+        if std::env::var("CRYO_EDIT_MESH").is_ok() {
+            if let Some(id) = st.selected {
+                st.start_mesh_edit(id);
+                st.mesh_demo();
+            }
+        }
+        // CRYO_DEMO=rig adds the example rigged model, mid-animation (for screenshots)
+        if std::env::var("CRYO_DEMO").as_deref() == Ok("rig") {
+            st.add_rig_example();
+            if let Some(e) = st.selected.and_then(|id| st.scene.get_mut(id)) {
+                let centre = e.position + glam::Vec3::new(0.0, 1.5, 0.0);
+                if let Some(m) = &mut e.mesh {
+                    m.animation = "Curl".into();
+                    m.anim.time = 0.8;
+                }
+                st.cam.frame(centre, 2.6);
+            }
         }
         // first launch: start the welcome tour
         if !st.settings.tour_seen && !game_only && !autoplay && std::env::var("CRYO_NO_TOUR").is_err() {
@@ -912,6 +1144,17 @@ impl App {
                 if ui.button(tr!("Export game…", "Exportar jogo…")).on_hover_text(tr!("Creates a folder with the game ready to run without the editor", "Gera uma pasta com o jogo pronto para rodar sem o editor")).clicked() {
                     ui.close();
                     st.export_dialog();
+                }
+                if ui
+                    .button(tr!("Export for another system…", "Exportar para outro sistema…"))
+                    .on_hover_text(tr!(
+                        "Exports for Windows, macOS or Linux from here. You pick the `cryo` program of that system, from the Cryo Engine download page.",
+                        "Exporta para Windows, macOS ou Linux a partir daqui. Você escolhe o programa `cryo` daquele sistema, da página de download da Cryo Engine."
+                    ))
+                    .clicked()
+                {
+                    ui.close();
+                    st.export_with(true);
                 }
                 ui.menu_button(tr!("Open scene", "Abrir cena"), |ui| {
                     for rel in project::list_files(&st.project_dir, project::SCENE_EXT) {
@@ -1064,14 +1307,45 @@ impl eframe::App for App {
             self.st.import_paths(&dropped);
         }
         self.st.sync_assets();
+        // leaving the edited object (or deleting it) ends Edit Mesh mode, keeping the work
+        if let Some(entity) = self.st.mesh_edit.as_ref().map(|s| s.entity) {
+            if self.st.selected != Some(entity) || self.st.scene.get(entity).is_none() {
+                self.st.finish_mesh_edit(true);
+            }
+        }
+
+        let frame_dt = ctx.input(|i| i.stable_dt).min(0.1);
+        self.st.timeline_tick(frame_dt);
+        if self.st.timeline.previewing {
+            ctx.request_repaint();
+        }
 
         // --- simulation ---
+        // outside Play, the selected rigged model previews its animation
+        if self.st.play.is_none() {
+            let dt = ctx.input(|i| i.stable_dt).min(0.1);
+            if let Some(m) = self.st.selected.and_then(|id| self.st.scene.get_mut(id)).and_then(|e| e.mesh.as_mut()) {
+                if m.model.is_some() && !m.animation.is_empty() {
+                    m.advance_animation(dt);
+                    ctx.request_repaint();
+                }
+            }
+        }
         self.st.collect_input(&ctx);
         self.st.shortcuts(&ctx);
+        self.st.apply_mouse_lock(&ctx);
         if let Some(play) = &mut self.st.play {
             if !play.paused {
                 let dt = ctx.input(|i| i.stable_dt).min(0.1);
                 play.rt.update(&mut self.st.scene, &self.st.input, dt, &mut self.st.logs);
+                // CRYO_DEMO=qte shows a quick time event shortly after Play (for screenshots)
+                if play.rt.qte.is_none() && play.rt.real_time > 1.0 && play.rt.qte_result.is_none() {
+                    if std::env::var("CRYO_DEMO").as_deref() == Ok("qte") {
+                        let mut q = crate::qte::Qte::new("demo", crate::qte::QteKind::Press, vec!["e".into()], 20.0);
+                        q.freeze = true;
+                        play.rt.qte = Some(q);
+                    }
+                }
                 if let Some(id) = self.st.selected {
                     if self.st.scene.get(id).is_none() {
                         self.st.selected = None;
@@ -1156,6 +1430,7 @@ impl egui_dock::TabViewer for State {
             Tab::Hierarchy => tr!("☰ Hierarchy", "☰ Hierarquia").into(),
             Tab::Inspector => tr!("ℹ Inspector", "ℹ Inspetor").into(),
             Tab::Content => tr!("📁 Content", "📁 Conteúdo").into(),
+            Tab::Timeline => tr!("🎬 Timeline", "🎬 Linha do tempo").into(),
             Tab::Console => {
                 let errors = self.logs.iter().filter(|l| l.level == LogLevel::Error).count();
                 if errors > 0 {
@@ -1177,6 +1452,7 @@ impl egui_dock::TabViewer for State {
             Tab::Inspector => self.inspector(ui),
             Tab::Content => self.content_browser(ui),
             Tab::Console => self.console(ui),
+            Tab::Timeline => self.timeline_panel(ui),
         }
     }
 

@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 pub const SCENE_EXT: &str = "cryoscene";
 pub const SCRIPT_EXT: &str = "cryo";
+pub const FIRST_PERSON: &str = include_str!("../template/scripts/FirstPerson.cryo");
 pub const NEW_SCRIPT: &str = include_str!("../template/NewScript.cryo");
 
 const TEMPLATE_SCRIPTS: &[(&str, &str)] = &[
@@ -23,6 +24,7 @@ const TEMPLATE_SCRIPTS: &[(&str, &str)] = &[
     ("HintZone.cryo", include_str!("../template/scripts/HintZone.cryo")),
     ("FollowCamera.cryo", include_str!("../template/scripts/FollowCamera.cryo")),
     ("FreeCamera.cryo", include_str!("../template/scripts/FreeCamera.cryo")),
+    ("FirstPerson.cryo", FIRST_PERSON),
 ];
 
 /// Example model (an 8-faced crystal) to demonstrate .obj import.
@@ -488,6 +490,65 @@ pub fn template_scene() -> Scene {
     shard(&mut s, 5, v(4.0, 12.6, -96.2));
     tree(&mut s, scenery, v(7.5, 11.0, -96.5), 3.0);
 
+    // ---------------------------------------------------------------- animations
+    // "Intro": a cutscene. A second camera flies from the summit back to the start, then a
+    // marker cuts to the gameplay camera and another one sends the player a hint.
+    use crate::anim::{Action, Clip, Ease, Marker, Property};
+    let intro_cam = s.add_camera();
+    s.get_mut(intro_cam).unwrap().name = "Intro Camera".into();
+    let shots = [
+        (0.0, v(16.0, 17.0, -104.0), v(4.0, 11.0, -93.0)),
+        (2.6, v(-14.0, 13.0, -70.0), v(0.0, 4.0, -56.0)),
+        (5.0, v(9.0, 8.0, -18.0), v(0.0, 1.0, -6.0)),
+        (7.0, v(0.0, 4.7, 12.3), v(0.0, 2.0, 4.0)),
+    ];
+    let mut intro = Clip::new("Intro");
+    intro.duration = 7.0;
+    intro.autoplay = true;
+    intro.cutscene = true;
+    for (t, pos, target) in shots {
+        // let the entity work out the rotation that looks at the target
+        let e = s.get_mut(intro_cam).unwrap();
+        e.position = pos;
+        e.look_at(target);
+        let rot = e.rotation;
+        intro.track_mut(intro_cam, Property::Position).set_key(t, pos.to_array());
+        intro.track_mut(intro_cam, Property::Rotation).set_key(t, rot.to_array());
+    }
+    intro.markers.push(Marker { t: 0.0, action: Action::Camera { entity: intro_cam } });
+    intro.markers.push(Marker { t: 7.0, action: Action::Camera { entity: cam } });
+    intro.markers.push(Marker {
+        t: 7.0,
+        action: Action::Send {
+            entity: player,
+            event: "hint".into(),
+            arg: "Find the five Frost Shards!  WASD: move   Space: jump   F: throw cap".into(),
+        },
+    });
+    s.animations.push(intro);
+
+    // "Victory": real-time animation started from Player.cryo with anim.play("Victory").
+    // A beacon of light rises from the summit while a sound plays in sync.
+    let beacon = mesh(&mut s, "Beacon", Shape::Cylinder, v(4.0, 11.0, -93.0), v(0.01, 0.01, 0.01), [0.5, 0.95, 1.0]);
+    {
+        let m = s.get_mut(beacon).unwrap().mesh.as_mut().unwrap();
+        m.unlit = true;
+        m.cast_shadow = false;
+    }
+    let mut victory = Clip::new("Victory");
+    victory.duration = 3.0;
+    let scale = victory.track_mut(beacon, Property::Scale);
+    scale.set_key(0.0, [0.01, 0.01, 0.01]);
+    scale.set_key(0.6, [2.4, 0.3, 2.4]);
+    scale.set_key(3.0, [0.7, 120.0, 0.7]);
+    scale.keys[0].ease = Ease::Linear;
+    let colour = victory.track_mut(beacon, Property::Color);
+    colour.set_key(0.0, [1.0, 1.0, 1.0]);
+    colour.set_key(3.0, [0.4, 0.9, 1.0]);
+    victory.markers.push(Marker { t: 0.0, action: Action::Sound { file: "sounds/shard.wav".into(), volume: 1.0 } });
+    victory.markers.push(Marker { t: 0.9, action: Action::Sound { file: "sounds/checkpoint.wav".into(), volume: 0.8 } });
+    s.animations.push(victory);
+
     s
 }
 
@@ -614,9 +675,62 @@ pub const GAME_CONFIG: &str = "cryo_game.json";
 
 /// Exports the game to `dest`: a copy of the executable plus the `game/` folder with the project.
 /// The executable, on finding that folder next to it, opens straight into the game (no editor).
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn export_game(project: &Path, scene: &str, title: &str, dest: &Path) -> Result<PathBuf, String> {
+    export_game_with(project, scene, title, dest, None)
+}
+
+/// The system an engine executable was built for, read from the first bytes of the file.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TargetOs {
+    Windows,
+    MacOs,
+    Linux,
+}
+
+impl TargetOs {
+    pub fn current() -> TargetOs {
+        if cfg!(windows) {
+            TargetOs::Windows
+        } else if cfg!(target_os = "macos") {
+            TargetOs::MacOs
+        } else {
+            TargetOs::Linux
+        }
+    }
+
+    pub fn of_file(path: &Path) -> Result<TargetOs, String> {
+        use std::io::Read;
+        let mut head = [0u8; 4];
+        std::fs::File::open(path)
+            .and_then(|mut f| f.read_exact(&mut head))
+            .map_err(|e| format!("could not read `{}`: {e}", path.display()))?;
+        match head {
+            [b'M', b'Z', _, _] => Ok(TargetOs::Windows),
+            [0x7F, b'E', b'L', b'F'] => Ok(TargetOs::Linux),
+            [0xCF, 0xFA, 0xED, 0xFE] | [0xFE, 0xED, 0xFA, 0xCF] | [0xCA, 0xFE, 0xBA, 0xBE] => Ok(TargetOs::MacOs),
+            _ => Err(format!(
+                "`{}` is not a Cryo Engine executable (choose the `cryo` program from the download for that system)",
+                path.display()
+            )),
+        }
+    }
+}
+
+/// Exports the game. `runtime` is the engine executable to ship with it: `None` uses the one
+/// running now; the `cryo` program downloaded for another system exports the game for that system.
+pub fn export_game_with(
+    project: &Path,
+    scene: &str,
+    title: &str,
+    dest: &Path,
+    runtime: Option<&Path>,
+) -> Result<PathBuf, String> {
     let io = |e: std::io::Error| format!("export failed: {e}");
-    let exe = std::env::current_exe().map_err(io)?;
+    let (exe, os) = match runtime {
+        Some(path) => (path.to_path_buf(), TargetOs::of_file(path)?),
+        None => (std::env::current_exe().map_err(io)?, TargetOs::current()),
+    };
     let safe: String =
         title.chars().map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
     let safe = if safe.is_empty() { "Game".to_string() } else { safe };
@@ -624,7 +738,7 @@ pub fn export_game(project: &Path, scene: &str, title: &str, dest: &Path) -> Res
         return Err("choose a folder outside the project to export to".into());
     }
 
-    let (root, exe_dir, game_dir) = if cfg!(target_os = "macos") {
+    let (root, exe_dir, game_dir) = if os == TargetOs::MacOs {
         // macOS .app bundle
         let app = dest.join(format!("{safe}.app"));
         let contents = app.join("Contents");
@@ -637,13 +751,19 @@ pub fn export_game(project: &Path, scene: &str, title: &str, dest: &Path) -> Res
         std::fs::remove_dir_all(&root).map_err(io)?;
     }
     std::fs::create_dir_all(&exe_dir).map_err(io)?;
-    let exe_name = if cfg!(windows) { format!("{safe}.exe") } else { safe.clone() };
+    let exe_name = if os == TargetOs::Windows { format!("{safe}.exe") } else { safe.clone() };
     std::fs::copy(&exe, exe_dir.join(&exe_name)).map_err(io)?;
+    #[cfg(unix)]
+    if os != TargetOs::Windows {
+        // a runtime downloaded as a plain file may have lost its "executable" mark
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(exe_dir.join(&exe_name), std::fs::Permissions::from_mode(0o755));
+    }
     copy_dir(project, &game_dir, 0).map_err(io)?;
     let config = GameConfig { title: title.to_string(), scene: scene.to_string() };
     std::fs::write(game_dir.join(GAME_CONFIG), serde_json::to_string_pretty(&config).unwrap_or_default())
         .map_err(io)?;
-    if cfg!(target_os = "macos") {
+    if os == TargetOs::MacOs {
         let plist = format!(
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict>\n<key>CFBundleName</key><string>{title}</string>\n<key>CFBundleExecutable</key><string>{safe}</string>\n<key>CFBundleIdentifier</key><string>com.cryoengine.{safe}</string>\n<key>CFBundlePackageType</key><string>APPL</string>\n<key>CFBundleVersion</key><string>1.0</string>\n<key>NSHighResolutionCapable</key><true/>\n</dict></plist>\n"
         );
@@ -699,6 +819,20 @@ mod tests {
         assert!(game.join("scripts/Player.cryo").exists());
         assert!(game.join("sounds/coin.wav").exists());
         assert!(export_game(&proj, &scene, "x", &proj.join("inside")).is_err());
+
+        // with the engine program of another system, the game is laid out for that system
+        let win = base.join("cryo.exe");
+        std::fs::write(&win, b"MZ\x90\x00 not really a program").unwrap();
+        let out = export_game_with(&proj, &scene, "My Game", &base.join("win"), Some(&win)).unwrap();
+        assert!(out.join("My_Game.exe").is_file() && out.join("game/scripts/Player.cryo").is_file());
+        let mac = base.join("cryo-mac");
+        std::fs::write(&mac, [0xCF, 0xFA, 0xED, 0xFE, 1, 2, 3]).unwrap();
+        let out = export_game_with(&proj, &scene, "My Game", &base.join("mac"), Some(&mac)).unwrap();
+        assert!(out.ends_with("My_Game.app") && out.join("Contents/MacOS/My_Game").is_file());
+        assert!(out.join("Contents/Info.plist").is_file() && out.join("Contents/Resources/game/sounds/coin.wav").is_file());
+        let junk = base.join("notes.txt");
+        std::fs::write(&junk, "hello").unwrap();
+        assert!(export_game_with(&proj, &scene, "x", &base.join("junk"), Some(&junk)).is_err());
         std::fs::remove_dir_all(base).ok();
     }
 }

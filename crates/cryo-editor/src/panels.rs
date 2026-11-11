@@ -248,11 +248,24 @@ impl State {
                 .and_then(|m| m.model.clone())
                 .and_then(|p| self.assets.model(&p));
             let mut fit_size = false;
+            let mut edit_mesh = false;
+            let editing_mesh = self.mesh_edit.is_some();
 
+            let clips: Vec<String> = match self.scene.get(id).and_then(|e| e.mesh.as_ref()).and_then(|m| m.model.clone()) {
+                Some(path) => self.assets.clip_names(&path),
+                None => vec![],
+            };
             let e = self.scene.get_mut(id).unwrap();
             ui.horizontal(|ui| {
                 ui.checkbox(&mut e.visible, "").on_hover_text(tr!("Visible", "Visível"));
                 ui.add(egui::TextEdit::singleline(&mut e.name).desired_width(f32::INFINITY));
+            });
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(tr!("Tag", "Etiqueta")).weak()).on_hover_text(tr!(
+                    "A free label for groups. Scripts find them with scene.tagged(\"enemy\").",
+                    "Um rótulo livre para grupos. Os scripts os encontram com scene.tagged(\"enemy\")."
+                ));
+                ui.add(egui::TextEdit::singleline(&mut e.tag).desired_width(f32::INFINITY).hint_text(tr!("none", "nenhuma")));
             });
             ui.add_space(2.0);
 
@@ -318,6 +331,36 @@ impl State {
                             }
                         }
                     }
+                    if !editing_mesh {
+                        let can_edit = m.model.as_ref().map(|p| p.ends_with(".obj")).unwrap_or(true);
+                        let tip = if can_edit {
+                            tr!("Model this shape in the Scene: move vertices, extrude, inset, subdivide...", "Modele esta forma na Cena: mover vértices, extrudar, inserir, subdividir...")
+                        } else {
+                            tr!("Only .obj models can be edited in the engine", "Só modelos .obj podem ser editados na engine")
+                        };
+                        if ui.add_enabled(can_edit, egui::Button::new(tr!("✏ Edit mesh", "✏ Editar malha"))).on_hover_text(tip).clicked() {
+                            edit_mesh = true;
+                        }
+                    } else {
+                        ui.label(RichText::new(tr!("Editing in the Scene tab...", "Editando na aba Cena...")).weak());
+                    }
+                    if !clips.is_empty() {
+                        row(ui, tr!("Animation", "Animação"), |ui| {
+                            let shown = if m.animation.is_empty() { tr!("(rest pose)", "(pose parada)") } else { m.animation.clone() };
+                            egui::ComboBox::from_id_salt("skel_anim").selected_text(shown).show_ui(ui, |ui| {
+                                if ui.selectable_label(m.animation.is_empty(), tr!("(rest pose)", "(pose parada)")).clicked() {
+                                    m.play_animation("", false);
+                                }
+                                for c in &clips {
+                                    if ui.selectable_label(&m.animation == c, c).clicked() {
+                                        m.play_animation(c, false);
+                                    }
+                                }
+                            });
+                        });
+                        row(ui, tr!("Speed", "Velocidade"), |ui| ui.add(DragValue::new(&mut m.anim_speed).speed(0.02).range(-4.0..=4.0).suffix("x")));
+                        row(ui, tr!("Loop", "Repetir"), |ui| ui.checkbox(&mut m.anim_loop, ""));
+                    }
                     row(ui, tr!("Texture", "Textura"), |ui| {
                         let shown = m.texture.as_deref().map(file_name).unwrap_or_else(|| tr!("(none)", "(nenhuma)").into());
                         egui::ComboBox::from_id_salt("texture").selected_text(shown).show_ui(ui, |ui| {
@@ -365,6 +408,14 @@ impl State {
                         row(ui, tr!("Shadows", "Sombras"), |ui| {
                             ui.checkbox(&mut l.shadows, "").on_hover_text(tr!("Applies to the first directional light in the scene", "Vale para a primeira luz direcional da cena"))
                         });
+                        if l.shadows {
+                            row(ui, tr!("Shadow reach", "Alcance da sombra"), |ui| {
+                                ui.add(egui::Slider::new(&mut l.shadow_distance, 8.0..=150.0).suffix(" m")).on_hover_text(tr!(
+                                    "How far from the camera shadows are drawn. Larger covers more of the scene but is less sharp.",
+                                    "Até que distância da câmera as sombras aparecem. Maior cobre mais da cena, com menos nitidez."
+                                ))
+                            });
+                        }
                     }
                 });
                 if remove {
@@ -392,12 +443,22 @@ impl State {
                     row(ui, tr!("Collider", "Colisor"), |ui| {
                         ui.selectable_value(&mut p.collider, ColliderShape::Box, tr!("Box", "Caixa"));
                         ui.selectable_value(&mut p.collider, ColliderShape::Sphere, tr!("Sphere", "Esfera"));
+                        ui.selectable_value(&mut p.collider, ColliderShape::Mesh, tr!("Mesh", "Malha")).on_hover_text(tr!(
+                            "Uses the triangles of the imported model. For static bodies with a model (levels, terrain); otherwise it works as a box.",
+                            "Usa os triângulos do modelo importado. Para corpos estáticos com modelo (fases, terreno); nos outros casos funciona como caixa."
+                        ));
                     });
                     row(ui, tr!("Trigger", "Gatilho"), |ui| {
                         ui.checkbox(&mut p.is_trigger, "").on_hover_text(tr!("Detects contact without blocking", "Detecta contato sem bloquear"))
                     });
                     if p.kind == BodyKind::Dynamic {
                         row(ui, tr!("Gravity", "Gravidade"), |ui| ui.checkbox(&mut p.use_gravity, ""));
+                        row(ui, tr!("Can rotate", "Pode girar"), |ui| {
+                            ui.checkbox(&mut p.can_rotate, "").on_hover_text(tr!(
+                                "Collisions make it spin, roll and tip over. Leave it off for characters.",
+                                "As colisões fazem o corpo girar, rolar e tombar. Deixe desligado em personagens."
+                            ))
+                        });
                         row(ui, tr!("Bounciness", "Quique"), |ui| ui.add(egui::Slider::new(&mut p.bounciness, 0.0..=1.0)));
                         row(ui, tr!("Friction", "Atrito"), |ui| ui.add(egui::Slider::new(&mut p.friction, 0.0..=1.0)));
                     }
@@ -509,6 +570,7 @@ impl State {
                             range: 10.0,
                             angle: 35.0,
                             shadows: true,
+                            shadow_distance: 26.0,
                         });
                         ui.close();
                     }
@@ -519,6 +581,9 @@ impl State {
                 });
             });
 
+            if edit_mesh {
+                self.start_mesh_edit(id);
+            }
             if new_script {
                 let base = self.scene.get(id).map(|e| e.name.clone()).unwrap_or_default();
                 match project::create_script(&self.project_dir, &base) {

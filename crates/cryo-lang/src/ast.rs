@@ -10,6 +10,7 @@ pub enum Type {
     Vec3,
     Entity,
     List,
+    Map,
     Any,
 }
 
@@ -22,6 +23,7 @@ impl Type {
             Type::Vec3 => "vec3",
             Type::Entity => "entity",
             Type::List => "list",
+            Type::Map => "map",
             Type::Any => "any",
         }
     }
@@ -58,6 +60,8 @@ pub enum ExprKind {
     Nil,
     Ident(String),
     List(Vec<Expr>),
+    /// `{ key: value, "other key": value }`
+    Map(Vec<(Expr, Expr)>),
     Neg(Box<Expr>),
     Not(Box<Expr>),
     Binary(BinOp, Box<Expr>, Box<Expr>),
@@ -83,6 +87,10 @@ pub enum StmtKind {
     ForRange { var: String, from: Expr, to: Expr, body: Vec<Stmt> },
     /// `for item in list`
     ForEach { var: String, iter: Expr, body: Vec<Stmt> },
+    /// `match value { a, b => { ... } else => { ... } }`
+    Match { value: Expr, arms: Vec<(Vec<Expr>, Vec<Stmt>)>, otherwise: Option<Vec<Stmt>> },
+    /// `goto name`: switch the script to another `state`
+    Goto(String),
     Return(Option<Expr>),
     Break,
     Continue,
@@ -114,6 +122,14 @@ pub struct FieldDecl {
     pub line: usize,
 }
 
+/// `state name { on enter() {} on update(dt) {} on exit() {} }`
+#[derive(Debug, Clone)]
+pub struct StateDecl {
+    pub name: String,
+    pub handlers: HashMap<String, Func>,
+    pub line: usize,
+}
+
 #[derive(Debug, Clone)]
 pub struct Script {
     pub name: String,
@@ -121,4 +137,6 @@ pub struct Script {
     /// Events: `on start()`, `on update(dt)`, `on collide(other)`, ...
     pub handlers: HashMap<String, Func>,
     pub funcs: HashMap<String, Func>,
+    /// State machine; the first state declared is the initial one.
+    pub states: Vec<StateDecl>,
 }

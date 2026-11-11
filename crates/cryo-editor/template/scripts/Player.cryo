@@ -389,6 +389,7 @@ script Player {
             won = true
             hint = "You found every Frost Shard. Thanks for playing!"
             hint_timer = 600
+            anim.play("Victory")
         } else {
             show_hint("Frost Shard " + shards + " of " + total_shards + "!")
         }

@@ -4,6 +4,7 @@ use glam::{Mat3, Mat4, Vec2, Vec3};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use crate::skel::{Channel, SkClip, Skeleton, Skin, SkinData, Target};
 use std::sync::Arc;
 
 pub const MODEL_EXTS: &[&str] = &["obj", "gltf", "glb"];
@@ -12,7 +13,7 @@ pub const SOUND_EXTS: &[&str] = &["wav", "ogg", "mp3"];
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
-fn next_id() -> u64 {
+pub fn next_id() -> u64 {
     NEXT_ID.fetch_add(1, Ordering::Relaxed)
 }
 
@@ -34,10 +35,16 @@ pub struct SubMesh {
     pub indices: Vec<u32>,
     pub color: [f32; 3],
     pub texture: Option<Arc<TextureData>>,
+    /// Joints and weights, when the sub-mesh follows a skeleton.
+    pub skin: Option<Arc<SkinData>>,
 }
 
 pub struct ModelData {
     pub id: u64,
+    /// Changes when the vertices change (animated models keep their id).
+    pub version: u64,
+    /// Joints and animation clips of a rigged glTF model.
+    pub skeleton: Option<Arc<Skeleton>>,
     pub subs: Vec<SubMesh>,
     pub center: Vec3,
     pub half: Vec3,
@@ -49,16 +56,25 @@ pub struct Assets {
     pub project_dir: PathBuf,
     models: HashMap<String, Option<Arc<ModelData>>>,
     textures: HashMap<String, Option<Arc<TextureData>>>,
+    /// Meshes being edited in the engine: shown instead of the file on disk.
+    pub overrides: HashMap<String, Arc<ModelData>>,
     /// Loading errors not yet shown in the Console.
     pub errors: Vec<String>,
+    /// Animated models in their current pose, per entity.
+    posed: HashMap<u64, (PoseKey, Arc<ModelData>)>,
 }
+
+type PoseKey = (u64, Option<usize>, u32, Option<usize>, u32, u32);
 
 impl Assets {
     pub fn new(project_dir: PathBuf) -> Self {
-        Assets { project_dir, models: HashMap::new(), textures: HashMap::new(), errors: vec![] }
+        Assets { project_dir, models: HashMap::new(), textures: HashMap::new(), overrides: HashMap::new(), errors: vec![], posed: HashMap::new() }
     }
 
     pub fn model(&mut self, rel: &str) -> Option<Arc<ModelData>> {
+        if let Some(m) = self.overrides.get(rel) {
+            return Some(m.clone());
+        }
         if let Some(m) = self.models.get(rel) {
             return m.clone();
         }
@@ -88,6 +104,67 @@ impl Assets {
         loaded
     }
 
+    /// Names of the animation clips inside a model (empty when it has no skeleton).
+    pub fn clip_names(&mut self, rel: &str) -> Vec<String> {
+        self.model(rel)
+            .and_then(|m| m.skeleton.as_ref().map(|s| s.clips.iter().map(|c| c.name.clone()).collect()))
+            .unwrap_or_default()
+    }
+
+    /// The model in the pose asked by the entity's mesh component (skeletal animation).
+    /// Models without a skeleton are returned as they are.
+    pub fn posed(&mut self, entity: u64, base: &Arc<ModelData>, m: &crate::scene::MeshRenderer) -> Arc<ModelData> {
+        let Some(sk) = &base.skeleton else { return base.clone() };
+        let clip = sk.clip_index(&m.animation);
+        let t = sk.clip_time(clip, m.anim.time, m.anim_loop);
+        let fade = m.anim.fade.clamp(0.0, 1.0);
+        let prev = if fade > 0.0 { sk.clip_index(&m.anim.prev) } else { None };
+        let prev_t = sk.clip_time(prev, m.anim.prev_time, true);
+        let key: PoseKey = (base.id, clip, t.to_bits(), prev, prev_t.to_bits(), fade.to_bits());
+        let (id, version) = match self.posed.get(&entity) {
+            Some((k, model)) if *k == key => return model.clone(),
+            Some((_, model)) => (model.id, model.version + 1),
+            None => (next_id(), 0),
+        };
+        let mut locals = sk.locals(clip, t);
+        if fade > 0.0 {
+            // cross-fade from the pose the model was in when the clip changed
+            locals = Skeleton::blend(&locals, &sk.locals(prev, prev_t), fade);
+        }
+        let mats = sk.skin_matrices(&sk.globals(&locals));
+        let subs = base
+            .subs
+            .iter()
+            .map(|s| {
+                let mut vertices = s.vertices.clone();
+                if let Some(skin) = &s.skin {
+                    skin.apply(&mats, &mut vertices);
+                }
+                SubMesh {
+                    vertices,
+                    indices: s.indices.clone(),
+                    color: s.color,
+                    texture: s.texture.clone(),
+                    skin: s.skin.clone(),
+                }
+            })
+            .collect();
+        let model = Arc::new(ModelData {
+            id,
+            version,
+            skeleton: base.skeleton.clone(),
+            subs,
+            center: base.center,
+            half: base.half,
+            triangles: base.triangles,
+        });
+        if self.posed.len() > 512 {
+            self.posed.clear();
+        }
+        self.posed.insert(entity, (key, model.clone()));
+        model
+    }
+
     /// Forgets an asset so it is read from disk again (after re-importing).
     pub fn invalidate(&mut self, rel: &str) {
         self.models.remove(rel);
@@ -108,12 +185,99 @@ pub fn load_texture(path: &Path) -> Result<TextureData, String> {
 
 pub fn load_model(path: &Path) -> Result<ModelData, String> {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
-    let subs = match ext.as_str() {
-        "obj" => load_obj(path)?,
+    let (subs, skeleton) = match ext.as_str() {
+        "obj" => (load_obj(path)?, None),
         "gltf" | "glb" => load_gltf(path)?,
         other => return Err(format!("format `.{other}` is not supported (use .obj, .gltf or .glb)")),
     };
-    finish(subs)
+    let mut model = finish(subs)?;
+    if model.subs.iter().any(|s| s.skin.is_some()) {
+        model.skeleton = skeleton.map(Arc::new);
+    }
+    Ok(model)
+}
+
+/// Reads the node tree, the skins and the animation clips of a glTF document.
+fn load_skeleton(doc: &gltf::Document, buffers: &[gltf::buffer::Data]) -> Option<Skeleton> {
+    if doc.skins().count() == 0 {
+        return None;
+    }
+    let count = doc.nodes().count();
+    let mut rest = vec![(Vec3::ZERO, glam::Quat::IDENTITY, Vec3::ONE); count];
+    let mut parents = vec![None; count];
+    for node in doc.nodes() {
+        let (t, r, s) = node.transform().decomposed();
+        rest[node.index()] = (Vec3::from_array(t), glam::Quat::from_array(r).normalize(), Vec3::from_array(s));
+        for child in node.children() {
+            parents[child.index()] = Some(node.index());
+        }
+    }
+    // parents before children; a malformed file with a cycle simply leaves nodes out
+    let mut order = vec![];
+    let mut placed = vec![false; count];
+    for _ in 0..count {
+        let before = order.len();
+        for i in 0..count {
+            if !placed[i] && parents[i].map(|p| placed[p]).unwrap_or(true) {
+                placed[i] = true;
+                order.push(i);
+            }
+        }
+        if order.len() == before {
+            break;
+        }
+    }
+    let skins = doc
+        .skins()
+        .map(|skin| {
+            let joints: Vec<usize> = skin.joints().map(|j| j.index()).collect();
+            let reader = skin.reader(|b| buffers.get(b.index()).map(|d| &d.0[..]));
+            let mut inverse_bind: Vec<Mat4> = reader
+                .read_inverse_bind_matrices()
+                .map(|it| it.map(|m| Mat4::from_cols_array_2d(&m)).collect())
+                .unwrap_or_default();
+            inverse_bind.resize(joints.len(), Mat4::IDENTITY);
+            Skin { joints, inverse_bind }
+        })
+        .collect();
+    let mut clips = vec![];
+    for (i, anim) in doc.animations().enumerate() {
+        let mut channels = vec![];
+        let mut duration: f32 = 0.0;
+        for ch in anim.channels() {
+            use gltf::animation::util::ReadOutputs;
+            let reader = ch.reader(|b| buffers.get(b.index()).map(|d| &d.0[..]));
+            let Some(times) = reader.read_inputs() else { continue };
+            let times: Vec<f32> = times.collect();
+            let (target, mut values): (Target, Vec<[f32; 4]>) = match reader.read_outputs() {
+                Some(ReadOutputs::Translations(it)) => (Target::Translation, it.map(|v| [v[0], v[1], v[2], 0.0]).collect()),
+                Some(ReadOutputs::Scales(it)) => (Target::Scale, it.map(|v| [v[0], v[1], v[2], 0.0]).collect()),
+                Some(ReadOutputs::Rotations(it)) => (Target::Rotation, it.into_f32().collect()),
+                _ => continue,
+            };
+            let interpolation = ch.sampler().interpolation();
+            if interpolation == gltf::animation::Interpolation::CubicSpline {
+                // (in-tangent, value, out-tangent) per key: keep the values
+                values = values.chunks_exact(3).map(|c| c[1]).collect();
+            }
+            if times.is_empty() || values.len() < times.len() || times.iter().any(|t| !t.is_finite()) {
+                continue;
+            }
+            duration = duration.max(*times.last().unwrap());
+            channels.push(Channel {
+                node: ch.target().node().index(),
+                target,
+                times,
+                values,
+                step: interpolation == gltf::animation::Interpolation::Step,
+            });
+        }
+        if !channels.is_empty() {
+            let name = anim.name().map(|n| n.to_string()).unwrap_or_else(|| format!("Animation {}", i + 1));
+            clips.push(SkClip { name, duration, channels });
+        }
+    }
+    Some(Skeleton { rest, parents, order, skins, clips })
 }
 
 fn finish(subs: Vec<SubMesh>) -> Result<ModelData, String> {
@@ -137,6 +301,8 @@ fn finish(subs: Vec<SubMesh>) -> Result<ModelData, String> {
     }
     Ok(ModelData {
         id: next_id(),
+        version: 0,
+        skeleton: None,
         subs,
         center: (min + max) * 0.5,
         half: ((max - min) * 0.5).max(Vec3::splat(0.001)),
@@ -342,7 +508,7 @@ fn load_obj(path: &Path) -> Result<Vec<SubMesh>, String> {
                 (Some(m), None) => m.color,
                 (None, _) => [1.0; 3],
             };
-            SubMesh { vertices: g.vertices, indices: g.indices, color, texture }
+            SubMesh { vertices: g.vertices, indices: g.indices, color, texture, skin: None }
         })
         .collect())
 }
@@ -351,8 +517,11 @@ fn load_obj(path: &Path) -> Result<Vec<SubMesh>, String> {
 // glTF 2.0 (.gltf / .glb)
 // ---------------------------------------------------------------------------
 
-fn load_gltf(path: &Path) -> Result<Vec<SubMesh>, String> {
+fn load_gltf(path: &Path) -> Result<(Vec<SubMesh>, Option<Skeleton>), String> {
     let (doc, buffers, images) = gltf::import(path).map_err(|e| format!("invalid glTF ({e})"))?;
+    let skeleton = load_skeleton(&doc, &buffers);
+    let rest_mats: Vec<Vec<Mat4>> =
+        skeleton.as_ref().map(|s| s.skin_matrices(&s.globals(&s.rest))).unwrap_or_default();
     let mut textures: HashMap<usize, Option<Arc<TextureData>>> = HashMap::new();
     let mut subs = vec![];
 
@@ -421,6 +590,47 @@ fn load_gltf(path: &Path) -> Result<Vec<SubMesh>, String> {
             let c = pbr.base_color_factor();
             let texture = pbr.base_color_texture().and_then(|t| texture_for(t.texture().source().index()));
 
+            // a skinned primitive follows its joints, not its own node
+            if let (Some(skin), Some(joints), Some(weights)) =
+                (node.skin(), reader.read_joints(0), reader.read_weights(0))
+            {
+                let raw: Vec<Vec3> = reader.read_positions().unwrap().map(Vec3::from_array).collect();
+                let joints: Vec<[u16; 4]> = joints.into_u16().collect();
+                let weights: Vec<[f32; 4]> = weights.into_f32().collect();
+                if joints.len() == raw.len() && weights.len() == raw.len() && skin.index() < rest_mats.len() {
+                    let mut raw_normals: Vec<Vec3> =
+                        reader.read_normals().map(|it| it.map(Vec3::from_array).collect()).unwrap_or_default();
+                    if raw_normals.len() != raw.len() {
+                        raw_normals = vec![Vec3::ZERO; raw.len()];
+                        for tri in indices.chunks_exact(3) {
+                            let [a, b, c] = [tri[0] as usize, tri[1] as usize, tri[2] as usize];
+                            let n = (raw[b] - raw[a]).cross(raw[c] - raw[a]);
+                            for i in [a, b, c] {
+                                raw_normals[i] += n;
+                            }
+                        }
+                        for n in &mut raw_normals {
+                            *n = n.normalize_or_zero();
+                        }
+                    }
+                    let mut vertices = Vec::with_capacity(raw.len() * 8);
+                    for (i, p) in raw.iter().enumerate() {
+                        let uv = uvs.as_ref().and_then(|u| u.get(i)).copied().unwrap_or(Vec2::ZERO);
+                        push_vertex(&mut vertices, *p, raw_normals[i], uv);
+                    }
+                    let data = SkinData { skin: skin.index(), positions: raw, normals: raw_normals, joints, weights };
+                    data.apply(&rest_mats, &mut vertices);
+                    subs.push(SubMesh {
+                        vertices,
+                        indices,
+                        color: [c[0], c[1], c[2]],
+                        texture,
+                        skin: Some(Arc::new(data)),
+                    });
+                    continue;
+                }
+            }
+
             let mut vertices = Vec::with_capacity(indices.len() * 8);
             let mut out_idx = Vec::with_capacity(indices.len());
             match &normals {
@@ -450,10 +660,10 @@ fn load_gltf(path: &Path) -> Result<Vec<SubMesh>, String> {
                     tri.swap(1, 2);
                 }
             }
-            subs.push(SubMesh { vertices, indices: out_idx, color: [c[0], c[1], c[2]], texture });
+            subs.push(SubMesh { vertices, indices: out_idx, color: [c[0], c[1], c[2]], texture, skin: None });
         }
     }
-    Ok(subs)
+    Ok((subs, skeleton))
 }
 
 #[cfg(test)]
@@ -519,6 +729,54 @@ mod tests {
         assert!((m.center.x - 11.0).abs() < 1e-4, "{:?}", m.center);
         assert!((m.subs[0].vertices[5] - 1.0).abs() < 1e-5, "normal +Z");
         std::fs::remove_dir_all(d).ok();
+    }
+
+    #[test]
+    fn rigged_gltf_bends_with_its_clips() {
+        let path = tmp("rig").join("rig.gltf");
+        std::fs::write(&path, crate::skel::demo_rig_gltf()).unwrap();
+        let base = Arc::new(load_model(&path).unwrap());
+        let sk = base.skeleton.clone().expect("the model has a skeleton");
+        let names: Vec<&str> = sk.clips.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["Wave", "Curl", "Nod"]);
+        assert!((sk.clips[0].duration - 2.0).abs() < 1e-5);
+        // rest pose: a straight stalk, 3 m tall
+        assert!((base.center.y - 1.5).abs() < 1e-3 && (base.half.y - 1.5).abs() < 1e-3);
+
+        let top = |m: &ModelData| {
+            m.subs[0].vertices.chunks_exact(8).map(|v| Vec3::new(v[0], v[1], v[2])).fold(Vec3::ZERO, |a, p| if p.y > a.y { p } else { a })
+        };
+        let mut assets = Assets::new(std::env::temp_dir());
+        let mut mesh = crate::scene::MeshRenderer::primitive(crate::scene::Shape::Cube);
+        let rest = assets.posed(7, &base, &mesh);
+        assert!(top(&rest).z.abs() < 0.2);
+
+        // halfway through "Curl" every joint leans forward, so the tip moves far in +Z and comes down
+        mesh.play_animation("Curl", false);
+        mesh.anim.time = 1.0;
+        let curled = assets.posed(7, &base, &mesh);
+        let tip = top(&curled);
+        assert!(tip.y < 2.6, "the stalk bent: {tip:?}");
+        let far = curled.subs[0].vertices.chunks_exact(8).map(|v| v[2]).fold(0.0f32, f32::max);
+        assert!(far > 1.2, "tip reaches forward: {far}");
+        assert_eq!(curled.id, rest.id, "the same GPU model is reused");
+        assert!(curled.version > rest.version);
+        // same pose again: nothing is recomputed
+        assert!(Arc::ptr_eq(&curled, &assets.posed(7, &base, &mesh)));
+        // the base of the stalk is held by the first joint, which Curl leaves alone
+        let low = curled.subs[0].vertices.chunks_exact(8).filter(|v| v[1] < 0.05).count();
+        assert!(low >= 10);
+        // the clip loops: 2 s later it is the same pose
+        mesh.anim.time = 3.0;
+        assert!((top(&assets.posed(7, &base, &mesh)) - tip).length() < 1e-3);
+        // switching clips blends from the old pose
+        mesh.play_animation("Wave", true);
+        assert_eq!(mesh.anim.fade, 1.0);
+        let blended = top(&assets.posed(7, &base, &mesh));
+        assert!((blended - tip).length() < 1e-3, "at the start of the blend the pose has not jumped");
+        mesh.advance_animation(0.3);
+        assert_eq!(mesh.anim.fade, 0.0);
+        std::fs::remove_file(path).ok();
     }
 
     #[test]

@@ -77,7 +77,7 @@ footer { margin-top: 70px; color: var(--muted); font-size: .86rem; border-top: 1
 <div class="layout">
 <nav>
   <a class="brand" href="#top">❄ Cryo Engine</a>
-  <div class="version">Documentation · 0.2.1-beta</div>
+  <div class="version">Documentation · 0.4.0-beta</div>
   <h4>Start</h4>
   <a class="item" href="#top">Overview</a>
   <a class="item" href="#install">Download and install</a>
@@ -87,12 +87,18 @@ footer { margin-top: 70px; color: var(--muted); font-size: .86rem; border-top: 1
   <a class="item" href="#camera">Camera controls</a>
   <a class="item" href="#components">Entities and components</a>
   <a class="item" href="#import">Importing assets</a>
+  <a class="item" href="#animation">Animation and cutscenes</a>
+  <a class="item" href="#modelling">Modelling</a>
   <a class="item" href="#tutorials">Built-in tutorials</a>
   <h4>Scripting</h4>
   <a class="item" href="#language">The Cryo language</a>
   <a class="item" href="#events">Events</a>
   <a class="item" href="#api">Engine API</a>
   <a class="item" href="#builtins">Built-in functions</a>
+  <a class="item" href="#timing">Timers and sync</a>
+  <a class="item" href="#qte">Quick time events</a>
+  <a class="item" href="#first-person">First-person camera</a>
+  <a class="item" href="#skeletal">Animated models</a>
   <a class="item" href="#physics">Physics</a>
   <h4>Projects</h4>
   <a class="item" href="#example">Example: Frostpeak Isles</a>
@@ -206,6 +212,70 @@ footer { margin-top: 70px; color: var(--muted); font-size: .86rem; border-top: 1
 </table></div>
 <p>Files a model refers to (materials, <code>.bin</code> buffers, textures) are copied with it. An imported model is placed in front of the camera; if it was authored in other units, its scale is set to about 2 m. A model's box collider uses its bounding box and is drawn in green when selected.</p>
 
+<h2 id="animation">Animation and cutscenes</h2>
+<p>The <b>Timeline</b> tab edits animation clips. A clip moves objects over time with keyframes and fires events at exact instants, which keeps sounds, script calls and camera cuts in sync with the motion. The same clips serve real-time animation (doors, lifts, effects) and cutscenes.</p>
+<figure><img src="img/timeline.png" alt="The Timeline tab with the Intro cutscene of the example game">
+<figcaption>The example's opening cutscene: one camera animated with four keys, and events that cut to it and back.</figcaption></figure>
+<h3>Keyframes</h3>
+<ol>
+  <li>Click <b>+ New animation</b> and set its <b>Length</b>.</li>
+  <li>Select an object and click <b>+ Position</b> (or Rotation, Scale, Colour, Field of view) to record its current value at the playhead.</li>
+  <li>Drag the ruler to another time, change the object in the Scene or the Inspector, and add another key.</li>
+  <li>Press <b>Preview</b> to play it in the editor.</li>
+</ol>
+<p>Click a key to edit its time, value and easing (<b>Smooth</b>, <b>Linear</b> or <b>Step</b>, which holds the value until the next key). Drag a key sideways to retime it.</p>
+<h3>Events on the timeline</h3>
+<div class="table-wrap"><table>
+<tr><th>Event</th><th>What it does at that instant</th></tr>
+<tr><td><b>Script event</b></td><td>Runs <code>on &lt;event&gt;(argument)</code> in the chosen object's script.</td></tr>
+<tr><td><b>Sound</b></td><td>Plays a sound file from the project.</td></tr>
+<tr><td><b>Camera cut</b></td><td>Switches the game to another camera.</td></tr>
+<tr><td><b>Screen text</b></td><td>Shows text on the game screen.</td></tr>
+<tr><td><b>Event for everyone</b></td><td>Runs <code>on &lt;event&gt;(argument)</code> in every script of the scene.</td></tr>
+<tr><td><b>Quick time event</b></td><td>Shows a key prompt; the clip waits for the player's answer. See <a href="#qte">Quick time events</a>.</td></tr>
+<tr><td><b>Play animation</b></td><td>Starts another clip, to chain or branch cutscenes.</td></tr>
+<tr><td><b>Game speed</b></td><td>Slow motion (0.3) or back to normal (1).</td></tr>
+</table></div>
+<h3>Clip options</h3>
+<div class="table-wrap"><table>
+<tr><td><b>Loop</b></td><td>Starts again when it reaches the end.</td></tr>
+<tr><td><b>Autoplay</b></td><td>Starts by itself when the game starts.</td></tr>
+<tr><td><b>Cutscene</b></td><td>Blocks the player's input and shows cinema bars while playing. <kbd>Enter</kbd> skips it, still firing its remaining events so the game ends up in the right state.</td></tr>
+</table></div>
+<h3>From scripts</h3>
+<pre><code>anim.play(<span class="s">"Victory"</span>)       <span class="c">// start (or restart) a clip</span>
+anim.stop(<span class="s">"Victory"</span>)
+<span class="k">if</span> anim.playing(<span class="s">"Intro"</span>) { <span class="k">return</span> }
+
+<span class="k">on</span> animation_end(name) {     <span class="c">// every script hears when a clip finishes</span>
+    <span class="k">if</span> name == <span class="s">"OpenDoor"</span> { <span class="f">log</span>(<span class="s">"door is open"</span>) }
+}
+
+scene.set_camera(scene.find(<span class="s">"Boss Camera"</span>))   <span class="c">// camera cut from code</span></code></pre>
+<p>Each key chooses how the value travels to the next one: Smooth, Linear, Step, Ease in, Ease out, Overshoot (passes the target and comes back) or Bounce.</p>
+<p>Tracks store local values, so an animated object can also be a physics body: a static body moved by a clip pushes dynamic bodies out of its way.</p>
+
+<h2 id="modelling">Modelling</h2>
+<p><b>Edit Mesh</b> mode lets you shape geometry inside the editor. Start it with <b>+ Create &gt; Editable mesh</b>, or select an object and click <b>Edit mesh</b> in its Mesh component. A primitive is first saved as an <code>.obj</code> in <code>models/</code>; imported <code>.obj</code> models can be edited too.</p>
+<figure><img src="img/modelling.png" alt="Edit Mesh mode with an extruded and inset face selected">
+<figcaption>Edit Mesh mode: the tool bar at the top of the Scene, the wireframe, and the gizmo on the selected face.</figcaption></figure>
+<div class="table-wrap"><table>
+<tr><th>Tool</th><th>Key</th><th>What it does</th></tr>
+<tr><td>Faces / Vertices</td><td></td><td>What a click selects. <kbd>Shift</kbd> + click adds or removes.</td></tr>
+<tr><td>Move, Rotate, Scale</td><td><kbd>W</kbd> <kbd>E</kbd> <kbd>R</kbd></td><td>The gizmo acts on the selection.</td></tr>
+<tr><td>Extrude</td><td><kbd>X</kbd></td><td>Pulls the selected faces outwards as one region, creating the sides.</td></tr>
+<tr><td>Inset</td><td><kbd>I</kbd></td><td>A smaller face inside each selected face.</td></tr>
+<tr><td>Subdivide</td><td><kbd>U</kbd></td><td>Splits the selected faces into quads; neighbours stay connected.</td></tr>
+<tr><td>Flip</td><td><kbd>N</kbd></td><td>Turns faces inside out.</td></tr>
+<tr><td>Fill</td><td></td><td>New face from three or more selected vertices.</td></tr>
+<tr><td>Merge</td><td><kbd>M</kbd></td><td>Joins the selected vertices at their centre.</td></tr>
+<tr><td>Delete</td><td><kbd>Del</kbd></td><td>Removes the selected faces or vertices.</td></tr>
+<tr><td>All</td><td><kbd>A</kbd></td><td>Selects everything, or nothing.</td></tr>
+<tr><td>Smooth</td><td></td><td>Smooth shading instead of flat faces.</td></tr>
+<tr><td>Undo</td><td><kbd>Ctrl</kbd>+<kbd>Z</kbd></td><td>Steps back through the modelling session.</td></tr>
+</table></div>
+<p><b>Done</b> (or <kbd>Esc</kbd>) saves the model; <b>Cancel</b> restores it. Texture coordinates are generated by box projection (one tile per unit), and the box collider follows the new bounds.</p>
+
 <h2 id="tutorials">Built-in tutorials</h2>
 <p>Open <b>Help &gt; Tutorials</b> (<kbd>F1</kbd>). Each tutorial is a short sequence of cards; the panel a step talks about is brought to the front and outlined.</p>
 <figure><img src="img/tutorial.png" alt="The welcome tour card in the bottom-right corner of the editor">
@@ -218,6 +288,10 @@ footer { margin-top: 70px; color: var(--muted); font-size: .86rem; border-top: 1
 <tr><td><b>Scripting with Cryo</b></td><td>Events, props, talking to other objects, errors.</td></tr>
 <tr><td><b>Physics and collisions</b></td><td>Bodies, colliders, triggers, contact events.</td></tr>
 <tr><td><b>Inside the example platformer</b></td><td>How Frostpeak Isles is built.</td></tr>
+<tr><td><b>Animation, cutscenes and timed events</b></td><td>Keyframes, events in sync, cutscenes, timers.</td></tr>
+<tr><td><b>Modelling in the engine</b></td><td>Edit Mesh mode and its tools.</td></tr>
+<tr><td><b>Events and quick time events</b></td><td>Events between scripts, engine events, QTEs, state machines.</td></tr>
+<tr><td><b>First person and animated models</b></td><td>The first-person player, skeletal animation, mesh colliders.</td></tr>
 <tr><td><b>Exporting your game</b></td><td>From project to something people can run.</td></tr>
 </table></div>
 
@@ -251,16 +325,53 @@ footer { margin-top: 70px; color: var(--muted); font-size: .86rem; border-top: 1
 }</code></pre>
 <h3>Syntax</h3>
 <div class="table-wrap"><table>
-<tr><td>Types</td><td><code>num</code>, <code>bool</code>, <code>text</code>, <code>vec3</code>, <code>entity</code>, <code>list</code>, <code>any</code>. Annotations are optional; when present they are checked.</td></tr>
+<tr><td>Types</td><td><code>num</code>, <code>bool</code>, <code>text</code>, <code>vec3</code>, <code>entity</code>, <code>list</code>, <code>map</code>, <code>any</code>. Annotations are optional; when present they are checked.</td></tr>
 <tr><td>Fields</td><td><code>prop name: type = value</code> (shown in the Inspector) and <code>var name = value</code>.</td></tr>
 <tr><td>Locals</td><td><code>let</code> (immutable) and <code>var</code> (mutable).</td></tr>
-<tr><td>Control flow</td><td><code>if / else if / else</code>, <code>while</code>, <code>for i in 0..10</code>, <code>for item in list</code>, <code>break</code>, <code>continue</code>, <code>return</code>.</td></tr>
+<tr><td>Control flow</td><td><code>if / else if / else</code>, <code>while</code>, <code>for i in 0..10</code>, <code>for item in list</code>, <code>for key in map</code>, <code>break</code>, <code>continue</code>, <code>return</code>, <code>match</code>.</td></tr>
 <tr><td>Operators</td><td><code>+ - * / %</code>, <code>== != &lt; &lt;= &gt; &gt;=</code>, <code>and or not</code>, <code>+= -= *= /=</code>. <code>+</code> joins text with anything.</td></tr>
 <tr><td>Vectors</td><td><code>vec3(x, y, z)</code>; <code>+ -</code> between vectors, <code>* /</code> with a number; components <code>.x .y .z</code> can be read and assigned.</td></tr>
-<tr><td>Lists</td><td><code>[1, 2, 3]</code>, <code>list[i]</code>, <code>.push(x)</code> <code>.pop()</code> <code>.remove(i)</code> <code>.contains(x)</code> <code>.clear()</code> <code>.len()</code>.</td></tr>
-<tr><td>Text</td><td><code>"..."</code> with <code>\n</code>; <code>.len()</code> <code>.upper()</code> <code>.lower()</code> <code>.contains(s)</code>.</td></tr>
+<tr><td>Lists</td><td><code>[1, 2, 3]</code>, <code>list[i]</code>, <code>.push(x)</code> <code>.pop()</code> <code>.remove(i)</code> <code>.contains(x)</code> <code>.clear()</code> <code>.len()</code> <code>.insert(i, x)</code> <code>.index_of(x)</code> <code>.first()</code> <code>.last()</code> <code>.sort()</code> <code>.reverse()</code> <code>.join(sep)</code> <code>.copy()</code>.</td></tr>
+<tr><td>Maps</td><td><code>{ coins: 3, "red key": true }</code>; read and write with <code>m.coins</code> or <code>m["red key"]</code> (a missing key reads as <code>nil</code>); <code>.has(k)</code> <code>.get(k, default)</code> <code>.remove(k)</code> <code>.keys()</code> <code>.values()</code> <code>.len()</code> <code>.clear()</code> <code>.copy()</code>.</td></tr>
+<tr><td>Text</td><td><code>"..."</code> with <code>\n</code>; <code>text[i]</code>, <code>.len()</code> <code>.upper()</code> <code>.lower()</code> <code>.contains(s)</code> <code>.starts_with(s)</code> <code>.ends_with(s)</code> <code>.find(s)</code> <code>.sub(from, count)</code> <code>.split(sep)</code> <code>.replace(a, b)</code> <code>.trim()</code>.</td></tr>
 <tr><td>Comments</td><td><code>// to the end of the line</code>. Semicolons are optional.</td></tr>
 </table></div>
+<h3>match</h3>
+<pre><code><span class="k">match</span> other.tag {
+    <span class="s">"coin"</span>, <span class="s">"gem"</span> =&gt; score += <span class="n">1</span>        <span class="c">// several values, one statement</span>
+    <span class="s">"spike"</span> =&gt; {
+        lives -= <span class="n">1</span>
+        respawn()
+    }
+    <span class="k">else</span> =&gt; <span class="k">return</span>
+}</code></pre>
+<h3>State machines</h3>
+<p>A script can be split into states. It is in one state at a time; each state has its own events, on top of the script's. The first state declared is where it starts, and <code>goto</code> switches.</p>
+<pre><code><span class="k">script</span> Guard {
+    <span class="k">prop</span> sight: <span class="k">num</span> = <span class="n">8</span>
+    <span class="k">var</span> player: <span class="k">entity</span> = <span class="k">nil</span>
+
+    <span class="k">on</span> start() { player = scene.find(<span class="s">"Player"</span>) }
+
+    <span class="k">state</span> patrol {
+        <span class="k">on</span> enter() { self.color = vec3(<span class="n">0.3</span>, <span class="n">0.8</span>, <span class="n">0.4</span>) }
+        <span class="k">on</span> update(dt) {
+            self.rotate(vec3(<span class="n">0</span>, <span class="n">40</span> * dt, <span class="n">0</span>))
+            <span class="k">if</span> self.distance_to(player) &lt; sight { <span class="k">goto</span> chase }
+        }
+    }
+
+    <span class="k">state</span> chase {
+        <span class="k">on</span> enter() { self.color = vec3(<span class="n">1</span>, <span class="n">0.3</span>, <span class="n">0.3</span>); emit(<span class="s">"alarm"</span>) }
+        <span class="k">on</span> update(dt) {
+            self.look_at(player.position)
+            self.translate(self.forward * <span class="n">3</span> * dt)
+            <span class="k">if</span> state_time() &gt; <span class="n">5</span> { <span class="k">goto</span> patrol }   <span class="c">// gives up after 5 seconds</span>
+        }
+        <span class="k">on</span> exit() { <span class="k">log</span>(<span class="s">"lost the player"</span>) }
+    }
+}</code></pre>
+<p><code>on enter()</code> and <code>on exit()</code> run when the state begins and ends. <code>current_state()</code> gives its name and <code>state_time()</code> the seconds spent in it. <code>goto</code> also ends the event that called it.</p>
 <h3>Safe by default</h3>
 <ul>
   <li>A <code>let</code> cannot be reassigned, and conditions must be <code>bool</code>: there is no implicit truthiness.</li>
@@ -276,16 +387,38 @@ footer { margin-top: 70px; color: var(--muted); font-size: .86rem; border-top: 1
 <tr><td><code>on start()</code></td><td>Once, when the game starts.</td></tr>
 <tr><td><code>on update(dt)</code></td><td>Every frame. <code>dt</code> is the time in seconds since the previous frame.</td></tr>
 <tr><td><code>on collide(other, normal)</code></td><td>Every frame two physics bodies touch (triggers included). <code>normal</code> points from <code>other</code> towards this entity: <code>normal.y</code> near 1 means you are standing on it.</td></tr>
+<tr><td><code>on touch_start(other)</code>, <code>on touch_end(other)</code></td><td>Once when two bodies begin to touch, and once when they separate. The simple way to know who is inside a zone.</td></tr>
+<tr><td><code>on key_down(key)</code>, <code>on key_up(key)</code></td><td>When a key or mouse button is pressed or released.</td></tr>
+<tr><td><code>on animation_end(name)</code></td><td>When an animation clip finishes (sent to every script).</td></tr>
+<tr><td><code>on qte_success(name)</code>, <code>on qte_fail(name)</code></td><td>The result of a <a href="#qte">quick time event</a>.</td></tr>
 <tr><td><code>on anything(args...)</code></td><td>Your own events, fired with <code>entity.send("anything", args...)</code>. Delivered right after the current event finishes.</td></tr>
 </table></div>
 <p>Handlers may declare fewer parameters than the engine sends: <code>on collide(other)</code> is fine.</p>
+<h3>Talking to other scripts</h3>
+<div class="table-wrap"><table>
+<tr><td><code>entity.send("event", args...)</code></td><td>To one object.</td></tr>
+<tr><td><code>emit("event", args...)</code></td><td>To every script in the scene that declares <code>on event(...)</code>. The sender does not need to know who listens.</td></tr>
+<tr><td><code>scene.tagged("enemy")</code></td><td>The list of entities with that Tag (set in the Inspector, or <code>self.tag = "enemy"</code>).</td></tr>
+<tr><td><code>global.name</code></td><td>Values shared by all scripts: <code>global.score += 1</code>. A global never set reads as <code>nil</code>.</td></tr>
+</table></div>
+<pre><code><span class="c">// Lever.cryo</span>
+<span class="k">on</span> touch_start(other) {
+    <span class="k">if</span> other.tag == <span class="s">"player"</span> { emit(<span class="s">"open_doors"</span>, <span class="s">"blue"</span>) }
+}
+
+<span class="c">// Door.cryo: every door in the scene hears it</span>
+<span class="k">on</span> open_doors(colour) {
+    <span class="k">if</span> colour == my_colour { anim.play(<span class="s">"OpenDoor"</span>) }
+}</code></pre>
 
 <h2 id="api">Engine API</h2>
 <h3>Entities</h3>
 <p><code>self</code> is the entity the script is attached to. Any <code>entity</code> value offers the same members.</p>
 <div class="table-wrap"><table>
 <tr><th>Member</th><th>Type</th><th>Notes</th></tr>
-<tr><td><code>name</code></td><td>text</td><td></td></tr>
+<tr><td><code>name</code>, <code>tag</code></td><td>text</td><td></td></tr>
+<tr><td><code>parent</code></td><td>entity</td><td>Read-only; <code>nil</code> at the top level.</td></tr>
+<tr><td><code>animation</code>, <code>animation_time</code></td><td>text, num</td><td>Read-only: the skeletal clip playing on a rigged model.</td></tr>
 <tr><td><code>position</code>, <code>rotation</code>, <code>scale</code></td><td>vec3</td><td>Local values; rotation in degrees.</td></tr>
 <tr><td><code>forward</code>, <code>right</code>, <code>up</code></td><td>vec3</td><td>Read-only directions. Forward is local -Z.</td></tr>
 <tr><td><code>visible</code></td><td>bool</td><td>Hidden entities (and their children) are not drawn and do not collide.</td></tr>
@@ -301,14 +434,20 @@ footer { margin-top: 70px; color: var(--muted); font-size: .86rem; border-top: 1
 <tr><td><code>look_at(point)</code></td><td>Turn so forward points at a position.</td></tr>
 <tr><td><code>distance_to(entity)</code></td><td>Distance between two entities.</td></tr>
 <tr><td><code>send("event", args...)</code></td><td>Run <code>on event(...)</code> in that entity's script.</td></tr>
+<tr><td><code>child("Name")</code>, <code>children()</code></td><td>A direct child by name (or <code>nil</code>), and the list of children.</td></tr>
+<tr><td><code>animate("Clip")</code>, <code>animate("Clip", speed)</code></td><td>Play a clip of a rigged model, blending from the current pose. <code>animate("")</code> returns to the rest pose.</td></tr>
 <tr><td><code>destroy()</code>, <code>exists()</code></td><td>Remove at the end of the frame / check it is still there.</td></tr>
 <tr><td><code>add_physics("dynamic"|"static", "box"|"sphere")</code></td><td>Give a spawned entity a body.</td></tr>
 </table></div>
 <h3>Globals</h3>
 <div class="table-wrap"><table>
-<tr><td><code>input</code></td><td><code>.down(key)</code> held, <code>.pressed(key)</code> / <code>.released(key)</code> this frame, <code>.axis("horizontal"|"vertical")</code> from WASD and arrows, <code>.mouse_dx</code>, <code>.mouse_dy</code>, <code>.scroll</code>.<br>Keys: letters, digits, <code>space</code>, <code>enter</code>, <code>shift</code>, <code>escape</code>, <code>tab</code>, <code>up</code> <code>down</code> <code>left</code> <code>right</code>, <code>mouse_left</code> <code>mouse_right</code> <code>mouse_middle</code>.</td></tr>
-<tr><td><code>scene</code></td><td><code>.find("Name")</code> (entity or <code>nil</code>), <code>.all()</code>, <code>.spawn("cube", position)</code>, <code>.destroy(entity)</code>.</td></tr>
-<tr><td><code>time</code></td><td><code>.dt</code>, <code>.total</code> (seconds since Play).</td></tr>
+<tr><td><code>input</code></td><td><code>.down(key)</code> held, <code>.pressed(key)</code> / <code>.released(key)</code> this frame, <code>.axis("horizontal"|"vertical")</code> from WASD and arrows, <code>.mouse_dx</code>, <code>.mouse_dy</code>, <code>.scroll</code>, <code>.lock_mouse(true|false)</code>, <code>.mouse_locked</code>.<br>Keys: letters, digits, <code>space</code>, <code>enter</code>, <code>shift</code>, <code>escape</code>, <code>tab</code>, <code>up</code> <code>down</code> <code>left</code> <code>right</code>, <code>mouse_left</code> <code>mouse_right</code> <code>mouse_middle</code>.</td></tr>
+<tr><td><code>scene</code></td><td><code>.find("Name")</code> (entity or <code>nil</code>), <code>.all()</code>, <code>.tagged("tag")</code>, <code>.spawn("cube", position)</code>, <code>.destroy(entity)</code>, <code>.set_camera(entity)</code>.</td></tr>
+<tr><td><code>anim</code></td><td><code>.play("Clip")</code>, <code>.stop("Clip")</code>, <code>.playing("Clip")</code>.</td></tr>
+<tr><td><code>after</code>, <code>every</code>, <code>cancel</code></td><td>Timers: see <a href="#timing">Timers and sync</a>.</td></tr>
+<tr><td><code>emit(...)</code>, <code>global</code></td><td>See <a href="#events">Events</a>.</td></tr>
+<tr><td><code>qte</code></td><td>See <a href="#qte">Quick time events</a>.</td></tr>
+<tr><td><code>time</code></td><td><code>.dt</code>, <code>.total</code> (seconds since Play), <code>.scale</code> (1 is normal speed, 0.3 is slow motion, 0 freezes the game).</td></tr>
 <tr><td><code>audio</code></td><td><code>.play(file)</code>, <code>.play(file, volume)</code>, <code>.music(file)</code> (loops), <code>.stop_music()</code>, <code>.stop()</code>, <code>.volume</code>.</td></tr>
 <tr><td><code>log(...)</code></td><td>Print to the Console.</td></tr>
 <tr><td><code>hud(...)</code></td><td>Text on the game screen (use <code>\n</code> for a second line).</td></tr>
@@ -316,16 +455,99 @@ footer { margin-top: 70px; color: var(--muted); font-size: .86rem; border-top: 1
 
 <h2 id="builtins">Built-in functions</h2>
 <div class="table-wrap"><table>
-<tr><td>Numbers</td><td><code>abs sign floor ceil round sqrt pow min max clamp lerp</code>, <code>random()</code> (0 to 1), <code>random(a, b)</code>, constant <code>PI</code></td></tr>
-<tr><td>Trigonometry</td><td><code>sin cos tan atan2</code> (radians)</td></tr>
-<tr><td>Vectors</td><td><code>vec3(x, y, z)</code>, <code>vec3(n)</code>, <code>length normalize dot cross distance</code>, <code>lerp(a, b, t)</code></td></tr>
-<tr><td>Conversion</td><td><code>str(x)</code>, <code>num(text)</code> (or <code>nil</code>), <code>len(list or text)</code></td></tr>
+<tr><td>Numbers</td><td><code>abs sign floor ceil round sqrt pow min max clamp lerp</code>, <code>random()</code> (0 to 1), <code>random(a, b)</code>, <code>random_int(a, b)</code>, <code>move_toward(a, b, step)</code>, <code>smoothstep(t)</code>, <code>wrap(x, lo, hi)</code>, constant <code>PI</code></td></tr>
+<tr><td>Trigonometry</td><td><code>sin cos tan atan2</code> (radians), <code>rad(degrees)</code>, <code>deg(radians)</code></td></tr>
+<tr><td>Vectors</td><td><code>vec3(x, y, z)</code>, <code>vec3(n)</code>, <code>length normalize dot cross distance</code>, <code>lerp(a, b, t)</code>, <code>move_toward(a, b, step)</code></td></tr>
+<tr><td>Conversion</td><td><code>str(x)</code>, <code>num(text)</code> (or <code>nil</code>), <code>len(list, map or text)</code>, <code>type(x)</code>, <code>format("{} of {}", a, b)</code></td></tr>
+<tr><td>Lists</td><td><code>range(n)</code> (0 to n-1), <code>choose(list)</code> (a random item), <code>map()</code> (an empty map)</td></tr>
+<tr><td>States</td><td><code>current_state()</code>, <code>state_time()</code></td></tr>
 </table></div>
+
+<h2 id="timing">Timers and sync</h2>
+<p>Three ways to make things happen at the right moment:</p>
+<div class="table-wrap"><table>
+<tr><td><code>after(seconds, "event", args...)</code></td><td>Runs <code>on event(args...)</code> of this script once, later.</td></tr>
+<tr><td><code>every(seconds, "event", args...)</code></td><td>Runs it repeatedly.</td></tr>
+<tr><td><code>cancel("event")</code></td><td>Cancels this script's pending timers for that event.</td></tr>
+<tr><td>Timeline events</td><td>Tied to an exact instant of an <a href="#animation">animation clip</a>.</td></tr>
+<tr><td><code>entity.send("event")</code></td><td>Immediately, to another object.</td></tr>
+</table></div>
+<pre><code><span class="k">script</span> Bomb {
+    <span class="k">on</span> start() {
+        every(<span class="n">0.5</span>, <span class="s">"blink"</span>)
+        after(<span class="n">3</span>, <span class="s">"explode"</span>)
+    }
+    <span class="k">on</span> blink() { self.visible = <span class="k">not</span> self.visible }
+    <span class="k">on</span> explode() {
+        cancel(<span class="s">"blink"</span>)
+        audio.play(<span class="s">"sounds/boom.wav"</span>)
+        self.destroy()
+    }
+}</code></pre>
+<p>Timers follow game time, so they pause with the game and are dropped when their entity is destroyed.</p>
+
+<h2 id="qte">Quick time events</h2>
+<p>A quick time event (QTE) shows a key on the game screen and gives the player a short time to answer. One line starts it; the result comes back as an event.</p>
+<figure><img src="img/qte.png" alt="A quick time event prompt on the game screen: the E key inside a ring that shows the time left">
+<figcaption>The prompt is drawn by the engine: the ring empties as the time runs out.</figcaption></figure>
+<div class="table-wrap"><table>
+<tr><th>Call</th><th>The player must</th></tr>
+<tr><td><code>qte.press(key, seconds)</code></td><td>Press the key once.</td></tr>
+<tr><td><code>qte.mash(key, presses, seconds)</code></td><td>Press it that many times.</td></tr>
+<tr><td><code>qte.hold(key, hold_seconds, seconds)</code></td><td>Keep it down without letting go.</td></tr>
+<tr><td><code>qte.sequence([keys], seconds)</code></td><td>Press the keys in order. A wrong key fails.</td></tr>
+<tr><td><code>qte.active</code>, <code>qte.progress</code>, <code>qte.cancel()</code></td><td>Whether one is on screen, how far it is (0 to 1), and removing it.</td></tr>
+</table></div>
+<p>Add a text as the last argument to name the event (<code>qte.press("e", 1.5, "dodge")</code>); the name arrives in <code>on qte_success(name)</code> and <code>on qte_fail(name)</code>, sent to the script that started it. Without a name it is the kind: <code>"press"</code>, <code>"mash"</code>, <code>"hold"</code> or <code>"sequence"</code>.</p>
+<pre><code><span class="k">script</span> Boss {
+    <span class="k">on</span> swing() {
+        time.scale = <span class="n">0.25</span>                 <span class="c">// slow motion while the player decides</span>
+        qte.press(<span class="s">"e"</span>, <span class="n">1.2</span>, <span class="s">"dodge"</span>)
+    }
+    <span class="k">on</span> qte_success(name) {
+        time.scale = <span class="n">1</span>
+        anim.play(<span class="s">"PlayerDodge"</span>)
+    }
+    <span class="k">on</span> qte_fail(name) {
+        time.scale = <span class="n">1</span>
+        scene.find(<span class="s">"Player"</span>).send(<span class="s">"hurt"</span>, <span class="n">1</span>)
+    }
+}</code></pre>
+<p>The time limit is real time, so slow motion does not give the player longer. In a cutscene, add <b>+ Event &gt; Quick time event</b> on the <a href="#animation">Timeline</a>: the clip stops at that instant until the player answers, and the result goes to every script.</p>
+
+<h2 id="first-person">First-person camera</h2>
+<p><b>+ Create &gt; First-person player</b> adds a body with physics, a camera named <b>Head</b> at eye height and the <code>FirstPerson</code> script. Press Play: the mouse looks around, <kbd>WASD</kbd> walks, <kbd>Shift</kbd> runs, <kbd>Space</kbd> jumps, <kbd>Tab</kbd> frees the mouse and takes it back.</p>
+<p>Speed, jump, mouse sensitivity and head bob are properties of the script. To write your own controller, these are the pieces:</p>
+<pre><code><span class="k">on</span> start() {
+    head = self.child(<span class="s">"Head"</span>)
+    scene.set_camera(head)
+    input.lock_mouse(<span class="k">true</span>)                <span class="c">// the game keeps the mouse pointer</span>
+}
+<span class="k">on</span> update(dt) {
+    yaw -= input.mouse_dx * sensitivity
+    pitch = clamp(pitch - input.mouse_dy * sensitivity, -<span class="n">85</span>, <span class="n">85</span>)
+    head.rotation = vec3(pitch, yaw, <span class="n">0</span>)     <span class="c">// the head turns, the body does not</span>
+}</code></pre>
+
+<h2 id="skeletal">Animated models</h2>
+<p>A <code>.gltf</code> or <code>.glb</code> model with a skeleton keeps its joints, skin weights and animation clips when imported. In the Inspector, <b>Mesh &gt; Animation</b> lists the clips, with speed and loop; the selected model previews its clip in the Scene.</p>
+<figure><img src="img/skeletal.png" alt="The example rigged model bending in the Scene, with the Animation field in the Inspector">
+<figcaption>+ Create &gt; Animated model (example) adds a small rigged model with three clips to try.</figcaption></figure>
+<pre><code><span class="k">on</span> update(dt) {
+    <span class="k">if</span> length(self.velocity) &gt; <span class="n">0.5</span> {
+        self.animate(<span class="s">"Walk"</span>)        <span class="c">// blends from the current pose in a quarter of a second</span>
+    } <span class="k">else</span> {
+        self.animate(<span class="s">"Idle"</span>)
+    }
+}</code></pre>
+<p>This is separate from the <a href="#animation">Timeline</a>, which moves whole objects: use the Timeline to move a character along a path, and its clips to move its limbs.</p>
 
 <h2 id="physics">Physics</h2>
 <ul>
   <li><b>Static</b> bodies never move on their own; move them from a script to make platforms and doors. <b>Dynamic</b> bodies fall and are pushed out of whatever they overlap.</li>
   <li>Colliders are a <b>box</b> (which follows the entity's rotation, so ramps work) or a <b>sphere</b>, sized from the entity's scale or the model's bounds.</li>
+  <li>The <b>Mesh</b> collider uses the triangles of an imported model, so a level or terrain is solid in its real shape. It is for static bodies; boxes and spheres collide with it.</li>
+  <li><b>Can rotate</b> lets a dynamic body spin, roll and tip over when it hits something. Leave it off for characters.</li>
   <li>A <b>trigger</b> reports contact without blocking: use it for pickups, checkpoints and zones.</li>
   <li>Drive characters by setting <code>self.velocity</code> and checking <code>self.grounded</code>.</li>
   <li>Gravity is a scene setting (deselect everything to see it in the Inspector).</li>
@@ -362,7 +584,8 @@ footer { margin-top: 70px; color: var(--muted); font-size: .86rem; border-top: 1
 <tr><td><code>Coin</code>, <code>Shard</code>, <code>Checkpoint</code></td><td>Trigger pickups that <code>send</code> an event to the player.</td></tr>
 <tr><td><code>MovingPlatform</code>, <code>BouncePad</code>, <code>Spinner</code></td><td>Level pieces driven by a few lines each.</td></tr>
 <tr><td><code>Spiker</code>, <code>Hopper</code></td><td>An enemy that can be stomped, and a creature that can be captured.</td></tr>
-<tr><td><code>HintZone</code></td><td>Invisible trigger that shows a tip.</td></tr>
+<tr><td><code>HintZone</code></td><td>Invisible trigger that shows a tip, re-armed by a timer.</td></tr>
+<tr><td><i>Intro</i>, <i>Victory</i> clips</td><td>The opening cutscene and the animation played when the last shard is found.</td></tr>
 </table></div>
 <p>The hero's root entity holds the Physics box and the script and has no mesh; its child <code>KipModel</code> holds the visible shapes and turns to face the movement, so the collider never rotates. Every mechanic is covered by an automated play-through test in the repository.</p>
 
@@ -372,7 +595,7 @@ footer { margin-top: 70px; color: var(--muted); font-size: .86rem; border-top: 1
   <li>Choose <b>File &gt; Export game</b> and pick a folder outside the project.</li>
   <li>Cryo writes a folder (an <code>.app</code> on macOS) with the executable and a copy of the project. It opens straight into the game; <kbd>Esc</kbd> quits.</li>
 </ol>
-<p>The export is for the system you are running on. To ship for another system, export from the editor on that system.</p>
+<p>To ship for another system without leaving yours, choose <b>File &gt; Export for another system</b> and pick the <code>cryo</code> program from the Cryo Engine download for that system (<code>cryo.exe</code> for Windows, <code>cryo</code> inside the Linux or macOS download). The game is laid out for that system.</p>
 
 <h2 id="source">Building from source</h2>
 <p>Requires <a href="https://rustup.rs">Rust</a>. On Linux also install <code>libasound2-dev</code>.</p>
@@ -386,11 +609,13 @@ cargo test                               <span class="c"># all tests</span></cod
 
 <h2 id="limits">Known limits</h2>
 <ul>
-  <li>Models: mesh, base colour and base texture. glTF animations, skeletons and full PBR materials are not read yet.</li>
-  <li>Shadows come from the first directional light only and cover about 50 m around the camera.</li>
-  <li>Up to 4 directional and 16 point/spot lights per scene.</li>
-  <li>Physics has no rotational dynamics: bodies do not tip over or spin on impact. A model's collider is its bounding box.</li>
-  <li>Export targets the current system; the macOS app is not signed.</li>
+  <li>Skeletal animation is computed on the processor: fine for a few characters, slow for crowds. Clips play one at a time per model (with a blend when switching); there are no morph targets.</li>
+  <li>Modelling works on <code>.obj</code> models, one material per model, with automatic texture coordinates. There are no loop cuts, bevels or boolean operations yet.</li>
+  <li>Models use base colour and base texture; full PBR materials are not read yet.</li>
+  <li>Shadows come from the first directional light only. Their reach is a setting of the light.</li>
+  <li>Up to 4 directional lights, and the 16 point/spot lights closest to the camera, are used in each view.</li>
+  <li>Mesh colliders are for static bodies. Bodies that can rotate use a simplified model: stacks of boxes are not stable.</li>
+  <li>The macOS app is not signed.</li>
   <li>Script error messages are in English only.</li>
 </ul>
 

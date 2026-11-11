@@ -7,17 +7,23 @@
 
 #[macro_use]
 mod i18n;
+mod anim;
 mod app;
 mod assets;
 mod audio;
+mod mesh_edit;
+mod meshmode;
 mod highlight;
 mod panels;
 mod physics;
 mod project;
+mod qte;
 mod render;
 mod runtime;
 mod scene;
 mod settings;
+mod skel;
+mod timeline;
 mod tutorial;
 mod viewport;
 

@@ -134,6 +134,82 @@ mod tests {
     }
 
     #[test]
+    fn maps() {
+        let out = ok(r#"on start() {
+            var inv = { coins: 2, "red key": true }
+            inv.coins += 3
+            inv["gems"] = 1
+            log(inv.coins, inv["red key"], inv.missing, inv.len())
+            for k in inv { log(k) }
+            inv.remove("gems")
+            log(inv.has("gems"), inv)
+        }"#);
+        assert_eq!(out, ["5 true nil 3", "coins", "gems", "red key", "false {coins: 5, red key: true}"]);
+    }
+
+    #[test]
+    fn match_statement() {
+        let out = ok(r#"
+        fn kind(x) -> text {
+            match x {
+                1, 2 => return "low"
+                "a" => { return "letter" }
+                else => return "other"
+            }
+            return "never"
+        }
+        on start() { log(kind(2), kind("a"), kind(9)) }"#);
+        assert_eq!(out, ["low letter other"]);
+    }
+
+    #[test]
+    fn state_machines() {
+        let src = r#"script Door {
+            var state = "a variable may still be called state"
+            on start() { log("start") }
+            on open() { goto opened }
+            state closed {
+                on enter() { log("enter closed") }
+                on update(dt) { log("closed", state_time()) }
+                on exit() { log("exit closed") }
+            }
+            state opened {
+                on enter() { log("enter opened") }
+                on update(dt) { log("opened", current_state()); goto closed; log("unreachable") }
+            }
+        }"#;
+        let script = Rc::new(parse(src).unwrap());
+        let mut host = NullHost::new();
+        let mut inst = Instance::new(script, &mut host).unwrap();
+        inst.call_event("start", &[], &mut host).unwrap();
+        inst.call_event("update", &[Value::Num(0.5)], &mut host).unwrap();
+        inst.call_event("open", &[], &mut host).unwrap();
+        inst.call_event("update", &[Value::Num(0.5)], &mut host).unwrap();
+        assert_eq!(
+            host.logs,
+            [
+                "start", "enter closed", "closed 0.5", "exit closed", "enter opened",
+                "opened opened", "enter closed"
+            ]
+        );
+        assert_eq!(inst.state_name(), "closed");
+        assert!(fail("on start() { goto nowhere }").contains("no state `nowhere`"));
+    }
+
+    #[test]
+    fn text_and_list_helpers() {
+        let out = ok(r#"on start() {
+            var l = [3, 1, 2]
+            l.sort()
+            l.insert(0, 0)
+            log(l, l.index_of(2), l.join("-"), range(3))
+            log("a,b,c".split(","), " hi ".trim(), "frost".sub(1, 3), "frost"[0])
+            log(format("{} of {}", 2, 5), type(l), move_toward(0, 10, 4), wrap(370, 0, 360))
+        }"#);
+        assert_eq!(out, ["[0, 1, 2, 3] 2 0-1-2-3 [0, 1, 2]", "[a, b, c] hi ros f", "2 of 5 list 4 10"]);
+    }
+
+    #[test]
     fn syntax_error_has_line() {
         let e = parse("script A {\n on start() {\n let = 3\n }\n}").unwrap_err();
         assert_eq!(e.line, 3);

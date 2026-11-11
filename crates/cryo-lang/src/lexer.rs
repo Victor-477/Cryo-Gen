@@ -28,6 +28,8 @@ pub enum Tok {
     And,
     Or,
     Not,
+    Match,
+    Goto,
     // symbols
     LParen,
     RParen,
@@ -41,6 +43,7 @@ pub enum Tok {
     Colon,
     Semi,
     Arrow,
+    FatArrow,
     Plus,
     Minus,
     Star,
@@ -70,10 +73,10 @@ pub struct Token {
 
 pub const KEYWORDS: &[&str] = &[
     "script", "prop", "var", "let", "on", "fn", "if", "else", "while", "for", "in", "return",
-    "break", "continue", "true", "false", "nil", "and", "or", "not",
+    "break", "continue", "true", "false", "nil", "and", "or", "not", "match", "goto", "state",
 ];
 
-pub const TYPES: &[&str] = &["num", "bool", "text", "vec3", "entity", "list", "any"];
+pub const TYPES: &[&str] = &["num", "bool", "text", "vec3", "entity", "list", "map", "any"];
 
 fn keyword(s: &str) -> Option<Tok> {
     Some(match s {
@@ -97,6 +100,8 @@ fn keyword(s: &str) -> Option<Tok> {
         "and" => Tok::And,
         "or" => Tok::Or,
         "not" => Tok::Not,
+        "match" => Tok::Match,
+        "goto" => Tok::Goto,
         _ => return None,
     })
 }
@@ -195,6 +200,7 @@ pub fn lex(src: &str) -> Result<Vec<Token>, CryoError> {
                     ('*', '=') => (Tok::StarEq, 2),
                     ('/', '=') => (Tok::SlashEq, 2),
                     ('=', '=') => (Tok::Eq, 2),
+                    ('=', '>') => (Tok::FatArrow, 2),
                     ('!', '=') => (Tok::Ne, 2),
                     ('<', '=') => (Tok::Le, 2),
                     ('>', '=') => (Tok::Ge, 2),

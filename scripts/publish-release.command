@@ -6,7 +6,7 @@
 #  2. pushes the tag below, which starts the "Release" workflow on GitHub: it builds the editor
 #     for Windows, macOS and Linux and attaches the zips to a new release (about 15 minutes);
 #  3. meanwhile, builds and packages the macOS app locally into dist/ as a backup.
-TAG="v0.2.1-beta"
+TAG="v0.4.0-beta"
 cd "$(dirname "$0")/.." || exit 1
 [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
 
@@ -19,7 +19,7 @@ rm -f docs/github-ci.yml docs/cryo-editor.png testar.command teste-log.txt \
 
 echo "== 1/3  Commit and push =="
 git add -A
-git commit -m "Cryo Engine $TAG: English interface, tutorials, docs site and platformer example" || echo "(nothing new to commit)"
+git commit -m "Cryo Engine $TAG: timeline animation, cutscenes, timers and mesh editing" || echo "(nothing new to commit)"
 if ! git push origin HEAD; then
   echo
   echo "Could not push from the terminal. Push with GitHub Desktop instead, then create the"

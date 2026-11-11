@@ -73,6 +73,30 @@ pub struct MeshRenderer {
     /// Bounding box of the imported model (centre, half size), in local space.
     #[serde(default)]
     pub model_bounds: Option<([f32; 3], [f32; 3])>,
+    /// Animation clip of a rigged model playing on this entity (empty = rest pose).
+    #[serde(default)]
+    pub animation: String,
+    #[serde(default = "one")]
+    pub anim_speed: f32,
+    #[serde(default = "yes")]
+    pub anim_loop: bool,
+    #[serde(skip)]
+    pub anim: AnimState,
+}
+
+/// Where the entity's skeletal animation is right now (not saved with the scene).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AnimState {
+    pub time: f32,
+    /// The clip that was playing before, while the two are being blended.
+    pub prev: String,
+    pub prev_time: f32,
+    /// 1 right after changing clips, falling to 0 as the new one takes over.
+    pub fade: f32,
+}
+
+fn one() -> f32 {
+    1.0
 }
 
 fn default_shine() -> f32 {
@@ -80,6 +104,27 @@ fn default_shine() -> f32 {
 }
 
 impl MeshRenderer {
+    /// Switches to another clip, blending from the current pose (`blend` seconds).
+    pub fn play_animation(&mut self, clip: &str, blend: bool) {
+        if self.animation == clip {
+            return;
+        }
+        self.anim.prev = std::mem::replace(&mut self.animation, clip.to_string());
+        self.anim.prev_time = self.anim.time;
+        self.anim.fade = if blend { 1.0 } else { 0.0 };
+        self.anim.time = 0.0;
+    }
+
+    /// Advances the animation clock.
+    pub fn advance_animation(&mut self, dt: f32) {
+        if self.animation.is_empty() && self.anim.fade <= 0.0 {
+            return;
+        }
+        self.anim.time += dt * self.anim_speed;
+        self.anim.prev_time += dt * self.anim_speed;
+        self.anim.fade = (self.anim.fade - dt / 0.25).max(0.0);
+    }
+
     pub fn primitive(shape: Shape) -> Self {
         MeshRenderer {
             shape,
@@ -90,6 +135,10 @@ impl MeshRenderer {
             unlit: false,
             cast_shadow: true,
             model_bounds: None,
+            animation: String::new(),
+            anim_speed: 1.0,
+            anim_loop: true,
+            anim: AnimState::default(),
         }
     }
 
@@ -122,6 +171,13 @@ pub struct Light {
     /// Casts shadows (first directional light only).
     #[serde(default = "yes")]
     pub shadows: bool,
+    /// How far around the camera the shadows reach, in metres. Larger is softer.
+    #[serde(default = "default_shadow_distance")]
+    pub shadow_distance: f32,
+}
+
+fn default_shadow_distance() -> f32 {
+    26.0
 }
 
 fn default_angle() -> f32 {
@@ -147,6 +203,8 @@ pub enum BodyKind {
 pub enum ColliderShape {
     Box,
     Sphere,
+    /// The triangles of the imported model (static bodies only; others fall back to Box).
+    Mesh,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -158,10 +216,19 @@ pub struct Physics {
     pub friction: f32,
     /// Trigger: detects contact (`collide` event) but does not block.
     pub is_trigger: bool,
+    /// Dynamic bodies only: collisions also make the body spin, roll and tip over.
+    #[serde(default)]
+    pub can_rotate: bool,
     #[serde(skip)]
     pub velocity: Vec3,
+    /// Spin in world space (radians per second around each axis).
+    #[serde(skip)]
+    pub angular: Vec3,
     #[serde(skip)]
     pub grounded: bool,
+    /// Triangles of a Mesh collider in local space, filled when Play starts.
+    #[serde(skip)]
+    pub mesh: Option<std::sync::Arc<Vec<[Vec3; 3]>>>,
 }
 
 impl Physics {
@@ -175,6 +242,9 @@ impl Physics {
             is_trigger: false,
             velocity: Vec3::ZERO,
             grounded: false,
+            can_rotate: false,
+            angular: Vec3::ZERO,
+            mesh: None,
         }
     }
 }
@@ -201,6 +271,9 @@ pub struct ScriptRef {
 pub struct Entity {
     pub id: u64,
     pub name: String,
+    /// Free label used to find groups of entities from scripts (`scene.tagged("enemy")`).
+    #[serde(default)]
+    pub tag: String,
     #[serde(default)]
     pub parent: Option<u64>,
     pub position: Vec3,
@@ -268,6 +341,9 @@ pub struct Scene {
     pub sky_horizon: [f32; 3],
     #[serde(default = "default_gravity")]
     pub gravity: f32,
+    /// Animation clips and cutscenes (see `anim.rs`).
+    #[serde(default)]
+    pub animations: Vec<crate::anim::Clip>,
 }
 
 fn default_gravity() -> f32 {
@@ -283,6 +359,7 @@ impl Scene {
             sky_top: [0.16, 0.32, 0.58],
             sky_horizon: [0.66, 0.78, 0.90],
             gravity: default_gravity(),
+            animations: vec![],
         }
     }
 
@@ -336,6 +413,7 @@ impl Scene {
         self.entities.push(Entity {
             id,
             name: self.unique_name(name),
+            tag: String::new(),
             parent: None,
             position: Vec3::ZERO,
             rotation: Vec3::ZERO,
@@ -375,6 +453,7 @@ impl Scene {
             range: 12.0,
             angle: 35.0,
             shadows: true,
+            shadow_distance: 26.0,
         });
         id
     }

@@ -3,7 +3,7 @@
 use crate::ast::*;
 use crate::CryoError;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::rc::Rc;
 
@@ -18,6 +18,8 @@ pub enum Value {
     /// Reference to a scene entity (id).
     Entity(u64),
     List(Rc<RefCell<Vec<Value>>>),
+    /// Keys are texts (numbers are converted), kept in alphabetical order.
+    Map(Rc<RefCell<BTreeMap<String, Value>>>),
     /// Object provided by the engine (`input`, `scene`, `time`...).
     Object(Rc<str>),
 }
@@ -38,6 +40,7 @@ impl Value {
             Value::Vec3(_) => "vec3",
             Value::Entity(_) => "entity",
             Value::List(_) => "list",
+            Value::Map(_) => "map",
             Value::Object(_) => "object",
         }
     }
@@ -51,6 +54,7 @@ impl Value {
                 | (Type::Vec3, Value::Vec3(_))
                 | (Type::Entity, Value::Entity(_) | Value::Nil)
                 | (Type::List, Value::List(_))
+                | (Type::Map, Value::Map(_))
         )
     }
 }
@@ -84,6 +88,16 @@ impl fmt::Display for Value {
                     write!(f, "{v}")?;
                 }
                 write!(f, "]")
+            }
+            Value::Map(m) => {
+                write!(f, "{{")?;
+                for (i, (k, v)) in m.borrow().iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{k}: {v}")?;
+                }
+                write!(f, "}}")
             }
             Value::Object(name) => write!(f, "<{name}>"),
         }
@@ -143,7 +157,8 @@ impl Host for NullHost {
 pub const BUILTINS: &[&str] = &[
     "vec3", "abs", "sign", "sin", "cos", "tan", "atan2", "sqrt", "pow", "floor", "ceil", "round",
     "min", "max", "clamp", "lerp", "random", "length", "normalize", "dot", "cross", "distance",
-    "str", "num", "len", "log",
+    "str", "num", "len", "log", "range", "format", "type", "move_toward", "smoothstep", "deg", "rad",
+    "wrap", "choose", "random_int", "current_state", "state_time", "map",
 ];
 
 /// Statement limit per event call: stops an infinite `while` from freezing the editor.
@@ -155,12 +170,19 @@ pub struct Instance {
     pub script: Rc<Script>,
     pub fields: HashMap<String, Value>,
     rng: u64,
+    /// Index of the current `state`, once the script has started.
+    state: Option<usize>,
+    state_time: f64,
 }
 
 impl Instance {
     /// Creates the instance by evaluating the initial values of `prop` and `var`.
     pub fn new(script: Rc<Script>, host: &mut dyn Host) -> Result<Self, CryoError> {
-        let mut inst = Instance { script: script.clone(), fields: HashMap::new(), rng: 0x9E3779B97F4A7C15 };
+        let mut inst = Instance { script: script.clone(), fields: HashMap::new(),
+            rng: 0x9E3779B97F4A7C15,
+            state: None,
+            state_time: 0.0,
+        };
         for f in &script.fields {
             let v = {
                 let mut ex = Exec::new(&mut inst, host);
@@ -174,6 +196,13 @@ impl Instance {
 
     pub fn has_handler(&self, event: &str) -> bool {
         self.script.handlers.contains_key(event)
+            || self.script.states.iter().any(|s| s.handlers.contains_key(event))
+            || (event == "start" && !self.script.states.is_empty())
+    }
+
+    /// Name of the current `state` (empty when the script has none).
+    pub fn state_name(&self) -> &str {
+        self.state.map(|i| self.script.states[i].name.as_str()).unwrap_or("")
     }
 
     /// Sets the value of a `prop` (from the Inspector), respecting the declared type.
@@ -194,14 +223,35 @@ impl Instance {
         host: &mut dyn Host,
     ) -> Result<Value, CryoError> {
         let script = self.script.clone();
-        let Some(func) = script.handlers.get(event) else {
-            return Ok(Value::Nil);
-        };
+        if event == "update" {
+            if let Some(Value::Num(dt)) = args.first() {
+                self.state_time += dt;
+            }
+        }
+        let mut result = Value::Nil;
         // Handlers may be declared with fewer parameters than the engine sends;
         // the extra arguments are simply dropped.
-        let n = func.params.len().min(args.len());
-        let mut ex = Exec::new(self, host);
-        ex.call_func(func, &args[..n], func.line, true)
+        if let Some(func) = script.handlers.get(event) {
+            let n = func.params.len().min(args.len());
+            let mut ex = Exec::new(self, host);
+            result = ex.call_func(func, &args[..n], func.line, true)?;
+        }
+        if event == "start" && self.state.is_none() && !script.states.is_empty() {
+            // the first state declared is where the script begins
+            self.state = Some(0);
+            self.state_time = 0.0;
+            if let Some(func) = script.states[0].handlers.get("enter") {
+                let mut ex = Exec::new(self, host);
+                ex.call_func(func, &[], func.line, true)?;
+            }
+        } else if let (Some(st), false) = (self.state, matches!(event, "enter" | "exit")) {
+            if let Some(func) = script.states[st].handlers.get(event) {
+                let n = func.params.len().min(args.len());
+                let mut ex = Exec::new(self, host);
+                result = ex.call_func(func, &args[..n], func.line, true)?;
+            }
+        }
+        Ok(result)
     }
 
     /// Calls a script `fn` by name.
@@ -223,7 +273,7 @@ impl Instance {
 /// Evaluates the default values of `prop` fields without needing the engine.
 pub fn default_props(script: &Rc<Script>) -> Vec<(String, Option<Type>, Value)> {
     let mut host = NullHost::new();
-    let mut inst = Instance { script: script.clone(), fields: HashMap::new(), rng: 1 };
+    let mut inst = Instance { script: script.clone(), fields: HashMap::new(), rng: 1, state: None, state_time: 0.0 };
     let mut out = vec![];
     for f in &script.fields {
         let v = {
@@ -400,10 +450,11 @@ impl<'a> Exec<'a> {
             StmtKind::ForEach { var, iter, body } => {
                 let items = match self.eval(iter)? {
                     Value::List(l) => l.borrow().clone(),
+                    Value::Map(m) => m.borrow().keys().map(Value::text).collect(),
                     v => {
                         return Err(CryoError::new(
                             iter.line,
-                            format!("`for ... in` expects a list, but got `{}`", v.type_name()),
+                            format!("`for ... in` expects a list or a map, but got `{}`", v.type_name()),
                         ))
                     }
                 };
@@ -415,6 +466,23 @@ impl<'a> Exec<'a> {
                         _ => {}
                     }
                 }
+            }
+            StmtKind::Match { value, arms, otherwise } => {
+                let v = self.eval(value)?;
+                for (values, body) in arms {
+                    for candidate in values {
+                        if self.eval(candidate)? == v {
+                            return self.block(body);
+                        }
+                    }
+                }
+                if let Some(o) = otherwise {
+                    return self.block(o);
+                }
+            }
+            StmtKind::Goto(name) => {
+                self.goto(name, s.line)?;
+                return Ok(Flow::Return(Value::Nil));
             }
             StmtKind::Return(e) => {
                 let v = match e {
@@ -430,6 +498,25 @@ impl<'a> Exec<'a> {
             }
         }
         Ok(Flow::Next)
+    }
+
+    /// Leaves the current state (`on exit`) and enters another (`on enter`).
+    fn goto(&mut self, name: &str, line: usize) -> R<()> {
+        let script = self.inst.script.clone();
+        let Some(next) = script.states.iter().position(|s| s.name == name) else {
+            return Err(CryoError::new(line, format!("there is no state `{name}` in this script")));
+        };
+        if let Some(cur) = self.inst.state {
+            if let Some(f) = script.states[cur].handlers.get("exit") {
+                self.call_func(f, &[], line, true)?;
+            }
+        }
+        self.inst.state = Some(next);
+        self.inst.state_time = 0.0;
+        if let Some(f) = script.states[next].handlers.get("enter") {
+            self.call_func(f, &[], line, true)?;
+        }
+        Ok(())
     }
 
     fn loop_body(&mut self, var: &str, value: Value, body: &[Stmt]) -> R<Flow> {
@@ -504,6 +591,7 @@ impl<'a> Exec<'a> {
                         .host
                         .set_member(&base, name, v)
                         .map_err(|m| CryoError::new(line, m)),
+                    Value::Map(m) => map_insert(&m, name.clone(), v, line),
                     other => Err(CryoError::new(
                         line,
                         format!("cannot set `{name}` on `{}`", other.type_name()),
@@ -512,6 +600,10 @@ impl<'a> Exec<'a> {
             }
             ExprKind::Index(obj, idx) => {
                 let base = self.eval(obj)?;
+                if let Value::Map(m) = &base {
+                    let k = self.eval(idx)?;
+                    return map_insert(m, key_of(&k, line)?, v, line);
+                }
                 let i = self.num(idx)?;
                 match base {
                     Value::List(l) => {
@@ -565,6 +657,14 @@ impl<'a> Exec<'a> {
                 }
                 Value::list(out)
             }
+            ExprKind::Map(pairs) => {
+                let mut out = BTreeMap::new();
+                for (k, v) in pairs {
+                    let k = self.eval(k)?;
+                    out.insert(key_of(&k, line)?, self.eval(v)?);
+                }
+                Value::Map(Rc::new(RefCell::new(out)))
+            }
             ExprKind::Neg(inner) => match self.eval(inner)? {
                 Value::Num(n) => Value::Num(-n),
                 Value::Vec3(v) => Value::Vec3([-v[0], -v[1], -v[2]]),
@@ -589,11 +689,20 @@ impl<'a> Exec<'a> {
             }
             ExprKind::Index(obj, idx) => {
                 let base = self.eval(obj)?;
+                if let Value::Map(m) = &base {
+                    // a missing key reads as nil, so `if m["k"] == nil` works
+                    let k = self.eval(idx)?;
+                    return Ok(m.borrow().get(&key_of(&k, line)?).cloned().unwrap_or(Value::Nil));
+                }
                 let i = self.num(idx)?;
                 match base {
                     Value::List(l) => {
                         let l = l.borrow();
                         l[index(i, l.len(), line)?].clone()
+                    }
+                    Value::Text(s) => {
+                        let chars: Vec<char> = s.chars().collect();
+                        Value::text(chars[index(i, chars.len(), line)?].to_string())
                     }
                     other => {
                         return Err(CryoError::new(
@@ -632,6 +741,7 @@ impl<'a> Exec<'a> {
             (Value::Entity(_) | Value::Object(_), _) => {
                 self.host.get_member(base, name).map_err(|m| CryoError::new(line, m))
             }
+            (Value::Map(m), _) => Ok(m.borrow().get(name).cloned().unwrap_or(Value::Nil)),
             (Value::Nil, _) => Err(CryoError::new(
                 line,
                 format!("tried to read `{name}` of `nil` (does the entity exist?)"),
@@ -663,13 +773,78 @@ impl<'a> Exec<'a> {
                     let n = l.len();
                     Ok(l.remove(index(*i, n, line)?))
                 }
+                ("insert", [Value::Num(i), v]) => {
+                    let mut l = l.borrow_mut();
+                    let n = l.len();
+                    let at = if *i == n as f64 { n } else { index(*i, n, line)? };
+                    l.insert(at, v.clone());
+                    Ok(Value::Nil)
+                }
+                ("index_of", [v]) => Ok(Value::Num(
+                    l.borrow().iter().position(|x| x == v).map(|i| i as f64).unwrap_or(-1.0),
+                )),
+                ("first", []) => Ok(l.borrow().first().cloned().unwrap_or(Value::Nil)),
+                ("last", []) => Ok(l.borrow().last().cloned().unwrap_or(Value::Nil)),
+                ("reverse", []) => {
+                    l.borrow_mut().reverse();
+                    Ok(Value::Nil)
+                }
+                ("sort", []) => {
+                    let mut l = l.borrow_mut();
+                    if l.iter().all(|v| matches!(v, Value::Num(_))) {
+                        l.sort_by(|a, b| match (a, b) {
+                            (Value::Num(a), Value::Num(b)) => a.total_cmp(b),
+                            _ => std::cmp::Ordering::Equal,
+                        });
+                    } else if l.iter().all(|v| matches!(v, Value::Text(_))) {
+                        l.sort_by_key(|a| a.to_string());
+                    } else {
+                        return Err(err("`sort` needs a list of only numbers or only texts".into()));
+                    }
+                    Ok(Value::Nil)
+                }
+                ("join", [Value::Text(sep)]) => {
+                    let parts: Vec<String> = l.borrow().iter().map(|v| v.to_string()).collect();
+                    Ok(Value::text(parts.join(sep)))
+                }
+                ("copy", []) => Ok(Value::list(l.borrow().clone())),
                 _ => Err(err(format!("`list` has no method `{name}` with these arguments"))),
+            },
+            Value::Map(m) => match (name, args) {
+                ("len", []) => Ok(Value::Num(m.borrow().len() as f64)),
+                ("has", [k]) => Ok(Value::Bool(m.borrow().contains_key(&key_of(k, line)?))),
+                ("get", [k, default]) => {
+                    Ok(m.borrow().get(&key_of(k, line)?).cloned().unwrap_or_else(|| default.clone()))
+                }
+                ("remove", [k]) => Ok(m.borrow_mut().remove(&key_of(k, line)?).unwrap_or(Value::Nil)),
+                ("keys", []) => Ok(Value::list(m.borrow().keys().map(Value::text).collect())),
+                ("values", []) => Ok(Value::list(m.borrow().values().cloned().collect())),
+                ("clear", []) => {
+                    m.borrow_mut().clear();
+                    Ok(Value::Nil)
+                }
+                ("copy", []) => Ok(Value::Map(Rc::new(RefCell::new(m.borrow().clone())))),
+                _ => Err(err(format!("`map` has no method `{name}` with these arguments"))),
             },
             Value::Text(s) => match (name, args) {
                 ("len", []) => Ok(Value::Num(s.chars().count() as f64)),
                 ("upper", []) => Ok(Value::text(s.to_uppercase())),
                 ("lower", []) => Ok(Value::text(s.to_lowercase())),
                 ("contains", [Value::Text(t)]) => Ok(Value::Bool(s.contains(&**t))),
+                ("starts_with", [Value::Text(t)]) => Ok(Value::Bool(s.starts_with(&**t))),
+                ("ends_with", [Value::Text(t)]) => Ok(Value::Bool(s.ends_with(&**t))),
+                ("trim", []) => Ok(Value::text(s.trim())),
+                ("replace", [Value::Text(a), Value::Text(b)]) => Ok(Value::text(s.replace(&**a, b))),
+                ("split", [Value::Text(sep)]) if !sep.is_empty() => {
+                    Ok(Value::list(s.split(&**sep).map(Value::text).collect()))
+                }
+                ("find", [Value::Text(t)]) => Ok(Value::Num(match s.find(&**t) {
+                    Some(byte) => s[..byte].chars().count() as f64,
+                    None => -1.0,
+                })),
+                ("sub", [Value::Num(from), Value::Num(count)]) if *from >= 0.0 && *count >= 0.0 => {
+                    Ok(Value::text(s.chars().skip(*from as usize).take(*count as usize).collect::<String>()))
+                }
                 _ => Err(err(format!("`text` has no method `{name}` with these arguments"))),
             },
             Value::Vec3(v) => match (name, args) {
@@ -758,6 +933,68 @@ impl<'a> Exec<'a> {
             },
             ("num", [Num(n)]) => Num(*n),
             ("len", [List(l)]) => Num(l.borrow().len() as f64),
+            ("len", [Map(m)]) => Num(m.borrow().len() as f64),
+            ("map", []) => Map(Rc::new(RefCell::new(BTreeMap::new()))),
+            ("range", [Num(n)]) if *n >= 0.0 && *n <= 100_000.0 => {
+                Value::list((0..n.round() as i64).map(|i| Num(i as f64)).collect())
+            }
+            ("format", [Text(pattern), rest @ ..]) => {
+                // each `{}` is replaced by the next argument
+                let mut out = String::new();
+                let mut next = rest.iter();
+                let mut parts = pattern.split("{}").peekable();
+                while let Some(part) = parts.next() {
+                    out.push_str(part);
+                    if parts.peek().is_some() {
+                        match next.next() {
+                            Some(v) => out.push_str(&v.to_string()),
+                            None => {
+                                return Err(CryoError::new(
+                                    line,
+                                    "`format` has more `{}` than values",
+                                ))
+                            }
+                        }
+                    }
+                }
+                Value::text(out)
+            }
+            ("type", [v]) => Value::text(v.type_name()),
+            ("move_toward", [Num(a), Num(b), Num(step)]) => {
+                Num(if (b - a).abs() <= step.abs() { *b } else { a + (b - a).signum() * step.abs() })
+            }
+            ("move_toward", [Vec3(a), Vec3(b), Num(step)]) => {
+                let d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+                let l = vlen(d);
+                if l <= step.abs() || l == 0.0 {
+                    Vec3(*b)
+                } else {
+                    let k = step.abs() / l;
+                    Vec3([a[0] + d[0] * k, a[1] + d[1] * k, a[2] + d[2] * k])
+                }
+            }
+            ("smoothstep", [Num(t)]) => {
+                let t = t.clamp(0.0, 1.0);
+                Num(t * t * (3.0 - 2.0 * t))
+            }
+            ("deg", [Num(r)]) => Num(r.to_degrees()),
+            ("rad", [Num(d)]) => Num(d.to_radians()),
+            ("wrap", [Num(x), Num(lo), Num(hi)]) if hi > lo => Num(lo + (x - lo).rem_euclid(hi - lo)),
+            ("random_int", [Num(a), Num(b)]) if b >= a => {
+                let span = (b.floor() - a.ceil() + 1.0).max(1.0);
+                Num(a.ceil() + (self.random() * span).floor().min(span - 1.0))
+            }
+            ("choose", [List(l)]) => {
+                let l = l.borrow();
+                if l.is_empty() {
+                    Nil
+                } else {
+                    let i = ((self.random() * l.len() as f64) as usize).min(l.len() - 1);
+                    l[i].clone()
+                }
+            }
+            ("current_state", []) => Value::text(self.inst.state_name()),
+            ("state_time", []) => Num(self.inst.state_time),
             ("len", [Text(s)]) => Num(s.chars().count() as f64),
             _ if BUILTINS.contains(&name) && name != "log" => return Err(bad()),
             // 3) engine functions
@@ -765,6 +1002,27 @@ impl<'a> Exec<'a> {
         };
         Ok(v)
     }
+}
+
+/// Map keys are texts; numbers are accepted and converted.
+fn key_of(v: &Value, line: usize) -> R<String> {
+    match v {
+        Value::Text(s) => Ok(s.to_string()),
+        Value::Num(n) => Ok(fmt_num(*n)),
+        other => Err(CryoError::new(
+            line,
+            format!("a map key must be `text` or `num`, but got `{}`", other.type_name()),
+        )),
+    }
+}
+
+fn map_insert(m: &Rc<RefCell<BTreeMap<String, Value>>>, key: String, v: Value, line: usize) -> R<()> {
+    let mut m = m.borrow_mut();
+    if m.len() >= 100_000 && !m.contains_key(&key) {
+        return Err(CryoError::new(line, "map is too large (100000 entries)"));
+    }
+    m.insert(key, v);
+    Ok(())
 }
 
 fn index(i: f64, len: usize, line: usize) -> R<usize> {

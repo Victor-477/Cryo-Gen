@@ -208,7 +208,7 @@ pub fn perspective(fov_y: f32, aspect: f32, near: f32, far: f32) -> Mat4 {
     ])
 }
 
-fn project(vp: Mat4, rect: Rect, p: Vec3) -> Option<Pos2> {
+pub(crate) fn project(vp: Mat4, rect: Rect, p: Vec3) -> Option<Pos2> {
     let clip = vp * p.extend(1.0);
     if clip.w <= 0.02 {
         return None;
@@ -661,8 +661,14 @@ impl State {
         // ---------- gizmo ----------
         let mut handles: Option<(Vec3, f32, [Option<(Pos2, Pos2)>; 3])> = None;
         let mut hovered_axis: Option<usize> = None;
-        if let Some(id) = self.selected.filter(|id| self.scene.get(*id).is_some()) {
-            let origin = self.scene.world_matrix(id).w_axis.truncate();
+        // while editing a mesh the gizmo sits on the selected vertices/faces instead of the entity
+        let editing = self.mesh_edit.is_some();
+        let gizmo_origin = if editing {
+            self.mesh_gizmo_origin()
+        } else {
+            self.selected.filter(|id| self.scene.get(*id).is_some()).map(|id| self.scene.world_matrix(id).w_axis.truncate())
+        };
+        if let Some(origin) = gizmo_origin {
             let scale_ref = if self.cam.ortho { self.cam.dist } else { (origin - self.cam.pos).length() };
             let size = scale_ref * (self.cam.fov.to_radians() * 0.5).tan() * 0.28;
             let mut segs = [None; 3];
@@ -696,7 +702,22 @@ impl State {
         if resp.drag_started_by(PointerButton::Primary) && !alt {
             self.drag = hovered_axis.map(|axis| GizmoDrag { axis });
         }
-        if resp.dragged_by(PointerButton::Primary) {
+        if editing && resp.drag_started_by(PointerButton::Primary) && self.drag.is_some() {
+            self.mesh_drag_start();
+        }
+        if editing && resp.dragged_by(PointerButton::Primary) {
+            if let (Some(drag), Some((_, size, segs))) = (&self.drag, &handles) {
+                if let Some((a, b)) = segs[drag.axis] {
+                    let dir = b - a;
+                    let len = dir.length();
+                    if len > 1.0 {
+                        let amount = delta.dot(dir / len) / len * size;
+                        let (axis, size) = (AXES[drag.axis], *size);
+                        self.mesh_drag(axis, amount, size);
+                    }
+                }
+            }
+        } else if resp.dragged_by(PointerButton::Primary) {
             if let (Some(drag), Some((_, size, segs)), Some(id)) = (&self.drag, &handles, self.selected) {
                 if let Some((a, b)) = segs[drag.axis] {
                     let dir = b - a;
@@ -719,6 +740,9 @@ impl State {
                 }
             }
         }
+        if editing && resp.drag_stopped() {
+            self.drag = None;
+        }
         if resp.drag_stopped() {
             if let (Some(_), Some(id)) = (self.drag.take(), self.selected) {
                 // rounds to avoid numeric noise in the saved scene
@@ -732,13 +756,24 @@ impl State {
         }
 
         // ---------- click selection (double-click also frames) ----------
-        if resp.clicked() && hovered_axis.is_none() && widget_hover.is_none() {
+        if editing {
+            if resp.clicked() && hovered_axis.is_none() && widget_hover.is_none() {
+                if let Some(p) = resp.interact_pointer_pos() {
+                    let (o, d) = screen_ray(vp, rect, p);
+                    let add = ctx.input(|i| i.modifiers.shift || i.modifiers.command);
+                    self.mesh_click(o, d, p, vp, rect, add);
+                }
+            }
+            if resp.hovered() {
+                self.mesh_edit_keys(&ctx);
+            }
+        } else if resp.clicked() && hovered_axis.is_none() && widget_hover.is_none() {
             if let Some(p) = resp.interact_pointer_pos() {
                 let (o, d) = screen_ray(vp, rect, p);
                 self.selected = self.pick(o, d, if self.cam.ortho { f32::NEG_INFINITY } else { 0.0 });
             }
         }
-        if resp.double_clicked() && self.selected.is_some() && widget_hover.is_none() {
+        if !editing && resp.double_clicked() && self.selected.is_some() && widget_hover.is_none() {
             self.focus_selected();
         }
 
@@ -774,10 +809,12 @@ impl State {
                 }
             }
         }
+        self.mesh_edit_lines(&mut frame);
         self.paint_3d(ui, rect, frame);
 
         // ---------- 2D overlays ----------
         let painter = ui.painter_at(rect);
+        self.mesh_edit_overlay(&painter, vp, rect);
         for e in &self.scene.entities {
             let icon = if e.light.is_some() {
                 "☀"
@@ -905,6 +942,8 @@ impl State {
             painter.rect_stroke(rect.shrink(1.0), 0.0, Stroke::new(2.0, ACCENT), egui::StrokeKind::Inside);
         }
 
+        self.mesh_edit_toolbar(ui, rect);
+
         // camera menu (top-left corner)
         let bar = Rect::from_min_size(rect.left_top() + egui::vec2(8.0, 8.0), egui::vec2(260.0, 24.0));
         let mut child = ui.new_child(UiBuilder::new().max_rect(bar).layout(egui::Layout::left_to_right(egui::Align::Center)));
@@ -922,7 +961,13 @@ impl State {
         ui.allocate_rect(rect, Sense::click());
         let painter = ui.painter_at(rect);
 
-        let Some(cam_id) = self.scene.main_camera() else {
+        // a cutscene or a script may have switched to another camera
+        let chosen = self
+            .play
+            .as_ref()
+            .and_then(|p| p.rt.active_camera)
+            .filter(|id| self.scene.get(*id).map(|e| e.camera.is_some()).unwrap_or(false));
+        let Some(cam_id) = chosen.or(self.scene.main_camera()) else {
             painter.rect_filled(rect, 0.0, Color32::from_rgb(12, 12, 14));
             painter.text(
                 rect.center(),
@@ -953,6 +998,38 @@ impl State {
                     let font = FontId::proportional(20.0);
                     painter.text(pos + egui::vec2(1.5, 1.5), Align2::LEFT_TOP, &play.rt.hud, font.clone(), Color32::BLACK);
                     painter.text(pos, Align2::LEFT_TOP, &play.rt.hud, font, Color32::WHITE);
+                }
+                if let Some(q) = &play.rt.qte {
+                    draw_qte(&painter, rect, q);
+                } else if let Some((success, at)) = play.rt.qte_result {
+                    let age = (play.rt.real_time - at) as f32;
+                    if age < 0.7 {
+                        let alpha = ((1.0 - age / 0.7) * 255.0) as u8;
+                        let (text, c) = if success {
+                            (tr!("GOOD!", "BOA!"), Color32::from_rgba_unmultiplied(120, 235, 140, alpha))
+                        } else {
+                            (tr!("MISSED", "ERROU"), Color32::from_rgba_unmultiplied(255, 110, 110, alpha))
+                        };
+                        let pos = Pos2::new(rect.center().x, rect.top() + rect.height() * 0.68 - age * 30.0);
+                        painter.text(pos + egui::vec2(2.0, 2.0), Align2::CENTER_CENTER, &text, FontId::proportional(30.0), Color32::from_black_alpha(alpha));
+                        painter.text(pos, Align2::CENTER_CENTER, &text, FontId::proportional(30.0), c);
+                    }
+                }
+                if play.rt.in_cutscene(&self.scene) {
+                    // cinema bars
+                    let bar = rect.height() * 0.09;
+                    painter.rect_filled(Rect::from_min_max(rect.left_top(), Pos2::new(rect.right(), rect.top() + bar)), 0.0, Color32::BLACK);
+                    painter.rect_filled(Rect::from_min_max(Pos2::new(rect.left(), rect.bottom() - bar), rect.right_bottom()), 0.0, Color32::BLACK);
+                    // no skipping while a quick time event waits for an answer
+                    if play.rt.qte.is_none() {
+                    painter.text(
+                        rect.right_bottom() + egui::vec2(-14.0, -bar * 0.5),
+                        Align2::RIGHT_CENTER,
+                        tr!("Enter: skip", "Enter: pular"),
+                        FontId::proportional(13.0),
+                        Color32::from_white_alpha(170),
+                    );
+                    }
                 }
                 if play.paused {
                     painter.text(
@@ -986,5 +1063,89 @@ impl State {
                 );
             }
         }
+    }
+}
+
+/// The quick time event prompt: key cap, a ring that empties as time runs out and the progress.
+fn draw_qte(painter: &egui::Painter, rect: Rect, q: &crate::qte::Qte) {
+    use crate::qte::{key_label, QteKind};
+    let center = Pos2::new(rect.center().x, rect.top() + rect.height() * 0.68);
+    let left = q.time_left();
+    let urgent = left < 0.3;
+    let accent = if urgent { Color32::from_rgb(255, 110, 110) } else { Color32::from_rgb(120, 200, 255) };
+
+    let cap = |center: Pos2, key: &str, size: f32, fill: Color32, text: Color32| {
+        let label = key_label(key);
+        let w = (size * 0.62 * label.chars().count().max(1) as f32).max(size);
+        let r = Rect::from_center_size(center, egui::vec2(w + 14.0, size + 14.0));
+        painter.rect_filled(r.translate(egui::vec2(0.0, 4.0)), 8.0, Color32::from_black_alpha(150));
+        painter.rect_filled(r, 8.0, fill);
+        painter.text(center, Align2::CENTER_CENTER, label, FontId::proportional(size * 0.72), text);
+        r
+    };
+
+    if q.kind == QteKind::Sequence {
+        let n = q.keys.len() as f32;
+        let gap = 62.0;
+        for (i, key) in q.keys.iter().enumerate() {
+            let x = center.x + (i as f32 - (n - 1.0) / 2.0) * gap;
+            let done = (i as f32) < q.progress;
+            let current = i as f32 == q.progress.floor();
+            let fill = if done {
+                Color32::from_rgb(110, 210, 130)
+            } else if current {
+                Color32::WHITE
+            } else {
+                Color32::from_gray(110)
+            };
+            cap(Pos2::new(x, center.y), key, if current { 34.0 } else { 28.0 }, fill, Color32::from_gray(20));
+        }
+    } else {
+        // time ring
+        let radius = 46.0;
+        painter.circle_filled(center, radius + 7.0, Color32::from_black_alpha(130));
+        painter.circle_stroke(center, radius, egui::Stroke::new(5.0, Color32::from_white_alpha(40)));
+        let steps = 48;
+        let end = (steps as f32 * left).ceil() as usize;
+        let pts: Vec<Pos2> = (0..=end)
+            .map(|i| {
+                let a = -std::f32::consts::FRAC_PI_2 - (i as f32 / steps as f32).min(left) * std::f32::consts::TAU;
+                center + egui::vec2(a.cos(), a.sin()) * radius
+            })
+            .collect();
+        if pts.len() > 1 {
+            painter.add(egui::Shape::line(pts, egui::Stroke::new(5.0, accent)));
+        }
+        cap(center, q.current_key(), 36.0, Color32::WHITE, Color32::from_gray(20));
+    }
+
+    // time bar for sequences, progress bar for mash and hold
+    let bar = |y: f32, fraction: f32, color: Color32| {
+        let w = 180.0;
+        let r = Rect::from_min_size(Pos2::new(center.x - w / 2.0, y), egui::vec2(w, 8.0));
+        painter.rect_filled(r, 4.0, Color32::from_black_alpha(160));
+        let mut f = r;
+        f.set_width(w * fraction.clamp(0.0, 1.0));
+        painter.rect_filled(f, 4.0, color);
+    };
+    let hint = match q.kind {
+        QteKind::Press => String::new(),
+        QteKind::Mash => {
+            bar(center.y + 64.0, q.fraction(), Color32::from_rgb(110, 210, 130));
+            tr!("Press repeatedly!", "Aperte várias vezes!")
+        }
+        QteKind::Hold => {
+            bar(center.y + 64.0, q.fraction(), Color32::from_rgb(110, 210, 130));
+            tr!("Hold!", "Segure!")
+        }
+        QteKind::Sequence => {
+            bar(center.y + 40.0, left, accent);
+            String::new()
+        }
+    };
+    if !hint.is_empty() {
+        let pos = Pos2::new(center.x, center.y + 88.0);
+        painter.text(pos + egui::vec2(1.0, 1.0), Align2::CENTER_CENTER, &hint, FontId::proportional(15.0), Color32::BLACK);
+        painter.text(pos, Align2::CENTER_CENTER, &hint, FontId::proportional(15.0), Color32::WHITE);
     }
 }

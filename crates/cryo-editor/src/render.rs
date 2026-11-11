@@ -63,7 +63,7 @@ impl RenderFrame {
         let mut items = vec![];
         let mut dir_lights = vec![];
         let mut locals = vec![];
-        let mut first_dir_shadows = false;
+        let mut first_dir_shadows = None;
         for e in &scene.entities {
             if !scene.is_visible(e.id) {
                 continue;
@@ -71,7 +71,7 @@ impl RenderFrame {
             let world = scene.world_matrix(e.id);
             if let Some(m) = &e.mesh {
                 let mesh = match &m.model {
-                    Some(path) => assets.model(path).map(MeshRef::Model),
+                    Some(path) => assets.model(path).map(|base| MeshRef::Model(assets.posed(e.id, &base, m))),
                     None => Some(MeshRef::Shape(m.shape)),
                 };
                 // model that failed to load: show a magenta cube instead
@@ -96,11 +96,11 @@ impl RenderFrame {
                 match l.kind {
                     LightKind::Directional if dir_lights.len() < MAX_DIR => {
                         if dir_lights.is_empty() {
-                            first_dir_shadows = l.shadows;
+                            first_dir_shadows = l.shadows.then_some(l.shadow_distance.clamp(8.0, 150.0));
                         }
                         dir_lights.push((dir, c));
                     }
-                    LightKind::Point | LightKind::Spot if locals.len() < MAX_POINT => {
+                    LightKind::Point | LightKind::Spot => {
                         locals.push(LocalLight {
                             pos: world.w_axis.truncate(),
                             color: c,
@@ -119,7 +119,15 @@ impl RenderFrame {
         }
         // shadow area centred a little ahead of the camera
         let forward = view.inverse().transform_vector3(Vec3::NEG_Z).normalize_or_zero();
-        let shadow = first_dir_shadows.then_some((cam_pos + forward * 14.0, 26.0));
+        let shadow = first_dir_shadows.map(|reach| (cam_pos + forward * reach * 0.54, reach));
+        // more lights than the shader takes: keep the ones that matter most to this view
+        if locals.len() > MAX_POINT {
+            locals.sort_by(|a, b| {
+                let score = |l: &LocalLight| (l.pos.distance(cam_pos) - l.range).max(0.0);
+                score(a).total_cmp(&score(b))
+            });
+            locals.truncate(MAX_POINT);
+        }
         RenderFrame {
             view,
             proj,
@@ -213,6 +221,7 @@ pub fn ortho(half_w: f32, half_h: f32, near: f32, far: f32) -> Mat4 {
 
 struct GpuMesh {
     vao: glow::VertexArray,
+    buffers: [glow::Buffer; 2],
     count: i32,
     color: [f32; 3],
     texture: Option<Arc<TextureData>>,
@@ -225,6 +234,7 @@ pub struct Renderer {
     sky_prog: glow::Program,
     shapes: HashMap<Shape, GpuMesh>,
     models: HashMap<u64, Vec<GpuMesh>>,
+    model_version: HashMap<u64, u64>,
     textures: HashMap<u64, glow::Texture>,
     line_vao: glow::VertexArray,
     line_vbo: glow::Buffer,
@@ -234,6 +244,10 @@ pub struct Renderer {
     /// 1×1 white texture bound when a mesh has no texture (some drivers, notably on macOS,
     /// complain about a sampler with nothing bound even if it is never sampled).
     white_tex: Option<glow::Texture>,
+    /// Frame counter and the frame each model was last drawn in, to free models no longer used
+    /// (mesh editing creates a new one on every change).
+    frame_no: u64,
+    model_used: HashMap<u64, u64>,
 }
 
 const MESH_VS: &str = r#"
@@ -434,7 +448,11 @@ unsafe fn compile(gl: &glow::Context, vs: &str, fs: &str, attribs: &[&str]) -> R
     Ok(program)
 }
 
-unsafe fn upload_mesh(gl: &glow::Context, verts: &[f32], idx: &[u32]) -> Result<(glow::VertexArray, i32), String> {
+unsafe fn upload_mesh(
+    gl: &glow::Context,
+    verts: &[f32],
+    idx: &[u32],
+) -> Result<(glow::VertexArray, [glow::Buffer; 2], i32), String> {
     let vao = gl.create_vertex_array()?;
     gl.bind_vertex_array(Some(vao));
     let vbo = gl.create_buffer()?;
@@ -449,7 +467,7 @@ unsafe fn upload_mesh(gl: &glow::Context, verts: &[f32], idx: &[u32]) -> Result<
     gl.vertex_attrib_pointer_f32(1, 3, glow::FLOAT, false, 32, 12);
     gl.enable_vertex_attrib_array(2);
     gl.vertex_attrib_pointer_f32(2, 2, glow::FLOAT, false, 32, 24);
-    Ok((vao, idx.len() as i32))
+    Ok((vao, [vbo, ebo], idx.len() as i32))
 }
 
 impl Renderer {
@@ -463,8 +481,8 @@ impl Renderer {
             let mut shapes = HashMap::new();
             for shape in Shape::ALL {
                 let (verts, idx) = build_mesh(shape);
-                let (vao, count) = upload_mesh(gl, &verts, &idx)?;
-                shapes.insert(shape, GpuMesh { vao, count, color: [1.0; 3], texture: None });
+                let (vao, buffers, count) = upload_mesh(gl, &verts, &idx)?;
+                shapes.insert(shape, GpuMesh { vao, buffers, count, color: [1.0; 3], texture: None });
             }
 
             let line_vao = gl.create_vertex_array()?;
@@ -491,6 +509,7 @@ impl Renderer {
                 sky_prog,
                 shapes,
                 models: HashMap::new(),
+                model_version: HashMap::new(),
                 textures: HashMap::new(),
                 line_vao,
                 line_vbo,
@@ -498,6 +517,8 @@ impl Renderer {
                 shadow_fbo,
                 shadow_tex,
                 white_tex: None,
+                frame_no: 0,
+                model_used: HashMap::new(),
             })
         }
     }
@@ -571,12 +592,21 @@ impl Renderer {
 
     unsafe fn ensure_model(&mut self, gl: &glow::Context, m: &Arc<ModelData>) {
         if self.models.contains_key(&m.id) {
-            return;
+            if self.model_version.get(&m.id) == Some(&m.version) {
+                return;
+            }
+            // an animated model moved: replace its vertices
+            for part in self.models.remove(&m.id).unwrap_or_default() {
+                gl.delete_vertex_array(part.vao);
+                gl.delete_buffer(part.buffers[0]);
+                gl.delete_buffer(part.buffers[1]);
+            }
         }
+        self.model_version.insert(m.id, m.version);
         let mut parts = vec![];
         for s in &m.subs {
-            if let Ok((vao, count)) = upload_mesh(gl, &s.vertices, &s.indices) {
-                parts.push(GpuMesh { vao, count, color: s.color, texture: s.texture.clone() });
+            if let Ok((vao, buffers, count)) = upload_mesh(gl, &s.vertices, &s.indices) {
+                parts.push(GpuMesh { vao, buffers, count, color: s.color, texture: s.texture.clone() });
             }
         }
         self.models.insert(m.id, parts);
@@ -587,8 +617,10 @@ impl Renderer {
         let view_proj = f.proj * f.view;
         unsafe {
             // uploads to the GPU whatever has not been uploaded yet
+            self.frame_no += 1;
             for item in &f.items {
                 if let MeshRef::Model(m) = &item.mesh {
+                    self.model_used.insert(m.id, self.frame_no);
                     self.ensure_model(gl, m);
                     for s in &m.subs {
                         if let Some(t) = &s.texture {
@@ -598,6 +630,22 @@ impl Renderer {
                 }
                 if let Some(t) = &item.texture {
                     self.ensure_texture(gl, t);
+                }
+            }
+
+            // every few seconds, free models that have not been drawn for a while
+            if self.frame_no % 240 == 0 {
+                let now = self.frame_no;
+                let stale: Vec<u64> =
+                    self.model_used.iter().filter(|(_, used)| now - **used > 600).map(|(id, _)| *id).collect();
+                for id in stale {
+                    self.model_used.remove(&id);
+                    self.model_version.remove(&id);
+                    for part in self.models.remove(&id).unwrap_or_default() {
+                        gl.delete_vertex_array(part.vao);
+                        gl.delete_buffer(part.buffers[0]);
+                        gl.delete_buffer(part.buffers[1]);
+                    }
                 }
             }
 
