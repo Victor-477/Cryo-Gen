@@ -367,6 +367,7 @@ uniform vec3 u_ambient;
 uniform float u_fog;
 uniform vec3 u_fog_color;
 uniform float u_relief;
+uniform vec3 u_sky_top;
 uniform int u_ndir;
 uniform vec3 u_ldir[4];
 uniform vec3 u_ldir_color[4];
@@ -454,7 +455,21 @@ void main() {
         }
         col += shade(n, v, l, u_pcolor[i] * att, base);
     }
-    col = col / (col + vec3(0.6)) * 1.6; // soft tone mapping
+    if (u_relief > 0.0) {
+        // glossy surfaces mirror the sky, most of all at grazing angles (Fresnel);
+        // the brightness of the texture decides how polished each spot is
+        vec3 r = reflect(-v, n);
+        vec3 env = r.y >= 0.0 ? mix(u_fog_color, u_sky_top, clamp(r.y * 1.5, 0.0, 1.0))
+                              : u_fog_color * mix(1.0, 0.2, clamp(-r.y * 3.0, 0.0, 1.0));
+        float fres = pow(1.0 - max(dot(n, v), 0.0), 5.0);
+        float gloss = u_shine * (u_has_tex == 1 ? 0.35 + 0.65 * dot(albedo, vec3(0.333)) / max(dot(u_color, vec3(0.333)), 0.05) : 1.0);
+        col += pow(env, vec3(2.2)) * (0.05 + 0.95 * fres) * clamp(gloss, 0.0, 1.0) * 2.2;
+        // filmic tone curve: deep shadows, highlights that roll off instead of clipping
+        col *= 1.5;
+        col = clamp((col * (2.51 * col + 0.03)) / (col * (2.43 * col + 0.59) + 0.14), 0.0, 1.0);
+    } else {
+        col = col / (col + vec3(0.6)) * 1.6; // soft tone mapping
+    }
     col = pow(clamp(col, 0.0, 1.0), vec3(1.0 / 2.2));
     float fog_d = length(u_cam - v_world) * u_fog;
     col = mix(col, u_fog_color, 1.0 - exp(-fog_d * fog_d));
@@ -875,6 +890,7 @@ impl Renderer {
             gl.uniform_3_f32_slice(loc(p, "u_ambient").as_ref(), &f.ambient);
             gl.uniform_1_f32(loc(p, "u_fog").as_ref(), f.fog.clamp(0.0, 1.0));
             gl.uniform_1_f32(loc(p, "u_relief").as_ref(), f.relief.clamp(0.0, 4.0));
+            gl.uniform_3_f32_slice(loc(p, "u_sky_top").as_ref(), &f.sky_top);
             gl.uniform_3_f32_slice(loc(p, "u_fog_color").as_ref(), &f.sky_horizon);
             gl.uniform_1_i32(loc(p, "u_ndir").as_ref(), f.dir_lights.len() as i32);
             for (i, (dir, color)) in f.dir_lights.iter().enumerate() {

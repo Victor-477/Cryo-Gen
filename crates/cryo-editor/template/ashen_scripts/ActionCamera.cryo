@@ -43,6 +43,12 @@ script ActionCamera {
         let look = vec3(-sin(a) * cos(p), sin(p), -cos(a) * cos(p))
         var want = hero.position + vec3(0, height, 0) - look * distance
         want.y = max(want.y, 0.5)
+        // walls stop the camera: it slides in towards the knight instead of passing through
+        let pivot = hero.position + vec3(0, height, 0)
+        let wall = scene.raycast(pivot, want - pivot, distance + 0.4, hero)
+        if wall != nil and wall.entity.tag != "enemy" {
+            want = pivot + normalize(want - pivot) * max(wall.distance - 0.4, 0.7)
+        }
         self.position = lerp(self.position, want, min(1, dt * 14))
 
         shake = max(0, shake - dt * 1.8)

@@ -109,6 +109,16 @@ script Drone {
         } else {
             glide(side * speed * 0.6 * dt)
         }
+        // keep clear of the other drones
+        for other in scene.tagged("enemy") {
+            if other != self {
+                var away = self.position - other.position
+                away.y = 0
+                if length(away) < 2.6 and length(away) > 0.01 {
+                    glide(normalize(away) * 2.5 * dt)
+                }
+            }
+        }
         cool -= dt
         if cool <= 0 and can_fire() {
             cool = fire_every

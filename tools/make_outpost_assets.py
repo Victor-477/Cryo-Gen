@@ -160,19 +160,24 @@ def drone(heavy):
     return m
 
 def rifle():
-    """The player's carbine, modelled pointing along -Z with the grip at the origin."""
+    """The player's carbine, pointing along -Z with the grip at the origin. Rounded sections throughout."""
     m = Mesh()
-    m.box("gun_mid", (0, 0.06, -0.12), (0.055, 0.1, 0.5))                 # receiver
-    m.box("gun_mid", (0, 0.125, -0.1), (0.04, 0.03, 0.3))                 # top rail
-    m.tube("gun_dark", [(0, 0.07, -0.36), (0, 0.07, -0.78)], 0.016, sides=10) # barrel
-    m.tube("gun_mid", [(0, 0.07, -0.36), (0, 0.07, -0.6)], 0.034, sides=10)   # handguard
-    m.tube("gun_dark", [(0, 0.07, -0.74), (0, 0.07, -0.82)], 0.024, sides=8)  # muzzle brake
-    m.box("gun_dark", (0, -0.06, 0.02), (0.045, 0.14, 0.06), r=(18, 0, 0))    # grip
-    m.box("gun_tan", (0, -0.1, -0.16), (0.04, 0.2, 0.075), r=(-10, 0, 0))     # magazine
-    m.box("gun_mid", (0, 0.05, 0.22), (0.045, 0.09, 0.22))                # stock
-    m.box("gun_dark", (0, 0.04, 0.34), (0.05, 0.13, 0.03))
-    m.box("gun_mid", (0, 0.165, -0.06), (0.035, 0.05, 0.1))               # sight body
-    m.box("cyan", (0, 0.17, -0.005), (0.022, 0.03, 0.004))                 # sight glass
+    z = lambda a, b, y=0.06: [(0, y, a), (0, y, b)]
+    m.tube("gun_mid", [(0, 0.06, 0.12), (0, 0.062, 0.0), (0, 0.062, -0.3), (0, 0.065, -0.36)], [0.03, 0.036, 0.036, 0.03], sides=12, flatten=1.55)   # receiver
+    m.tube("gun_dark", z(-0.36, -0.62, 0.068), 0.035, sides=14)                       # handguard
+    for k in range(5):                                                               # cooling slots
+        m.tube("gun_mid", z(-0.39 - k * 0.05, -0.41 - k * 0.05, 0.068), 0.037, sides=14)
+    m.tube("gun_mid", z(-0.62, -0.8, 0.068), 0.014, sides=10)                        # barrel
+    m.tube("gun_dark", [(0, 0.068, -0.76), (0, 0.068, -0.8), (0, 0.068, -0.86)], [0.02, 0.026, 0.022], sides=10)   # muzzle brake
+    m.box("gun_dark", (0, 0.118, -0.14), (0.03, 0.014, 0.46))                         # top rail
+    m.tube("gun_dark", [(0, 0.02, 0.03), (0, -0.05, 0.05), (0, -0.12, 0.085)], [0.024, 0.023, 0.021], sides=10, flatten=1.35)   # grip
+    m.tube("gun_tan", [(0, 0.02, -0.15), (0, -0.08, -0.165), (0, -0.19, -0.2)], [0.021, 0.021, 0.02], sides=10, flatten=1.9)   # curved magazine
+    m.tube("gun_dark", [(0, 0.012, -0.03), (0, -0.012, -0.06), (0, 0.012, -0.1)], 0.006, sides=5)                              # trigger guard
+    m.tube("gun_mid", [(0, 0.06, 0.12), (0, 0.055, 0.24), (0, 0.04, 0.36)], [0.022, 0.026, 0.036], sides=10, flatten=1.7)      # stock
+    m.tube("gun_dark", z(0.36, 0.385, 0.04), 0.037, sides=10, flatten=1.7)            # butt pad
+    m.tube("gun_dark", z(-0.02, -0.13, 0.16), 0.024, sides=12)                        # sight tube
+    m.tube("gun_dark", z(-0.05, -0.1, 0.132), 0.012, sides=6)                         # sight mount
+    m.box("cyan", (0, 0.16, -0.019), (0.03, 0.03, 0.003))                             # the lens, at the back of the sight
     return m
 
 def pickup(kind):

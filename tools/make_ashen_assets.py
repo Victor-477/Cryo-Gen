@@ -794,11 +794,7 @@ def pine():
 
 def rock():
     m = Mesh()
-    m.lathe("rock", ball(0.75, 1.0, n=9, squash=0.85), sides=16, sx=1.25, sz=0.95)
-    for v in m.tris["rock"]:                                                      # lumps and facets
-        p = v[0]
-        p += np.sin(p[[1, 2, 0]] * 2.3 + 0.7) * 0.14
-        p[1] = max(p[1], 0.0)
+    m.lathe("rock", [(0, 0.95), (0.35, 1.2), (0.85, 1.05), (1.25, 0.6), (1.45, 0.0)], sides=9, sx=1.25, sz=0.95, flat=True)
     return m
 
 def banner():

@@ -4,15 +4,25 @@ Cryo Engine is a native 3D game engine with a visual editor, scripted in the Cry
 
 | System | File |
 |---|---|
-| Windows 10/11 (64-bit) | `CryoEngine-v0.8.0-beta-windows-x86_64.zip` |
-| macOS 11+ (Apple Silicon and Intel) | `CryoEngine-v0.8.0-beta-macos-universal.zip` |
-| Linux (x86_64) | `CryoEngine-v0.8.0-beta-linux-x86_64.zip` |
+| Windows 10/11 (64-bit) | `CryoEngine-v0.9.0-beta-windows-x86_64.zip` |
+| macOS 11+ (Apple Silicon and Intel) | `CryoEngine-v0.9.0-beta-macos-universal.zip` |
+| Linux (x86_64) | `CryoEngine-v0.9.0-beta-linux-x86_64.zip` |
 
 Unzip and run. On first launch the editor creates the example game in `~/CryoProjects/FrostpeakIsles` and starts a welcome tour.
 
 **macOS:** the app is not signed. Right-click **Cryo Engine.app** and choose **Open** the first time. If macOS still refuses, run `xattr -dr com.apple.quarantine "Cryo Engine.app"` in a terminal.
 
-## New in 0.8.0-beta
+## New in 0.9.0-beta
+
+- **More lifelike lighting** (in scenes with Relief on): glossy surfaces mirror the sky, most strongly at grazing angles; the texture decides how polished each spot is; and a filmic tone curve gives deeper shadows and softer highlights.
+- **Outpost Kestrel**: a rifle with rounded parts instead of blocks, a reload movement, floors that catch the lamps, and drones that keep clear of each other.
+- **Ashen Keep**: the camera no longer passes through walls, and the loose rocks are shaded correctly.
+
+## From 0.8.0-beta
+
+The Outpost Kestrel example, raycasts, relief lighting and the crosshair.
+
+## Details of 0.8.0-beta
 
 - **Outpost Kestrel**, a third example game: a first-person shooter with one complete level (yard, warehouse, reactor room), an automatic rifle with recoil and reloading, two kinds of security drones that hunt by line of sight, pickups, doors that open as sectors are cleared and a reactor to shut down. File > New example: Outpost Kestrel.
 - **Raycasts**: `scene.raycast(origin, direction, distance, ignore)` returns the first solid thing along a ray.

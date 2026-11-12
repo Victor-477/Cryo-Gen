@@ -165,7 +165,7 @@ tools/             make_ashen_assets.py: builds the Ashen Keep models and textur
 docs/              documentation site (GitHub Pages)
 ```
 
-## Known limits (0.8.0-beta)
+## Known limits (0.9.0-beta)
 
 - Skeletal animation: one clip per model at a time (blended when switching), up to 64 joints on the graphics card (more fall back to the CPU); no morph targets.
 - Modelling: `.obj` models, one material, automatic texture coordinates. No loop cuts, bevels or booleans yet.

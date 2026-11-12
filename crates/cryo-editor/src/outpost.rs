@@ -152,6 +152,10 @@ pub fn build_scene(dir: &Path) -> Scene {
         ("Reactor Roof", "roof_core.obj", v(0.0, 7.0, -44.0)),
     ] {
         let id = model(&mut s, name, file, pos, 0.0);
+        if file.starts_with("ground") {
+            // floors are worn smooth: they catch the lamps and the sky
+            s.get_mut(id).unwrap().mesh.as_mut().unwrap().shininess = 0.8;
+        }
         solid(&mut s, id);
         adopt(&mut s, building, id);
     }
@@ -299,11 +303,11 @@ pub fn build_scene(dir: &Path) -> Scene {
         c.near = 0.04;
         c.far = 300.0;
     }
-    let rifle = model(&mut s, "Rifle", "rifle.obj", v(0.15, -0.15, -0.3), 0.0);
+    let rifle = model(&mut s, "Rifle", "rifle.obj", v(0.19, -0.19, -0.36), 0.0);
     {
         let e = s.get_mut(rifle).unwrap();
         e.parent = Some(head);
-        e.scale = Vec3::splat(0.62);
+        e.scale = Vec3::splat(0.6);
         let m = e.mesh.as_mut().unwrap();
         m.cast_shadow = false;
         m.shininess = 0.7;
