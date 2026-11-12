@@ -115,6 +115,11 @@ struct Queues {
     qte_progress: f32,
     /// `global.name`: values shared by every script.
     globals: HashMap<String, Value>,
+    /// `bar("Health", 0.7)`: meters on the game screen, in the order they were created.
+    bars: Vec<(String, f32, [f32; 3])>,
+    /// `banner("text", seconds)`: big text in the middle of the screen, and when it leaves (real time).
+    banner: (String, f64),
+    real_time: f64,
     /// `time.scale`: 1 is normal speed, 0.25 is slow motion.
     time_scale: f64,
     /// `input.lock_mouse(true)`: the game keeps the mouse (first-person cameras).
@@ -320,6 +325,36 @@ impl Host for EngineHost<'_> {
                     log(self.logs, LogLevel::Info, format!("[{}] {}", self.script_name, parts.join(" ")));
                     Ok(Value::Nil)
                 }
+                // bar("Name", value 0..1) or bar("Name", value, colour); a negative value removes it.
+                // A name starting with "!" is drawn as a wide boss bar at the bottom.
+                "bar" => match args {
+                    [Value::Text(name), Value::Num(v), rest @ ..] => {
+                        let color = match rest {
+                            [Value::Vec3(c)] => Some(c.map(|x| x as f32)),
+                            _ => None,
+                        };
+                        let bars = &mut self.queues.bars;
+                        if *v < 0.0 {
+                            bars.retain(|b| b.0 != **name);
+                        } else if let Some(b) = bars.iter_mut().find(|b| b.0 == **name) {
+                            b.1 = (*v as f32).min(1.0);
+                            if let Some(c) = color {
+                                b.2 = c;
+                            }
+                        } else if bars.len() < 12 {
+                            bars.push((name.to_string(), (*v as f32).min(1.0), color.unwrap_or([0.85, 0.2, 0.2])));
+                        }
+                        Ok(Value::Nil)
+                    }
+                    _ => Err("`bar` expects (name, value) or (name, value, colour)".into()),
+                },
+                "banner" => match args {
+                    [Value::Text(text), Value::Num(seconds)] => {
+                        self.queues.banner = (text.to_string(), self.queues.real_time + seconds.max(0.0));
+                        Ok(Value::Nil)
+                    }
+                    _ => Err("`banner` expects (text, seconds)".into()),
+                },
                 "hud" => {
                     let parts: Vec<String> = args.iter().map(|a| a.to_string()).collect();
                     *self.hud = parts.join(" ");
@@ -390,15 +425,22 @@ impl Host for EngineHost<'_> {
                     // animate("Walk") or animate("Walk", speed): plays a clip of a rigged model,
                     // blending from the current pose; animate("") goes back to the rest pose
                     ("animate", [Value::Text(clip), rest @ ..]) => {
-                        let speed = match rest {
-                            [] => None,
-                            [Value::Num(s)] => Some(*s as f32),
-                            _ => return Err("`animate` expects (clip) or (clip, speed)".into()),
+                        let (speed, looping) = match rest {
+                            [] => (None, None),
+                            [Value::Num(s)] => (Some(*s as f32), None),
+                            [Value::Num(s), Value::Bool(l)] => (Some(*s as f32), Some(*l)),
+                            _ => return Err("`animate` expects (clip), (clip, speed) or (clip, speed, loop)".into()),
                         };
                         let Some(m) = &mut self.entity(id)?.mesh else {
                             return Err("`animate` needs an entity with a Mesh (a rigged model)".into());
                         };
+                        if m.animation == **clip && looping == Some(false) {
+                            m.anim.time = 0.0; // asking again for a one-shot clip restarts it
+                        }
                         m.play_animation(clip, true);
+                        if let Some(l) = looping {
+                            m.anim_loop = l;
+                        }
                         if let Some(s) = speed {
                             m.anim_speed = s.clamp(-10.0, 10.0);
                         }
@@ -799,6 +841,22 @@ impl Runtime {
         }
     }
 
+    /// Delivers an event to one entity's script, as `entity.send(...)` would.
+    #[cfg(test)]
+    pub fn send_for_test(&mut self, id: u64, event: &str, args: Vec<Value>) {
+        self.queues.messages.push((id, event.to_string(), args));
+    }
+
+    /// Meters asked by the game with `bar(...)`.
+    pub fn bars(&self) -> &[(String, f32, [f32; 3])] {
+        &self.queues.bars
+    }
+
+    /// Text asked with `banner(...)`, while it is still due on screen.
+    pub fn banner(&self) -> Option<&str> {
+        (self.real_time < self.queues.banner.1 && !self.queues.banner.0.is_empty()).then_some(self.queues.banner.0.as_str())
+    }
+
     /// The game asked to keep the mouse (`input.lock_mouse(true)`).
     pub fn mouse_locked(&self) -> bool {
         self.queues.mouse_lock
@@ -886,6 +944,7 @@ impl Runtime {
     pub fn update(&mut self, scene: &mut Scene, input: &InputState, dt: f32, logs: &mut Vec<LogLine>) {
         let real_dt = dt.clamp(0.0, 0.1);
         self.real_time += real_dt as f64;
+        self.queues.real_time = self.real_time;
         // quick time events read the real keyboard in real time, even in cutscenes and slow motion
         self.update_qte(input, real_dt);
         let frozen = self.qte.as_ref().map(|q| q.freeze).unwrap_or(false);

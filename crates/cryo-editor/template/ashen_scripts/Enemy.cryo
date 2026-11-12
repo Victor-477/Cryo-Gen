@@ -1,0 +1,230 @@
+// A foe that walks up to the knight and strikes, or shoots from afar when `ranged`.
+// Idle -> chase -> windup -> rest, with stagger and death on the way. The same script
+// drives the skeleton soldiers, the archers and the brute: only the numbers change.
+script Enemy {
+    prop max_health: num = 60
+    prop damage: num = 12
+    prop speed: num = 3.4
+    prop sight: num = 15
+    prop reach: num = 2.1
+    prop windup: num = 0.45       // seconds from the start of the swing to the blow
+    prop rest: num = 1.1          // pause between attacks
+    prop ranged: bool = false
+    prop area: text = "bailey"    // the gate of this area opens when all its enemies fall
+
+    var health = 60
+    var model: entity = nil
+    var hero: entity = nil
+    var home = vec3(0)
+    var yaw = 180
+    var struck = false
+    var arrows = []
+
+    on start() {
+        model = self.child("Model")
+        hero = scene.find("Hero")
+        home = self.position
+        health = max_health
+        emit("enemy_spawned", area)
+    }
+
+    fn to_hero() -> vec3 {
+        var d = hero.position - self.position
+        d.y = 0
+        return d
+    }
+
+    fn forward() -> vec3 {
+        let a = rad(yaw)
+        return vec3(-sin(a), 0, -cos(a))
+    }
+
+    fn face(d: vec3) {
+        if length(d) > 0.01 {
+            yaw = deg(atan2(-d.x, -d.z))
+        }
+    }
+
+    fn drive(v: vec3) {
+        var cur = self.velocity
+        cur.x = v.x
+        cur.z = v.z
+        self.velocity = cur
+    }
+
+    on update(dt) {
+        if model != nil {
+            var r = model.rotation
+            r.y += wrap(yaw - r.y, -180, 180) * min(1, dt * 10)
+            model.rotation = r
+        }
+        // arrows in flight
+        var keep = []
+        for a in arrows {
+            a.life -= dt
+            a.shaft.translate(a.velocity * dt)
+            var d = hero.position - a.shaft.position
+            if length(d) < 0.9 {
+                hero.send("hit", damage, a.shaft.position - a.velocity)
+                a.life = 0
+            }
+            if a.life > 0 {
+                keep.push(a)
+            } else {
+                a.shaft.destroy()
+            }
+        }
+        arrows = keep
+    }
+
+    on hit(amount, from) {
+        if current_state() == "dead" {
+            return
+        }
+        health -= amount
+        var away = self.position - from
+        away.y = 0
+        if length(away) > 0.01 {
+            self.velocity = normalize(away) * 5 + vec3(0, 2, 0)
+        }
+        if health <= 0 {
+            goto dead
+        }
+        goto stagger
+    }
+
+    on hero_respawned() {
+        if current_state() != "dead" {
+            self.position = home
+            health = max_health
+            goto idle
+        }
+    }
+
+    state idle {
+        on enter() {
+            model.animate("Idle", 1, true)
+        }
+        on update(dt) {
+            drive(vec3(0))
+            if global.hero_alive == true and length(to_hero()) < sight {
+                goto chase
+            }
+        }
+    }
+
+    state chase {
+        on enter() {
+            model.animate("Walk", speed / 2.4, true)
+        }
+        on update(dt) {
+            let d = to_hero()
+            let dist = length(d)
+            if global.hero_alive != true or dist > sight * 1.7 {
+                goto idle
+            }
+            face(d)
+            if ranged and dist < sight * 0.85 {
+                goto shoot
+            }
+            if dist < reach * 0.8 {
+                goto swing
+            }
+            drive(normalize(d) * speed)
+        }
+    }
+
+    state swing {
+        on enter() {
+            struck = false
+            face(to_hero())
+            // the clip strikes at 45% of its length: stretch it so the blow lands at `windup`
+            model.animate("Attack1", 0.225 / windup, false)
+        }
+        on update(dt) {
+            drive(vec3(0))
+            let d = to_hero()
+            if not struck and state_time() >= windup {
+                struck = true
+                audio.play("sounds/swing.wav", 0.35)
+                if length(d) < reach + 0.5 and (length(d) < 0.6 or dot(normalize(d), forward()) > 0.25) {
+                    hero.send("hit", damage, self.position)
+                }
+            }
+            if state_time() >= windup * 2.2 {
+                goto recover
+            }
+        }
+    }
+
+    state shoot {
+        on enter() {
+            struck = false
+            model.animate("Shoot", 1, false)
+        }
+        on update(dt) {
+            drive(vec3(0))
+            let d = to_hero()
+            if state_time() < 0.8 {
+                face(d)
+            }
+            if not struck and state_time() >= 0.85 {
+                struck = true
+                let from = self.position + vec3(0, 0.5, 0) + forward() * 0.8
+                let shaft = scene.spawn("cube", from)
+                shaft.scale = vec3(0.05, 0.05, 0.9)
+                shaft.color = vec3(0.35, 0.25, 0.15)
+                let aim = hero.position + vec3(0, 0.2, 0) - from
+                shaft.look_at(from + aim)
+                arrows.push({ shaft: shaft, velocity: normalize(aim) * 19, life: 2.5 })
+                audio.play("sounds/arrow.wav", 0.5)
+            }
+            if state_time() >= 1.2 {
+                goto recover
+            }
+        }
+    }
+
+    state recover {
+        on enter() {
+            model.animate("Idle", 1, true)
+        }
+        on update(dt) {
+            drive(vec3(0))
+            face(to_hero())
+            if state_time() >= rest {
+                goto chase
+            }
+        }
+    }
+
+    state stagger {
+        on enter() {
+            model.animate("Hit", 1, false)
+        }
+        on update(dt) {
+            if state_time() >= 0.4 {
+                goto chase
+            }
+        }
+    }
+
+    state dead {
+        on enter() {
+            self.tag = "fallen"
+            model.animate("Die", 1, false)
+            audio.play("sounds/bones.wav", 0.6)
+            emit("enemy_down", area)
+            after(2.6, "vanish")
+        }
+        on update(dt) {
+            drive(vec3(0))
+        }
+        on vanish() {
+            for a in arrows {
+                a.shaft.destroy()
+            }
+            self.destroy()
+        }
+    }
+}

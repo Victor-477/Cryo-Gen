@@ -1,0 +1,11 @@
+script Potion {
+    on update(dt) {
+        self.rotate(vec3(0, 90 * dt, 0))
+    }
+    on touch_start(other) {
+        if other.tag == "player" {
+            other.send("pickup_potion")
+            self.destroy()
+        }
+    }
+}

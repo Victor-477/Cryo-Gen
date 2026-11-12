@@ -10,6 +10,8 @@ use std::sync::Arc;
 
 pub const MAX_DIR: usize = 4;
 pub const MAX_POINT: usize = 16;
+/// Joints per skin that the vertex shader accepts; larger skeletons are skinned on the CPU.
+pub const MAX_JOINTS: usize = 64;
 const SHADOW_SIZE: i32 = 2048;
 
 pub enum MeshRef {
@@ -26,6 +28,13 @@ pub struct DrawItem {
     pub unlit: bool,
     pub selected: bool,
     pub cast_shadow: bool,
+    /// Joint matrices per skin, when the model is animated by its skeleton.
+    pub joints: Option<Arc<Vec<Vec<Mat4>>>>,
+    /// Bounding sphere in world space, used to skip what the camera cannot see.
+    pub center: Vec3,
+    pub radius: f32,
+    pub in_view: bool,
+    pub in_shadow: bool,
 }
 
 /// Point light or spotlight.
@@ -51,6 +60,7 @@ pub struct RenderFrame {
     pub ambient: [f32; 3],
     pub sky_top: [f32; 3],
     pub sky_horizon: [f32; 3],
+    pub fog: f32,
     /// Lines: x, y, z, r, g, b, a per vertex.
     pub lines: Vec<f32>,
     /// Shadows from the first directional light: (centre of the covered area, radius).
@@ -70,8 +80,16 @@ impl RenderFrame {
             }
             let world = scene.world_matrix(e.id);
             if let Some(m) = &e.mesh {
+                let mut joints = None;
                 let mesh = match &m.model {
-                    Some(path) => assets.model(path).map(|base| MeshRef::Model(assets.posed(e.id, &base, m))),
+                    Some(path) => assets.model(path).map(|base| {
+                        joints = assets.pose_matrices(e.id, &base, m);
+                        if joints.is_some() {
+                            MeshRef::Model(base)
+                        } else {
+                            MeshRef::Model(assets.posed(e.id, &base, m))
+                        }
+                    }),
                     None => Some(MeshRef::Shape(m.shape)),
                 };
                 // model that failed to load: show a magenta cube instead
@@ -79,7 +97,18 @@ impl RenderFrame {
                     Some(mesh) => (mesh, m.color),
                     None => (MeshRef::Shape(Shape::Cube), [1.0, 0.0, 1.0]),
                 };
+                let (local_center, local_radius) = match &mesh {
+                    // an animated model reaches beyond its rest pose
+                    MeshRef::Model(md) => (md.center, md.half.length() * if md.skeleton.is_some() { 1.6 } else { 1.0 }),
+                    MeshRef::Shape(shape) => (Vec3::ZERO, shape.half_extents().length()),
+                };
+                let stretch = world.x_axis.truncate().length().max(world.y_axis.truncate().length()).max(world.z_axis.truncate().length());
                 items.push(DrawItem {
+                    joints,
+                    center: world.transform_point3(local_center),
+                    radius: local_radius * stretch,
+                    in_view: true,
+                    in_shadow: true,
                     model: world,
                     mesh,
                     color,
@@ -120,6 +149,22 @@ impl RenderFrame {
         // shadow area centred a little ahead of the camera
         let forward = view.inverse().transform_vector3(Vec3::NEG_Z).normalize_or_zero();
         let shadow = first_dir_shadows.map(|reach| (cam_pos + forward * reach * 0.54, reach));
+        // skip what is outside the camera's view, and shadow casters too far to matter
+        let vp = proj * view;
+        let rows = [vp.row(0), vp.row(1), vp.row(2), vp.row(3)];
+        let planes = [rows[3] + rows[0], rows[3] - rows[0], rows[3] + rows[1], rows[3] - rows[1], rows[3] + rows[2], rows[3] - rows[2]];
+        for item in &mut items {
+            item.in_view = item.selected
+                || planes.iter().all(|p| {
+                    let n = p.truncate();
+                    n.dot(item.center) + p.w >= -item.radius * n.length()
+                });
+            item.in_shadow = match shadow {
+                Some((c, reach)) => item.cast_shadow && item.center.distance(c) < reach * 1.8 + item.radius,
+                None => false,
+            };
+        }
+        items.retain(|i| i.in_view || i.in_shadow);
         // more lights than the shader takes: keep the ones that matter most to this view
         if locals.len() > MAX_POINT {
             locals.sort_by(|a, b| {
@@ -138,6 +183,7 @@ impl RenderFrame {
             ambient: scene.ambient,
             sky_top: scene.sky_top,
             sky_horizon: scene.sky_horizon,
+            fog: scene.fog,
             lines: vec![],
             shadow,
         }
@@ -225,6 +271,27 @@ struct GpuMesh {
     count: i32,
     color: [f32; 3],
     texture: Option<Arc<TextureData>>,
+    /// Index of the skin whose joints move this mesh on the graphics card.
+    skin: Option<usize>,
+}
+
+/// Tells the shader whether the next mesh follows a skeleton, and sends its joints.
+unsafe fn bind_skin(
+    gl: &glow::Context,
+    flag: &Option<glow::UniformLocation>,
+    mats: &Option<glow::UniformLocation>,
+    part: &GpuMesh,
+    joints: &Option<Arc<Vec<Vec<Mat4>>>>,
+) {
+    if let (Some(skin), Some(all)) = (part.skin, joints) {
+        if let Some(list) = all.get(skin) {
+            let flat: Vec<f32> = list.iter().take(MAX_JOINTS).flat_map(|m| m.to_cols_array()).collect();
+            gl.uniform_matrix_4_f32_slice(mats.as_ref(), false, &flat);
+            gl.uniform_1_i32(flag.as_ref(), 1);
+            return;
+        }
+    }
+    gl.uniform_1_i32(flag.as_ref(), 0);
 }
 
 pub struct Renderer {
@@ -254,6 +321,15 @@ const MESH_VS: &str = r#"
 in vec3 a_pos;
 in vec3 a_normal;
 in vec2 a_uv;
+in vec4 a_joints;
+in vec4 a_weights;
+uniform mat4 u_joints[64];
+uniform int u_skinned;
+mat4 skin_matrix() {
+    if (u_skinned == 0) return mat4(1.0);
+    return a_weights.x * u_joints[int(a_joints.x)] + a_weights.y * u_joints[int(a_joints.y)]
+         + a_weights.z * u_joints[int(a_joints.z)] + a_weights.w * u_joints[int(a_joints.w)];
+}
 uniform mat4 u_view_proj;
 uniform mat4 u_model;
 uniform mat3 u_normal_mat;
@@ -262,12 +338,14 @@ out vec3 v_world;
 out vec3 v_normal;
 out vec2 v_uv;
 void main() {
-    vec4 w = u_model * vec4(a_pos, 1.0);
-    v_normal = u_normal_mat * a_normal;
+    mat4 skin = skin_matrix();
+    vec4 w = u_model * (skin * vec4(a_pos, 1.0));
+    vec3 local_n = mat3(skin) * a_normal;
+    v_normal = u_normal_mat * local_n;
     v_uv = a_uv;
     vec4 clip = u_view_proj * w;
     if (u_outline > 0.0) {
-        vec3 n = normalize(u_normal_mat * a_normal);
+        vec3 n = normalize(u_normal_mat * local_n);
         w.xyz += n * u_outline * max(clip.w, 0.1);
         clip = u_view_proj * w;
     }
@@ -284,6 +362,8 @@ out vec4 frag;
 uniform vec3 u_color;
 uniform vec3 u_cam;
 uniform vec3 u_ambient;
+uniform float u_fog;
+uniform vec3 u_fog_color;
 uniform int u_ndir;
 uniform vec3 u_ldir[4];
 uniform vec3 u_ldir_color[4];
@@ -358,14 +438,26 @@ void main() {
         col += shade(n, v, l, u_pcolor[i] * att, base);
     }
     col = col / (col + vec3(0.6)) * 1.6; // soft tone mapping
-    frag = vec4(pow(clamp(col, 0.0, 1.0), vec3(1.0 / 2.2)), 1.0);
+    col = pow(clamp(col, 0.0, 1.0), vec3(1.0 / 2.2));
+    float fog_d = length(u_cam - v_world) * u_fog;
+    col = mix(col, u_fog_color, 1.0 - exp(-fog_d * fog_d));
+    frag = vec4(col, 1.0);
 }
 "#;
 
 const DEPTH_VS: &str = r#"
 in vec3 a_pos;
+in vec4 a_joints;
+in vec4 a_weights;
+uniform mat4 u_joints[64];
+uniform int u_skinned;
+mat4 skin_matrix() {
+    if (u_skinned == 0) return mat4(1.0);
+    return a_weights.x * u_joints[int(a_joints.x)] + a_weights.y * u_joints[int(a_joints.y)]
+         + a_weights.z * u_joints[int(a_joints.z)] + a_weights.w * u_joints[int(a_joints.w)];
+}
 uniform mat4 u_mvp;
-void main() { gl_Position = u_mvp * vec4(a_pos, 1.0); }
+void main() { gl_Position = u_mvp * (skin_matrix() * vec4(a_pos, 1.0)); }
 "#;
 
 const DEPTH_FS: &str = r#"
@@ -470,11 +562,32 @@ unsafe fn upload_mesh(
     Ok((vao, [vbo, ebo], idx.len() as i32))
 }
 
+/// Like `upload_mesh`, for vertices that carry joints and weights (16 floats each).
+unsafe fn upload_skinned(
+    gl: &glow::Context,
+    verts: &[f32],
+    idx: &[u32],
+) -> Result<(glow::VertexArray, [glow::Buffer; 2], i32), String> {
+    let vao = gl.create_vertex_array()?;
+    gl.bind_vertex_array(Some(vao));
+    let vbo = gl.create_buffer()?;
+    gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
+    gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes(verts), glow::STATIC_DRAW);
+    let ebo = gl.create_buffer()?;
+    gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(ebo));
+    gl.buffer_data_u8_slice(glow::ELEMENT_ARRAY_BUFFER, bytes(idx), glow::STATIC_DRAW);
+    for (i, (size, offset)) in [(3, 0), (3, 12), (2, 24), (4, 32), (4, 48)].into_iter().enumerate() {
+        gl.enable_vertex_attrib_array(i as u32);
+        gl.vertex_attrib_pointer_f32(i as u32, size, glow::FLOAT, false, 64, offset);
+    }
+    Ok((vao, [vbo, ebo], idx.len() as i32))
+}
+
 impl Renderer {
     pub fn new(gl: &glow::Context) -> Result<Self, String> {
         unsafe {
-            let mesh_prog = compile(gl, MESH_VS, MESH_FS, &["a_pos", "a_normal", "a_uv"])?;
-            let depth_prog = compile(gl, DEPTH_VS, DEPTH_FS, &["a_pos"])?;
+            let mesh_prog = compile(gl, MESH_VS, MESH_FS, &["a_pos", "a_normal", "a_uv", "a_joints", "a_weights"])?;
+            let depth_prog = compile(gl, DEPTH_VS, DEPTH_FS, &["a_pos", "a_normal", "a_uv", "a_joints", "a_weights"])?;
             let line_prog = compile(gl, LINE_VS, LINE_FS, &["a_pos", "a_color"])?;
             let sky_prog = compile(gl, SKY_VS, SKY_FS, &[])?;
 
@@ -482,7 +595,7 @@ impl Renderer {
             for shape in Shape::ALL {
                 let (verts, idx) = build_mesh(shape);
                 let (vao, buffers, count) = upload_mesh(gl, &verts, &idx)?;
-                shapes.insert(shape, GpuMesh { vao, buffers, count, color: [1.0; 3], texture: None });
+                shapes.insert(shape, GpuMesh { vao, buffers, count, color: [1.0; 3], texture: None, skin: None });
             }
 
             let line_vao = gl.create_vertex_array()?;
@@ -605,8 +718,25 @@ impl Renderer {
         self.model_version.insert(m.id, m.version);
         let mut parts = vec![];
         for s in &m.subs {
-            if let Ok((vao, buffers, count)) = upload_mesh(gl, &s.vertices, &s.indices) {
-                parts.push(GpuMesh { vao, buffers, count, color: s.color, texture: s.texture.clone() });
+            let uploaded = match (&s.skin, &m.skeleton) {
+                (Some(skin), Some(_)) => {
+                    // bind-pose vertices plus joints and weights: the shader poses them
+                    let mut v = Vec::with_capacity(skin.positions.len() * 16);
+                    for i in 0..skin.positions.len() {
+                        v.extend_from_slice(&skin.positions[i].to_array());
+                        v.extend_from_slice(&skin.normals[i].to_array());
+                        v.extend_from_slice(&s.vertices[i * 8 + 6..i * 8 + 8]);
+                        v.extend(skin.joints[i].map(|j| (j as usize).min(MAX_JOINTS - 1) as f32));
+                        let w = skin.weights[i];
+                        let total: f32 = w.iter().sum();
+                        v.extend(if total > 1e-6 { w.map(|x| x / total) } else { [1.0, 0.0, 0.0, 0.0] });
+                    }
+                    upload_skinned(gl, &v, &s.indices).map(|r| (r, Some(skin.skin)))
+                }
+                _ => upload_mesh(gl, &s.vertices, &s.indices).map(|r| (r, None)),
+            };
+            if let Ok(((vao, buffers, count), skin)) = uploaded {
+                parts.push(GpuMesh { vao, buffers, count, color: s.color, texture: s.texture.clone(), skin });
             }
         }
         self.models.insert(m.id, parts);
@@ -672,7 +802,10 @@ impl Renderer {
                 gl.disable(glow::CULL_FACE);
                 gl.enable(glow::POLYGON_OFFSET_FILL);
                 gl.polygon_offset(2.0, 4.0);
-                for item in f.items.iter().filter(|i| i.cast_shadow) {
+                let d_flag = gl.get_uniform_location(self.depth_prog, "u_skinned");
+                let d_mats = gl.get_uniform_location(self.depth_prog, "u_joints[0]");
+                gl.uniform_1_i32(d_flag.as_ref(), 0);
+                for item in f.items.iter().filter(|i| i.cast_shadow && i.in_shadow) {
                     gl.uniform_matrix_4_f32_slice(u_mvp.as_ref(), false, &(light_vp * item.model).to_cols_array());
                     match &item.mesh {
                         MeshRef::Shape(s) => {
@@ -683,9 +816,11 @@ impl Renderer {
                         }
                         MeshRef::Model(model) => {
                             for m in self.models.get(&model.id).into_iter().flatten() {
+                                bind_skin(gl, &d_flag, &d_mats, m, &item.joints);
                                 gl.bind_vertex_array(Some(m.vao));
                                 gl.draw_elements(glow::TRIANGLES, m.count, glow::UNSIGNED_INT, 0);
                             }
+                            gl.uniform_1_i32(d_flag.as_ref(), 0);
                         }
                     }
                 }
@@ -721,6 +856,8 @@ impl Renderer {
             gl.uniform_matrix_4_f32_slice(loc(p, "u_view_proj").as_ref(), false, &view_proj.to_cols_array());
             gl.uniform_3_f32_slice(loc(p, "u_cam").as_ref(), &f.cam_pos.to_array());
             gl.uniform_3_f32_slice(loc(p, "u_ambient").as_ref(), &f.ambient);
+            gl.uniform_1_f32(loc(p, "u_fog").as_ref(), f.fog.clamp(0.0, 1.0));
+            gl.uniform_3_f32_slice(loc(p, "u_fog_color").as_ref(), &f.sky_horizon);
             gl.uniform_1_i32(loc(p, "u_ndir").as_ref(), f.dir_lights.len() as i32);
             for (i, (dir, color)) in f.dir_lights.iter().enumerate() {
                 gl.uniform_3_f32_slice(loc(p, &format!("u_ldir[{i}]")).as_ref(), &dir.to_array());
@@ -771,7 +908,9 @@ impl Renderer {
             }
             let white = self.white_tex;
 
-            for item in &f.items {
+            let u_flag = loc(p, "u_skinned");
+            let u_mats = loc(p, "u_joints[0]");
+            for item in f.items.iter().filter(|i| i.in_view) {
                 let parts: &[GpuMesh] = match &item.mesh {
                     MeshRef::Shape(s) => self.shapes.get(s).map(std::slice::from_ref).unwrap_or(&[]),
                     MeshRef::Model(m) => self.models.get(&m.id).map(|v| v.as_slice()).unwrap_or(&[]),
@@ -793,6 +932,7 @@ impl Renderer {
                     gl.uniform_3_f32(u_color.as_ref(), 1.0, 0.55, 0.05);
                     gl.depth_mask(false);
                     for m in parts {
+                        bind_skin(gl, &u_flag, &u_mats, m, &item.joints);
                         gl.bind_vertex_array(Some(m.vao));
                         gl.draw_elements(glow::TRIANGLES, m.count, glow::UNSIGNED_INT, 0);
                     }
@@ -819,6 +959,7 @@ impl Renderer {
                         .and_then(|t| self.textures.get(&t.id).copied());
                     gl.uniform_1_i32(u_has_tex.as_ref(), tex.is_some() as i32);
                     gl.bind_texture(glow::TEXTURE_2D, tex.or(white));
+                    bind_skin(gl, &u_flag, &u_mats, m, &item.joints);
                     gl.bind_vertex_array(Some(m.vao));
                     gl.draw_elements(glow::TRIANGLES, m.count, glow::UNSIGNED_INT, 0);
                 }

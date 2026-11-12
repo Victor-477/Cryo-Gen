@@ -1,0 +1,64 @@
+// Keeps the score of the level: how many enemies each area still has, which gate
+// opens next, what the objective text says, and the ending.
+script Director {
+    var left = {}
+    var won = false
+    var potions = 2
+    var goal = "Clear the outer bailey"
+
+    on start() {
+        audio.music("sounds/music.wav", 0.35)
+    }
+
+    on title() {
+        banner("ASHEN KEEP", 4)
+    }
+
+    on enemy_spawned(area) {
+        left[area] = left.get(area, 0) + 1
+    }
+
+    on enemy_down(area) {
+        left[area] = left.get(area, 1) - 1
+        if left[area] <= 0 {
+            emit("area_clear", area)
+        }
+    }
+
+    on area_clear(area) {
+        match area {
+            "bailey" => {
+                goal = "The gate is open. Enter the courtyard"
+                banner("THE GATE OPENS", 2.5)
+            }
+            "courtyard" => {
+                goal = "Enter the great hall"
+                banner("THE HALL AWAITS", 2.5)
+            }
+        }
+    }
+
+    on boss_wake() {
+        goal = "Defeat the Ashen Warden"
+    }
+
+    on potions(count) {
+        potions = count
+    }
+
+    on victory() {
+        won = true
+        goal = "The keep is yours"
+        audio.stop_music()
+        audio.play("sounds/victory.wav", 0.9)
+        after(1.5, "celebrate")
+    }
+
+    on celebrate() {
+        banner("VICTORY", 8)
+    }
+
+    on update(dt) {
+        hud(goal + "\nPotions (Q): " + potions)
+    }
+}

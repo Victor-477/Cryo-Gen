@@ -1,0 +1,12 @@
+// An invisible area that announces, once, that the knight walked in.
+script Zone {
+    prop event: text = "boss_wake"
+    var fired = false
+
+    on touch_start(other) {
+        if not fired and other.tag == "player" {
+            fired = true
+            emit(event)
+        }
+    }
+}

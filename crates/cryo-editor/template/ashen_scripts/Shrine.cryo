@@ -1,0 +1,14 @@
+// A checkpoint: touching it heals the knight, who returns here after falling in battle.
+script Shrine {
+    var lit = false
+    on touch_start(other) {
+        if other.tag == "player" {
+            other.send("checkpoint", self.position + vec3(0, 1, 2.5))
+            if not lit {
+                lit = true
+                audio.play("sounds/heal.wav", 0.8)
+                banner("SHRINE KINDLED", 1.8)
+            }
+        }
+    }
+}

@@ -4,32 +4,36 @@ Cryo Engine is a native 3D game engine with a visual editor, scripted in the Cry
 
 | System | File |
 |---|---|
-| Windows 10/11 (64-bit) | `CryoEngine-v0.4.0-beta-windows-x86_64.zip` |
-| macOS 11+ (Apple Silicon and Intel) | `CryoEngine-v0.4.0-beta-macos-universal.zip` |
-| Linux (x86_64) | `CryoEngine-v0.4.0-beta-linux-x86_64.zip` |
+| Windows 10/11 (64-bit) | `CryoEngine-v0.7.0-beta-windows-x86_64.zip` |
+| macOS 11+ (Apple Silicon and Intel) | `CryoEngine-v0.7.0-beta-macos-universal.zip` |
+| Linux (x86_64) | `CryoEngine-v0.7.0-beta-linux-x86_64.zip` |
 
 Unzip and run. On first launch the editor creates the example game in `~/CryoProjects/FrostpeakIsles` and starts a welcome tour.
 
 **macOS:** the app is not signed. Right-click **Cryo Engine.app** and choose **Open** the first time. If macOS still refuses, run `xattr -dr com.apple.quarantine "Cryo Engine.app"` in a terminal.
 
-## New in 0.4.0-beta
+## New in 0.7.0-beta
 
-- **Quick time events**: `qte.press`, `qte.mash`, `qte.hold` and `qte.sequence` show the prompt and answer with `on qte_success(name)` / `on qte_fail(name)`. On the Timeline, a QTE event makes a cutscene wait for the player.
-- **Better events**: `emit("event")` reaches every script, `global.name` shares values, objects have a Tag (`scene.tagged("enemy")`), and scripts can declare `on touch_start`, `on touch_end`, `on key_down` and `on key_up`. New Timeline events: event for everyone, play animation, game speed.
-- **Language**: maps (`{ coins: 3 }`), `match`, state machines (`state patrol { ... }` and `goto`), `time.scale` for slow motion, and many new list, text and math functions.
-- **First-person camera**: Create > First-person player, with mouse capture (`input.lock_mouse`).
-- **Skeletal animation**: rigged glTF models keep their skeleton and clips; `self.animate("Walk")` switches clips with a blend. Create > Animated model (example) adds one to try.
-- **Timeline easing**: ease in, ease out, overshoot and bounce.
-- **Physics**: triangle-mesh colliders for static models, and bodies that can rotate (roll, spin, tip over).
-- **Lights and shadows**: scenes may have any number of point and spot lights (the 16 nearest the camera are used); the reach of the shadows is adjustable.
-- **Export for another system**: export a Windows, macOS or Linux game from any of them.
-- Two new tutorials: events and quick time events; first person and animated models.
+- **Ashen Keep, dark fantasy art pass** (original designs): a cold, overcast evening with thicker fog; a worn knight with uneven pauldrons, a cowl and a torn cloak; hunched skeletons of differing heights in rusted gear; rust on all metal; dry grass, slate roofs, ruined walls and rubble in the bailey.
 
-An existing project keeps its scripts: new template scripts such as `FirstPerson.cryo` are added when you use the Create menu.
+## From 0.6.0-beta
 
-## From 0.3.0-beta
+Skinning on the graphics card, view culling, faster physics, and the more detailed Ashen Keep models.
 
-Timeline with keyframes, cutscenes, events in sync, timers, and Edit Mesh modelling.
+## Details of 0.6.0-beta
+
+- **Skinning on the graphics card**: rigged models are posed by the vertex shader instead of the processor, so animated characters cost almost nothing per frame and can be far more detailed. Skeletons with more than 64 joints still use the processor.
+- **View culling**: objects outside the camera's view are not drawn, and distant ones do not cast shadows.
+- **Faster physics**: a broad phase skips pairs of bodies that are nowhere near each other (a scene with 440 bodies went from 2.6 ms to 1.2 ms per frame in our test).
+- **Ashen Keep, redone models**: the knight, the Warden and the skeletons now have about 6 to 10 thousand triangles each (they had under 2 thousand), smooth skin weights at the joints, real anatomy for the skeletons (ribcage, spine, pelvis, skull with jaw and teeth, finger bones) and layered plate armour over mail. Characters and scenery use generated textures for steel, mail, cloth, leather, bone, stone, cobbles and wood, with relief painted into the colour.
+
+## From 0.5.0-beta
+
+The Ashen Keep example game, HUD bars and banners, distance fog.
+
+## From 0.4.0-beta
+
+Quick time events, global events and tags, maps, `match` and state machines in the language, the first-person player, skeletal animation, mesh colliders, bodies that rotate, export for another system.
 
 ## Known limits
 

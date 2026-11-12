@@ -462,9 +462,24 @@ pub fn step(scene: &mut Scene, dt: f32) -> Vec<Contact> {
 
         // collisions
         let mut bodies = gather(scene);
-        for i in 0..bodies.len() {
-            for j in (i + 1)..bodies.len() {
-                if !bodies[i].dynamic && !bodies[j].dynamic {
+        // broad phase: only moving bodies start a pair, and only bodies whose bounding
+        // spheres touch go on to the exact test
+        let reach: Vec<f32> = bodies
+            .iter()
+            .map(|b| match &b.col {
+                Col::Box { half } => half.length(),
+                Col::Sphere { r } => *r,
+                Col::Mesh { .. } => f32::INFINITY,
+            })
+            .collect();
+        let movers: Vec<usize> = (0..bodies.len()).filter(|i| bodies[*i].dynamic).collect();
+        for &i in &movers {
+            for j in 0..bodies.len() {
+                if j == i || (bodies[j].dynamic && j < i) {
+                    continue;
+                }
+                let far = reach[i] + reach[j];
+                if far.is_finite() && bodies[i].pos.distance_squared(bodies[j].pos) > far * far {
                     continue;
                 }
                 let Some((n, depth)) = overlap(&bodies[i], &bodies[j]) else { continue };
@@ -725,5 +740,29 @@ mod tests {
         }
         let p = s.get(ball).unwrap().position;
         assert!(p.x < 5.55 && p.x > 5.0, "stopped by the wall: {p:?}");
+    }
+
+    /// Not a pass/fail test: prints how long a crowded scene takes to simulate.
+    #[test]
+    fn crowded_scene_timing() {
+        let mut s = Scene::default_scene();
+        for i in 0..400 {
+            let id = s.add_mesh(Shape::Cube);
+            let e = s.get_mut(id).unwrap();
+            e.position = Vec3::new((i % 20) as f32 * 4.0 - 40.0, 0.5, (i / 20) as f32 * 4.0 - 40.0);
+            e.rotation = Vec3::new(0.0, i as f32 * 7.0, 0.0);
+            e.physics = Some(Physics::new(BodyKind::Static, ColliderShape::Box));
+        }
+        for i in 0..40 {
+            let id = s.add_mesh(Shape::Sphere);
+            let e = s.get_mut(id).unwrap();
+            e.position = Vec3::new((i % 8) as f32 * 9.0 - 30.0, 3.0 + i as f32 * 0.1, (i / 8) as f32 * 9.0 - 20.0);
+            e.physics = Some(Physics::new(BodyKind::Dynamic, ColliderShape::Sphere));
+        }
+        let t = std::time::Instant::now();
+        for _ in 0..120 {
+            step(&mut s, 1.0 / 60.0);
+        }
+        println!("PHYSICS 440 bodies: {:.2} ms per frame", t.elapsed().as_secs_f64() * 1000.0 / 120.0);
     }
 }

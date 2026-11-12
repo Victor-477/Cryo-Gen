@@ -610,6 +610,12 @@ impl State {
         row(ui, tr!("Ambient light", "Luz ambiente"), |ui| color_edit(ui, &mut self.scene.ambient));
         row(ui, tr!("Sky (top)", "Céu (topo)"), |ui| color_edit(ui, &mut self.scene.sky_top));
         row(ui, tr!("Sky (horizon)", "Céu (horizonte)"), |ui| color_edit(ui, &mut self.scene.sky_horizon));
+        row(ui, tr!("Fog", "Névoa"), |ui| {
+            ui.add(egui::Slider::new(&mut self.scene.fog, 0.0..=0.12)).on_hover_text(tr!(
+                "Distant objects fade into the horizon colour. 0 turns it off.",
+                "Objetos distantes somem na cor do horizonte. 0 desliga."
+            ))
+        });
         row(ui, tr!("Gravity", "Gravidade"), |ui| ui.add(DragValue::new(&mut self.scene.gravity).speed(0.05).suffix(" m/s²")));
     }
 

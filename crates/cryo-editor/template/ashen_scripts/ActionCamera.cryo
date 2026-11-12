@@ -1,0 +1,52 @@
+// Third-person camera behind the knight. The mouse turns it (Tab frees the mouse);
+// the arrow keys also work. Shakes when something emits "shake".
+script ActionCamera {
+    prop distance: num = 6.2
+    prop height: num = 1.5
+    prop sensitivity: num = 0.14
+
+    var hero: entity = nil
+    var yaw = 0
+    var pitch = -14
+    var shake = 0
+
+    on start() {
+        hero = scene.find("Hero")
+        global.cam_yaw = yaw
+    }
+
+    on shake(amount) {
+        shake = max(shake, amount)
+    }
+
+    on key_down(key) {
+        if key == "tab" {
+            input.lock_mouse(not input.mouse_locked)
+        }
+    }
+
+    on update(dt) {
+        if hero == nil {
+            return
+        }
+        if input.mouse_locked {
+            yaw -= input.mouse_dx * sensitivity
+            pitch -= input.mouse_dy * sensitivity
+        }
+        if input.down("left") { yaw += 110 * dt }
+        if input.down("right") { yaw -= 110 * dt }
+        pitch = clamp(pitch, -55, 20)
+        global.cam_yaw = yaw
+
+        let a = rad(yaw)
+        let p = rad(pitch)
+        let look = vec3(-sin(a) * cos(p), sin(p), -cos(a) * cos(p))
+        var want = hero.position + vec3(0, height, 0) - look * distance
+        want.y = max(want.y, 0.5)
+        self.position = lerp(self.position, want, min(1, dt * 14))
+
+        shake = max(0, shake - dt * 1.8)
+        let jolt = shake * shake * 4
+        self.rotation = vec3(pitch + random(-jolt, jolt), yaw + random(-jolt, jolt), 0)
+    }
+}

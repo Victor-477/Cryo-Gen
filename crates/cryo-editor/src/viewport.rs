@@ -993,11 +993,44 @@ impl State {
 
         match &self.play {
             Some(play) => {
-                if !play.rt.hud.is_empty() {
+                if !play.rt.hud.is_empty() && !play.rt.in_cutscene(&self.scene) {
                     let pos = rect.left_top() + egui::vec2(16.0, 14.0);
                     let font = FontId::proportional(20.0);
                     painter.text(pos + egui::vec2(1.5, 1.5), Align2::LEFT_TOP, &play.rt.hud, font.clone(), Color32::BLACK);
                     painter.text(pos, Align2::LEFT_TOP, &play.rt.hud, font, Color32::WHITE);
+                }
+                // meters: normal ones stacked on the left, boss bars ("!Name") wide at the bottom
+                let mut y = rect.top() + 14.0 + if play.rt.hud.is_empty() { 0.0 } else { 30.0 * play.rt.hud.lines().count() as f32 };
+                let mut boss_y = rect.bottom() - rect.height() * 0.13;
+                let cinema = play.rt.in_cutscene(&self.scene);
+                for (name, value, c) in play.rt.bars().iter().filter(|_| !cinema) {
+                    let color = Color32::from_rgb((c[0] * 255.0) as u8, (c[1] * 255.0) as u8, (c[2] * 255.0) as u8);
+                    let (r, label, align) = match name.strip_prefix('!') {
+                        Some(label) => {
+                            let w = (rect.width() * 0.5).min(620.0);
+                            let r = Rect::from_min_size(Pos2::new(rect.center().x - w / 2.0, boss_y), egui::vec2(w, 12.0));
+                            boss_y -= 40.0;
+                            (r, label, Align2::CENTER_BOTTOM)
+                        }
+                        None => {
+                            let r = Rect::from_min_size(Pos2::new(rect.left() + 16.0, y + 16.0), egui::vec2(230.0, 12.0));
+                            y += 34.0;
+                            (r, name.as_str(), Align2::LEFT_BOTTOM)
+                        }
+                    };
+                    let anchor = if align == Align2::CENTER_BOTTOM { r.center_top() } else { r.left_top() } + egui::vec2(0.0, -2.0);
+                    painter.text(anchor + egui::vec2(1.0, 1.0), align, label, FontId::proportional(13.0), Color32::BLACK);
+                    painter.text(anchor, align, label, FontId::proportional(13.0), Color32::from_gray(235));
+                    painter.rect_filled(r.expand(2.0), 3.0, Color32::from_black_alpha(190));
+                    let mut fill = r;
+                    fill.set_width(r.width() * value.clamp(0.0, 1.0));
+                    painter.rect_filled(fill, 2.0, color);
+                }
+                if let Some(text) = play.rt.banner() {
+                    let pos = Pos2::new(rect.center().x, rect.top() + rect.height() * 0.36);
+                    let size = (rect.width() * 0.055).clamp(24.0, 64.0);
+                    painter.text(pos + egui::vec2(3.0, 3.0), Align2::CENTER_CENTER, text, FontId::proportional(size), Color32::from_black_alpha(220));
+                    painter.text(pos, Align2::CENTER_CENTER, text, FontId::proportional(size), Color32::from_rgb(240, 225, 190));
                 }
                 if let Some(q) = &play.rt.qte {
                     draw_qte(&painter, rect, q);

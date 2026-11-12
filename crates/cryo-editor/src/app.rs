@@ -367,6 +367,18 @@ impl State {
         }
     }
 
+    /// Creates the Ashen Keep example game in a folder chosen by the user and opens it.
+    pub fn new_ashen_dialog(&mut self) {
+        let picked = rfd::FileDialog::new()
+            .set_title(tr!("Choose an empty folder for the Ashen Keep example", "Escolha uma pasta vazia para o exemplo Ashen Keep"))
+            .pick_folder();
+        let Some(dir) = picked else { return };
+        match crate::ashen::create(&dir) {
+            Ok(_) => self.open_project(dir),
+            Err(e) => self.error(e),
+        }
+    }
+
     pub fn open_project_dialog(&mut self) {
         let picked = rfd::FileDialog::new()
             .set_title(tr!("Choose a project folder (an empty folder becomes a new project)", "Escolha a pasta do projeto (uma pasta vazia vira um projeto novo)"))
@@ -1127,6 +1139,17 @@ impl App {
                     ui.close();
                     st.open_project_dialog();
                 }
+                if ui
+                    .button(tr!("New example: Ashen Keep (hack and slash)…", "Novo exemplo: Ashen Keep (hack and slash)…"))
+                    .on_hover_text(tr!(
+                        "A medieval action game with one complete level: combat, enemies, gates, a boss and a finishing quick time event.",
+                        "Um jogo de ação medieval com uma fase completa: combate, inimigos, portões, um chefe e um quick time event de finalização."
+                    ))
+                    .clicked()
+                {
+                    ui.close();
+                    st.new_ashen_dialog();
+                }
                 ui.separator();
                 if ui.button(tr!("New scene", "Nova cena")).clicked() {
                     st.new_scene();
@@ -1337,6 +1360,16 @@ impl eframe::App for App {
         if let Some(play) = &mut self.st.play {
             if !play.paused {
                 let dt = ctx.input(|i| i.stable_dt).min(0.1);
+                // CRYO_DEMO=fight skips the opening and walks the hero forward (for screenshots)
+                if std::env::var("CRYO_DEMO").as_deref() == Ok("fight") {
+                    if play.rt.in_cutscene(&self.st.scene) {
+                        play.rt.skip_cutscenes(&mut self.st.scene, &mut self.st.logs);
+                    }
+                    self.st.input.down.insert("w".into());
+                    if play.rt.real_time > 2.2 && (play.rt.real_time * 2.0).fract() < 0.1 {
+                        self.st.input.pressed.insert("j".into());
+                    }
+                }
                 play.rt.update(&mut self.st.scene, &self.st.input, dt, &mut self.st.logs);
                 // CRYO_DEMO=qte shows a quick time event shortly after Play (for screenshots)
                 if play.rt.qte.is_none() && play.rt.real_time > 1.0 && play.rt.qte_result.is_none() {

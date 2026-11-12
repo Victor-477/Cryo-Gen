@@ -1,0 +1,3 @@
+newmtl cobble
+Kd 1 1 1
+map_Kd tex_cobble.png

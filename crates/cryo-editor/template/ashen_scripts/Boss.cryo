@@ -1,0 +1,249 @@
+// The Ashen Warden. Sleeps on the throne steps until the knight enters the hall, then
+// alternates a wide sweep and an overhead slam. Below half health it gets faster.
+// At zero it kneels: a quick time event decides whether the knight finishes the fight.
+script Boss {
+    prop max_health: num = 460
+    prop damage: num = 26
+    prop speed: num = 3.0
+
+    var health = 460
+    var model: entity = nil
+    var hero: entity = nil
+    var home = vec3(0)
+    var yaw = 180
+    var struck = false
+    var enraged = false
+    var next_slam = false
+
+    on start() {
+        model = self.child("Model")
+        hero = scene.find("Hero")
+        home = self.position
+        health = max_health
+    }
+
+    fn to_hero() -> vec3 {
+        var d = hero.position - self.position
+        d.y = 0
+        return d
+    }
+
+    fn forward() -> vec3 {
+        let a = rad(yaw)
+        return vec3(-sin(a), 0, -cos(a))
+    }
+
+    fn face(d: vec3) {
+        if length(d) > 0.01 {
+            yaw = deg(atan2(-d.x, -d.z))
+        }
+    }
+
+    fn drive(v: vec3) {
+        var cur = self.velocity
+        cur.x = v.x
+        cur.z = v.z
+        self.velocity = cur
+    }
+
+    fn pace() -> num {
+        if enraged {
+            return 1.35
+        }
+        return 1
+    }
+
+    on update(dt) {
+        if model != nil {
+            var r = model.rotation
+            r.y += wrap(yaw - r.y, -180, 180) * min(1, dt * 7)
+            model.rotation = r
+        }
+        if current_state() != "asleep" and current_state() != "dead" {
+            bar("!The Ashen Warden", max(health, 0) / max_health, vec3(0.75, 0.3, 0.1))
+        }
+    }
+
+    on boss_wake() {
+        if current_state() == "asleep" {
+            goto roar
+        }
+    }
+
+    on hit(amount, from) {
+        if current_state() == "asleep" or current_state() == "dead" or current_state() == "kneel" {
+            return
+        }
+        health -= amount
+        if health <= 0 {
+            goto kneel
+        }
+        if not enraged and health < max_health * 0.5 {
+            enraged = true
+            goto roar
+        }
+    }
+
+    on hero_respawned() {
+        if current_state() != "dead" {
+            self.position = home
+            health = max_health
+            enraged = false
+            bar("!The Ashen Warden", -1)
+            goto asleep
+        }
+    }
+
+    on qte_success(name) {
+        if name == "execute" {
+            time.scale = 1
+            goto dead
+        }
+    }
+
+    on qte_fail(name) {
+        if name == "execute" {
+            // the Warden rises again
+            time.scale = 1
+            health = max_health * 0.25
+            goto roar
+        }
+    }
+
+    state asleep {
+        on enter() {
+            model.animate("Kneel", 1, false)
+        }
+        on update(dt) {
+            drive(vec3(0))
+        }
+    }
+
+    state roar {
+        on enter() {
+            model.animate("Roar", 1, false)
+            audio.play("sounds/roar.wav", 0.9)
+            emit("shake", 0.6)
+        }
+        on update(dt) {
+            drive(vec3(0))
+            face(to_hero())
+            if state_time() >= 1.6 {
+                goto chase
+            }
+        }
+    }
+
+    state chase {
+        on enter() {
+            model.animate("Walk", pace(), true)
+        }
+        on update(dt) {
+            let d = to_hero()
+            if global.hero_alive != true {
+                drive(vec3(0))
+                return
+            }
+            face(d)
+            if length(d) < 3.0 {
+                next_slam = not next_slam
+                if next_slam {
+                    goto slam
+                }
+                goto sweep
+            }
+            drive(normalize(d) * speed * pace())
+        }
+    }
+
+    // A wide horizontal cut: roll through it or block it.
+    state sweep {
+        on enter() {
+            struck = false
+            model.animate("Sweep", pace(), false)
+        }
+        on update(dt) {
+            drive(vec3(0))
+            let d = to_hero()
+            if state_time() < 0.3 / pace() {
+                face(d)
+            }
+            if not struck and state_time() >= 0.58 / pace() {
+                struck = true
+                audio.play("sounds/swing.wav", 0.9)
+                if length(d) < 4.0 and dot(normalize(d), forward()) > -0.2 {
+                    hero.send("hit", damage, self.position)
+                }
+            }
+            if state_time() >= 1.3 / pace() {
+                goto rest
+            }
+        }
+    }
+
+    // An overhead blow that shakes the ground around the Warden: get away from it.
+    state slam {
+        on enter() {
+            struck = false
+            model.animate("Slam", pace(), false)
+        }
+        on update(dt) {
+            drive(vec3(0))
+            let d = to_hero()
+            if state_time() < 0.45 / pace() {
+                face(d)
+            }
+            if not struck and state_time() >= 0.68 / pace() {
+                struck = true
+                audio.play("sounds/slam.wav", 1)
+                emit("shake", 0.8)
+                if length(d) < 3.6 {
+                    hero.send("hit", damage * 1.5, self.position)
+                }
+            }
+            if state_time() >= 1.5 / pace() {
+                goto rest
+            }
+        }
+    }
+
+    state rest {
+        on enter() {
+            model.animate("Idle", 1, true)
+        }
+        on update(dt) {
+            drive(vec3(0))
+            face(to_hero())
+            if state_time() >= 0.9 / pace() {
+                goto chase
+            }
+        }
+    }
+
+    state kneel {
+        on enter() {
+            drive(vec3(0))
+            model.animate("Kneel", 1, false)
+            time.scale = 0.5
+            banner("FINISH HIM", 2)
+            qte.mash("f", 6, 4, "execute")
+        }
+        on update(dt) {
+            drive(vec3(0))
+        }
+    }
+
+    state dead {
+        on enter() {
+            self.tag = "fallen"
+            bar("!The Ashen Warden", -1)
+            model.animate("Die", 0.7, false)
+            audio.play("sounds/slam.wav", 0.8)
+            emit("shake", 0.7)
+            emit("victory")
+        }
+        on update(dt) {
+            drive(vec3(0))
+        }
+    }
+}

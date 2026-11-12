@@ -1,0 +1,22 @@
+// A portcullis that rises when its area has been cleared.
+script Gate {
+    prop area: text = "bailey"
+    prop rise: num = 5.4
+    var opening = false
+    var raised = 0
+
+    on area_clear(which) {
+        if which == area and not opening {
+            opening = true
+            audio.play("sounds/gate.wav", 0.9)
+        }
+    }
+
+    on update(dt) {
+        if opening and raised < rise {
+            let step = min(rise - raised, 1.8 * dt)
+            raised += step
+            self.translate(vec3(0, step, 0))
+        }
+    }
+}

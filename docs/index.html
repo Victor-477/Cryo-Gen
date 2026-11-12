@@ -77,7 +77,7 @@ footer { margin-top: 70px; color: var(--muted); font-size: .86rem; border-top: 1
 <div class="layout">
 <nav>
   <a class="brand" href="#top">❄ Cryo Engine</a>
-  <div class="version">Documentation · 0.4.0-beta</div>
+  <div class="version">Documentation · 0.7.0-beta</div>
   <h4>Start</h4>
   <a class="item" href="#top">Overview</a>
   <a class="item" href="#install">Download and install</a>
@@ -102,6 +102,7 @@ footer { margin-top: 70px; color: var(--muted); font-size: .86rem; border-top: 1
   <a class="item" href="#physics">Physics</a>
   <h4>Projects</h4>
   <a class="item" href="#example">Example: Frostpeak Isles</a>
+  <a class="item" href="#ashen">Example: Ashen Keep</a>
   <a class="item" href="#export">Exporting a game</a>
   <a class="item" href="#source">Building from source</a>
   <a class="item" href="#limits">Known limits</a>
@@ -435,7 +436,7 @@ scene.set_camera(scene.find(<span class="s">"Boss Camera"</span>))   <span class
 <tr><td><code>distance_to(entity)</code></td><td>Distance between two entities.</td></tr>
 <tr><td><code>send("event", args...)</code></td><td>Run <code>on event(...)</code> in that entity's script.</td></tr>
 <tr><td><code>child("Name")</code>, <code>children()</code></td><td>A direct child by name (or <code>nil</code>), and the list of children.</td></tr>
-<tr><td><code>animate("Clip")</code>, <code>animate("Clip", speed)</code></td><td>Play a clip of a rigged model, blending from the current pose. <code>animate("")</code> returns to the rest pose.</td></tr>
+<tr><td><code>animate("Clip")</code>, <code>animate("Clip", speed)</code></td><td>Play a clip of a rigged model, blending from the current pose. <code>animate("Clip", speed, false)</code> plays it once and holds the last pose. <code>animate("")</code> returns to the rest pose.</td></tr>
 <tr><td><code>destroy()</code>, <code>exists()</code></td><td>Remove at the end of the frame / check it is still there.</td></tr>
 <tr><td><code>add_physics("dynamic"|"static", "box"|"sphere")</code></td><td>Give a spawned entity a body.</td></tr>
 </table></div>
@@ -450,6 +451,7 @@ scene.set_camera(scene.find(<span class="s">"Boss Camera"</span>))   <span class
 <tr><td><code>time</code></td><td><code>.dt</code>, <code>.total</code> (seconds since Play), <code>.scale</code> (1 is normal speed, 0.3 is slow motion, 0 freezes the game).</td></tr>
 <tr><td><code>audio</code></td><td><code>.play(file)</code>, <code>.play(file, volume)</code>, <code>.music(file)</code> (loops), <code>.stop_music()</code>, <code>.stop()</code>, <code>.volume</code>.</td></tr>
 <tr><td><code>log(...)</code></td><td>Print to the Console.</td></tr>
+<tr><td><code>bar(name, value)</code>, <code>banner(text, seconds)</code></td><td>Meters and large messages on the game screen: see <a href="#ashen">Ashen Keep</a>.</td></tr>
 <tr><td><code>hud(...)</code></td><td>Text on the game screen (use <code>\n</code> for a second line).</td></tr>
 </table></div>
 
@@ -589,6 +591,30 @@ scene.set_camera(scene.find(<span class="s">"Boss Camera"</span>))   <span class
 </table></div>
 <p>The hero's root entity holds the Physics box and the script and has no mesh; its child <code>KipModel</code> holds the visible shapes and turns to face the movement, so the collider never rotates. Every mechanic is covered by an automated play-through test in the repository.</p>
 
+<h2 id="ashen">Example: Ashen Keep</h2>
+<p>A medieval hack and slash with one complete level. Create it with <b>File &gt; New example: Ashen Keep</b> and an empty folder.</p>
+<figure><img src="img/ashen.png" alt="A knight fighting skeletons in a castle bailey at dusk">
+<figcaption>The outer bailey. Characters are rigged glTF models animated by their skeletons.</figcaption></figure>
+<div class="table-wrap"><table>
+<tr><td>Move / look</td><td><kbd>WASD</kbd> / mouse (<kbd>Tab</kbd> frees the mouse)</td></tr>
+<tr><td>Attack, up to a three-hit combo</td><td>left click or <kbd>J</kbd></td></tr>
+<tr><td>Heavy blow</td><td>right click or <kbd>K</kbd></td></tr>
+<tr><td>Roll, with a moment of invulnerability</td><td><kbd>Space</kbd></td></tr>
+<tr><td>Block</td><td>hold <kbd>Shift</kbd></td></tr>
+<tr><td>Potion</td><td><kbd>Q</kbd></td></tr>
+</table></div>
+<p>Clear the bailey to raise the first gate, clear the courtyard (soldiers, archers and a brute) to raise the second, and face the Ashen Warden in the great hall. When it kneels, a quick time event decides the fight. Shrines are checkpoints.</p>
+<h3>How it is built</h3>
+<div class="table-wrap"><table>
+<tr><td><code>Hero.cryo</code></td><td>The knight as a state machine: free, attack, heavy, roll, block, hurt, dead.</td></tr>
+<tr><td><code>Enemy.cryo</code></td><td>One script for soldiers, archers and the brute; only the properties change.</td></tr>
+<tr><td><code>Boss.cryo</code></td><td>Two attacks, a faster second phase and the finishing quick time event.</td></tr>
+<tr><td><code>Director.cryo</code>, <code>Gate.cryo</code></td><td>Enemies <code>emit</code> when they fall; the director counts them and the gates listen for <code>area_clear</code>.</td></tr>
+<tr><td><code>bar(name, value, colour)</code>, <code>banner(text, seconds)</code></td><td>The health, stamina and boss meters and the large messages. A bar named <code>"!Name"</code> is drawn wide at the bottom; a negative value removes it.</td></tr>
+<tr><td><code>tools/make_ashen_assets.py</code></td><td>Generates every model (rigged characters with their animation clips, walls, towers, props) and texture from code.</td></tr>
+</table></div>
+<p>The models are generated from code and textured; the renderer has textures, coloured lights, shadows and fog (<b>Scene settings &gt; Fog</b>), but no PBR materials, normal maps or post-processing.</p>
+
 <h2 id="export">Exporting a game</h2>
 <ol>
   <li>Open the scene the game should start in and check the <b>Game</b> tab.</li>
@@ -609,7 +635,7 @@ cargo test                               <span class="c"># all tests</span></cod
 
 <h2 id="limits">Known limits</h2>
 <ul>
-  <li>Skeletal animation is computed on the processor: fine for a few characters, slow for crowds. Clips play one at a time per model (with a blend when switching); there are no morph targets.</li>
+  <li>Skeletal animation plays one clip at a time per model (with a blend when switching). Models with up to 64 joints are posed on the graphics card; larger skeletons fall back to the processor. There are no morph targets.</li>
   <li>Modelling works on <code>.obj</code> models, one material per model, with automatic texture coordinates. There are no loop cuts, bevels or boolean operations yet.</li>
   <li>Models use base colour and base texture; full PBR materials are not read yet.</li>
   <li>Shadows come from the first directional light only. Their reach is a setting of the light.</li>

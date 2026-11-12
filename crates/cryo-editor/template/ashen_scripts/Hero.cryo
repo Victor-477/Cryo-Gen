@@ -1,0 +1,315 @@
+// The knight. WASD moves (relative to the camera), left click or J attacks (up to a
+// three-hit combo), right click or K is a heavy blow, Space rolls, Shift blocks, Q drinks a potion.
+// Each thing the knight can be doing is a `state`.
+script Hero {
+    prop speed: num = 6.5
+    prop max_health: num = 100
+    prop damage: num = 24
+
+    var health = 100
+    var stamina = 100
+    var potions = 2
+    var model: entity = nil
+    var yaw = 0              // where the knight wants to face
+    var shown_yaw = 0        // where the model is facing (follows smoothly)
+    var combo = 1
+    var queued = false
+    var struck = false
+    var blocking = false
+    var safe = 0             // seconds of invulnerability left
+    var roll_dir = vec3(0, 0, -1)
+    var spawn = vec3(0)
+
+    on start() {
+        model = self.child("HeroModel")
+        health = max_health
+        spawn = self.position
+        global.hero_alive = true
+        input.lock_mouse(true)
+    }
+
+    fn wish() -> vec3 {
+        let a = rad(global.cam_yaw)
+        var d = vec3(-sin(a), 0, -cos(a)) * input.axis("vertical") + vec3(cos(a), 0, -sin(a)) * input.axis("horizontal")
+        if length(d) > 1 {
+            d = normalize(d)
+        }
+        return d
+    }
+
+    fn forward() -> vec3 {
+        let a = rad(yaw)
+        return vec3(-sin(a), 0, -cos(a))
+    }
+
+    fn face(d: vec3) {
+        yaw = deg(atan2(-d.x, -d.z))
+    }
+
+    fn drive(v: vec3) {
+        var cur = self.velocity
+        cur.x = v.x
+        cur.z = v.z
+        self.velocity = cur
+    }
+
+    // Turns to the closest enemy in reach, so blows land where the player means them.
+    fn aim() {
+        var best = 4.5
+        for e in scene.tagged("enemy") {
+            var d = e.position - self.position
+            d.y = 0
+            if length(d) < best and length(d) > 0.05 {
+                best = length(d)
+                face(d)
+            }
+        }
+    }
+
+    // Hits every enemy inside the arc in front of the knight.
+    fn strike(reach: num, arc: num, amount: num) {
+        var landed = false
+        for e in scene.tagged("enemy") {
+            var d = e.position - self.position
+            d.y = 0
+            let dist = length(d)
+            if dist < reach and (dist < 0.6 or dot(normalize(d), forward()) > arc) {
+                e.send("hit", amount, self.position)
+                landed = true
+            }
+        }
+        if landed {
+            audio.play("sounds/hit.wav", 0.8)
+            emit("shake", 0.25)
+        }
+    }
+
+    on update(dt) {
+        safe = max(0, safe - dt)
+        shown_yaw += wrap(yaw - shown_yaw, -180, 180) * min(1, dt * 16)
+        if model != nil {
+            model.rotation = vec3(0, shown_yaw, 0)
+        }
+        bar("Health", max(health, 0) / max_health, vec3(0.8, 0.16, 0.14))
+        bar("Stamina", stamina / 100, vec3(0.3, 0.72, 0.36))
+        if self.position.y < -12 and current_state() != "dead" {
+            health = 0
+            goto dead
+        }
+    }
+
+    on key_down(key) {
+        if key == "q" and potions > 0 and health < max_health and current_state() != "dead" {
+            potions -= 1
+            health = min(max_health, health + 45)
+            audio.play("sounds/heal.wav", 0.7)
+            emit("potions", potions)
+        }
+    }
+
+    on hit(amount, from) {
+        if current_state() == "dead" or safe > 0 {
+            return
+        }
+        var taken = amount
+        var d = from - self.position
+        d.y = 0
+        if blocking and length(d) > 0.01 and dot(normalize(d), forward()) > 0.2 and stamina > 5 {
+            taken = amount * 0.15
+            stamina = max(0, stamina - 18)
+            audio.play("sounds/block.wav", 0.8)
+        } else {
+            audio.play("sounds/hurt.wav", 0.8)
+        }
+        health -= taken
+        emit("shake", 0.35)
+        if health <= 0 {
+            goto dead
+        }
+        if not blocking {
+            goto hurt
+        }
+    }
+
+    on pickup_potion() {
+        potions += 1
+        audio.play("sounds/heal.wav", 0.5)
+        emit("potions", potions)
+    }
+
+    on checkpoint(where) {
+        spawn = where
+        health = max_health
+    }
+
+    on respawn() {
+        self.position = spawn
+        self.velocity = vec3(0)
+        health = max_health
+        stamina = 100
+        potions = max(potions, 2)
+        global.hero_alive = true
+        emit("hero_respawned")
+        emit("potions", potions)
+        goto free
+    }
+
+    state free {
+        on update(dt) {
+            let d = wish()
+            if length(d) > 0.1 {
+                face(d)
+                drive(d * speed)
+                model.animate("Run", 1, true)
+            } else {
+                drive(vec3(0))
+                model.animate("Idle", 1, true)
+            }
+            stamina = min(100, stamina + 24 * dt)
+            if input.pressed("mouse_left") or input.pressed("j") {
+                combo = 1
+                goto attack
+            }
+            if (input.pressed("mouse_right") or input.pressed("k")) and stamina >= 25 {
+                goto heavy
+            }
+            if input.pressed("space") and stamina >= 20 {
+                goto roll
+            }
+            if input.down("shift") {
+                goto block
+            }
+        }
+    }
+
+    state attack {
+        on enter() {
+            struck = false
+            queued = false
+            aim()
+            stamina = max(0, stamina - 7)
+            audio.play("sounds/swing.wav", 0.5)
+            match combo {
+                1 => model.animate("Attack1", 1.25, false)
+                2 => model.animate("Attack2", 1.25, false)
+                else => model.animate("Attack3", 1.25, false)
+            }
+        }
+        on update(dt) {
+            let t = state_time()
+            var hit_at = 0.17
+            var ends = 0.4
+            if combo == 3 {
+                hit_at = 0.25
+                ends = 0.56
+            }
+            if t < 0.18 {
+                drive(forward() * 3.5)      // a short lunge into the blow
+            } else {
+                drive(vec3(0))
+            }
+            if not struck and t >= hit_at {
+                struck = true
+                if combo == 3 {
+                    strike(2.7, 0.3, damage * 1.6)
+                } else {
+                    strike(2.5, 0.1, damage)
+                }
+            }
+            if input.pressed("mouse_left") or input.pressed("j") {
+                queued = true
+            }
+            if t >= ends {
+                if queued and combo < 3 {
+                    combo += 1
+                    goto attack
+                }
+                goto free
+            }
+        }
+    }
+
+    state heavy {
+        on enter() {
+            struck = false
+            aim()
+            stamina -= 25
+            audio.play("sounds/swing.wav", 0.7)
+            model.animate("Heavy", 1.2, false)
+        }
+        on update(dt) {
+            drive(vec3(0))
+            if not struck and state_time() >= 0.37 {
+                struck = true
+                strike(3.0, -0.2, damage * 2.4)     // wide: also hits enemies at the sides
+            }
+            if state_time() >= 0.83 {
+                goto free
+            }
+        }
+    }
+
+    state roll {
+        on enter() {
+            stamina -= 20
+            safe = 0.42
+            roll_dir = wish()
+            if length(roll_dir) < 0.1 {
+                roll_dir = forward()
+            }
+            face(roll_dir)
+            audio.play("sounds/roll.wav", 0.5)
+            model.animate("Roll", 1.1, false)
+        }
+        on update(dt) {
+            drive(roll_dir * 10.5)
+            if state_time() >= 0.5 {
+                goto free
+            }
+        }
+    }
+
+    state block {
+        on enter() {
+            blocking = true
+            aim()
+            model.animate("Block", 1, false)
+        }
+        on update(dt) {
+            drive(vec3(0))
+            stamina = min(100, stamina + 8 * dt)
+            if not input.down("shift") {
+                goto free
+            }
+        }
+        on exit() {
+            blocking = false
+        }
+    }
+
+    state hurt {
+        on enter() {
+            model.animate("Hit", 1, false)
+        }
+        on update(dt) {
+            drive(vec3(0))
+            if state_time() >= 0.3 {
+                goto free
+            }
+        }
+    }
+
+    state dead {
+        on enter() {
+            global.hero_alive = false
+            drive(vec3(0))
+            model.animate("Die", 1, false)
+            audio.play("sounds/die.wav", 0.8)
+            banner("YOU DIED", 3)
+            after(3.2, "respawn")
+        }
+        on update(dt) {
+            drive(vec3(0))
+        }
+    }
+}

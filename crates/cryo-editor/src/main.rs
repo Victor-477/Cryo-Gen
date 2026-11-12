@@ -9,6 +9,7 @@
 mod i18n;
 mod anim;
 mod app;
+mod ashen;
 mod assets;
 mod audio;
 mod mesh_edit;
@@ -34,16 +35,27 @@ fn main() -> eframe::Result {
     let mut project_dir: Option<PathBuf> = None;
     let mut autoplay = false;
     let mut game_flag = false;
+    let mut ashen_flag = false;
     for arg in std::env::args().skip(1) {
         match arg.as_str() {
             "--play" => autoplay = true,
             "--game" => game_flag = true,
+            "--ashen" => ashen_flag = true,
             "-h" | "--help" => {
-                println!("Cryo Engine\n\nUsage: cryo [project_folder] [--play | --game]\n\n  --play   open the project already in Play mode\n  --game   run only the game, without the editor");
+                println!("Cryo Engine\n\nUsage: cryo [project_folder] [--play | --game | --ashen]\n\n  --ashen  create the Ashen Keep example game in the folder (if it is empty) and open it\n  --play   open the project already in Play mode\n  --game   run only the game, without the editor");
                 return Ok(());
             }
             other => project_dir = Some(PathBuf::from(other)),
         }
+    }
+    if ashen_flag {
+        let dir = project_dir.clone().unwrap_or_else(|| settings::default_project_dir().with_file_name("AshenKeep"));
+        if project::list_files(&dir, project::SCENE_EXT).is_empty() {
+            if let Err(e) = ashen::create(&dir) {
+                eprintln!("{e}");
+            }
+        }
+        project_dir = Some(dir);
     }
     // Exported executable: finds the `game/` folder next to it and opens straight into the game.
     let bundled = if project_dir.is_none() { project::bundled_game() } else { None };

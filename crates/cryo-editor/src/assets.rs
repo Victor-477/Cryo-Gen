@@ -62,13 +62,14 @@ pub struct Assets {
     pub errors: Vec<String>,
     /// Animated models in their current pose, per entity.
     posed: HashMap<u64, (PoseKey, Arc<ModelData>)>,
+    joint_mats: HashMap<u64, (PoseKey, Arc<Vec<Vec<Mat4>>>)>,
 }
 
 type PoseKey = (u64, Option<usize>, u32, Option<usize>, u32, u32);
 
 impl Assets {
     pub fn new(project_dir: PathBuf) -> Self {
-        Assets { project_dir, models: HashMap::new(), textures: HashMap::new(), overrides: HashMap::new(), errors: vec![], posed: HashMap::new() }
+        Assets { project_dir, models: HashMap::new(), textures: HashMap::new(), overrides: HashMap::new(), errors: vec![], posed: HashMap::new(), joint_mats: HashMap::new() }
     }
 
     pub fn model(&mut self, rel: &str) -> Option<Arc<ModelData>> {
@@ -111,6 +112,41 @@ impl Assets {
             .unwrap_or_default()
     }
 
+    /// The joint matrices of the entity's current pose, for skinning on the graphics card.
+    /// `None` for models without a skeleton, or with more joints than the shader takes.
+    pub fn pose_matrices(
+        &mut self,
+        entity: u64,
+        base: &Arc<ModelData>,
+        m: &crate::scene::MeshRenderer,
+    ) -> Option<Arc<Vec<Vec<Mat4>>>> {
+        let sk = base.skeleton.as_ref()?;
+        if sk.skins.iter().any(|s| s.joints.len() > crate::render::MAX_JOINTS) {
+            return None;
+        }
+        let clip = sk.clip_index(&m.animation);
+        let t = sk.clip_time(clip, m.anim.time, m.anim_loop);
+        let fade = m.anim.fade.clamp(0.0, 1.0);
+        let prev = if fade > 0.0 { sk.clip_index(&m.anim.prev) } else { None };
+        let prev_t = sk.clip_time(prev, m.anim.prev_time, true);
+        let key: PoseKey = (base.id, clip, t.to_bits(), prev, prev_t.to_bits(), fade.to_bits());
+        if let Some((k, mats)) = self.joint_mats.get(&entity) {
+            if *k == key {
+                return Some(mats.clone());
+            }
+        }
+        let mut locals = sk.locals(clip, t);
+        if fade > 0.0 {
+            locals = Skeleton::blend(&locals, &sk.locals(prev, prev_t), fade);
+        }
+        let mats = Arc::new(sk.skin_matrices(&sk.globals(&locals)));
+        if self.joint_mats.len() > 2048 {
+            self.joint_mats.clear();
+        }
+        self.joint_mats.insert(entity, (key, mats.clone()));
+        Some(mats)
+    }
+
     /// The model in the pose asked by the entity's mesh component (skeletal animation).
     /// Models without a skeleton are returned as they are.
     pub fn posed(&mut self, entity: u64, base: &Arc<ModelData>, m: &crate::scene::MeshRenderer) -> Arc<ModelData> {
@@ -145,7 +181,7 @@ impl Assets {
                     indices: s.indices.clone(),
                     color: s.color,
                     texture: s.texture.clone(),
-                    skin: s.skin.clone(),
+                    skin: None, // already in its pose: drawn like any static mesh
                 }
             })
             .collect();

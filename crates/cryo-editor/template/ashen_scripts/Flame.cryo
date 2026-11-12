@@ -1,0 +1,10 @@
+// A torch flame that flickers.
+script Flame {
+    var base = vec3(1)
+    on start() {
+        base = self.scale
+    }
+    on update(dt) {
+        self.scale = base * (0.85 + random() * 0.3)
+    }
+}

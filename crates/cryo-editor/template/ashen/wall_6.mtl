@@ -1,0 +1,5 @@
+newmtl stone
+Kd 1 1 1
+map_Kd tex_stone.png
+newmtl black
+Kd 0.03 0.03 0.04

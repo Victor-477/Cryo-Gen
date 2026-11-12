@@ -341,6 +341,9 @@ pub struct Scene {
     pub sky_horizon: [f32; 3],
     #[serde(default = "default_gravity")]
     pub gravity: f32,
+    /// Distance fog, in the colour of the horizon: 0 is off, 0.02 is a light haze, 0.06 is thick.
+    #[serde(default)]
+    pub fog: f32,
     /// Animation clips and cutscenes (see `anim.rs`).
     #[serde(default)]
     pub animations: Vec<crate::anim::Clip>,
@@ -358,6 +361,7 @@ impl Scene {
             ambient: [0.30, 0.33, 0.40],
             sky_top: [0.16, 0.32, 0.58],
             sky_horizon: [0.66, 0.78, 0.90],
+            fog: 0.0,
             gravity: default_gravity(),
             animations: vec![],
         }
