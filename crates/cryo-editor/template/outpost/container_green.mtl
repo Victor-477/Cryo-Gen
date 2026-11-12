@@ -1,0 +1,9 @@
+newmtl green
+Kd 0.26 0.42 0.3
+map_Kd tex_container.png
+newmtl gunmetal
+Kd 0.42 0.44 0.48
+map_Kd tex_gunmetal.png
+newmtl steel
+Kd 0.7 0.72 0.76
+map_Kd tex_gunmetal.png

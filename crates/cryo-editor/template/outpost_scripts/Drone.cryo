@@ -1,0 +1,172 @@
+// A security drone. Hovers on guard until it sees the trooper, then keeps its distance,
+// circles and fires bolts that can be side-stepped. The heavy model only changes the numbers.
+script Drone {
+    prop max_health: num = 45
+    prop damage: num = 7
+    prop speed: num = 4.5
+    prop sight: num = 19
+    prop keep: num = 10            // the distance it likes to fight from
+    prop fire_every: num = 1.8
+    prop area: text = "yard"
+
+    var health = 45
+    var hero: entity = nil
+    var home = vec3(0)
+    var height = 2.6
+    var awake = false
+    var dead = false
+    var cool = 1
+    var phase = 0
+    var bolts = []
+    var blast: entity = nil
+
+    on start() {
+        hero = scene.find("Trooper")
+        home = self.position
+        height = home.y
+        health = max_health
+        phase = random(0, 6)
+        cool = random(0.5, fire_every)
+        emit("enemy_spawned", area)
+    }
+
+    fn target() -> vec3 {
+        return hero.position + vec3(0, 0.5, 0)
+    }
+
+    fn sees() -> bool {
+        let to = target() - self.position
+        if length(to) > sight {
+            return false
+        }
+        let hit = scene.raycast(self.position, to, sight, self)
+        return hit != nil and hit.entity == hero
+    }
+
+    // Static bodies go where the script puts them, so the drone checks the way is free first.
+    fn glide(step: vec3) {
+        if length(step) < 0.0001 {
+            return
+        }
+        let hit = scene.raycast(self.position, step, length(step) + 0.9, self)
+        if hit == nil {
+            self.translate(step)
+        }
+    }
+
+    on update(dt) {
+        // bolts in flight: they stop at whatever they meet
+        var flying = []
+        for b in bolts {
+            b.life -= dt
+            let hit = scene.raycast(b.shot.position, b.velocity, length(b.velocity) * dt + 0.25, self)
+            if hit != nil {
+                if hit.entity == hero {
+                    hero.send("hit", damage, b.shot.position)
+                }
+                b.life = 0
+            }
+            b.shot.translate(b.velocity * dt)
+            if b.life > 0 {
+                flying.push(b)
+            } else {
+                b.shot.destroy()
+            }
+        }
+        bolts = flying
+        if dead {
+            if blast != nil {
+                blast.scale = blast.scale + vec3(9 * dt)
+            }
+            return
+        }
+
+        var p = self.position
+        p.y = height + sin(time.total * 2 + phase) * 0.22
+        self.position = p
+        if not awake {
+            self.rotate(vec3(0, 25 * dt, 0))
+            if global.hero_alive == true and sees() {
+                awake = true
+                audio.play("sounds/alert.wav", 0.5)
+                emit("alarm", area)
+            }
+            return
+        }
+        if global.hero_alive != true {
+            return
+        }
+        self.look_at(target())
+        var flat = hero.position - self.position
+        flat.y = 0
+        let dist = length(flat)
+        let dir = normalize(flat)
+        let side = vec3(-dir.z, 0, dir.x) * sin(time.total * 0.7 + phase)
+        if dist > keep + 1.5 {
+            glide((dir + side * 0.5) * speed * dt)
+        } else if dist < keep - 2.5 {
+            glide((side * 0.5 - dir) * speed * dt)
+        } else {
+            glide(side * speed * 0.6 * dt)
+        }
+        cool -= dt
+        if cool <= 0 and can_fire() {
+            cool = fire_every
+            let from = self.position + self.forward * 0.9
+            let shot = scene.spawn("sphere", from)
+            shot.scale = vec3(0.2)
+            shot.color = vec3(1, 0.35, 0.1)
+            bolts.push({ shot: shot, velocity: normalize(target() - from) * 24, life: 3 })
+            audio.play("sounds/bolt.wav", 0.45)
+        }
+    }
+
+    on hit(amount, from) {
+        if dead {
+            return
+        }
+        health -= amount
+        awake = true
+        if health <= 0 {
+            dead = true
+            self.tag = "wreck"
+            self.visible = false
+            blast = scene.spawn("sphere", self.position)
+            blast.color = vec3(1, 0.6, 0.15)
+            blast.scale = vec3(0.4)
+            audio.play("sounds/boom.wav", 0.8)
+            emit("enemy_down", area)
+            after(0.3, "vanish")
+        }
+    }
+
+    on alarm(where) {
+        if where == area {
+            awake = true
+        }
+    }
+
+    fn can_fire() -> bool {
+        let hit = scene.raycast(self.position, target() - self.position, 60, self)
+        return hit != nil and hit.entity == hero
+    }
+
+    on vanish() {
+        for b in bolts {
+            b.shot.destroy()
+        }
+        if blast != nil {
+            blast.destroy()
+        }
+        self.destroy()
+    }
+
+    on hero_respawned() {
+        if not dead {
+            self.position = home
+            health = max_health
+            awake = false
+            cool = fire_every + random(0, 1)
+        }
+    }
+}

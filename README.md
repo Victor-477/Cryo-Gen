@@ -124,6 +124,16 @@ It shows the engine's newer features working together: rigged, animated characte
 
 The models are generated from code and textured, with relief painted into the colours. The renderer has textures, coloured lights, shadows and fog, but no PBR materials, normal maps or post-processing, so it is not a match for current big-budget games.
 
+## Example game: Outpost Kestrel
+
+A first-person shooter with one complete level in three sectors: the yard, the warehouse and the reactor room. Create it with **File > New example: Outpost Kestrel**, or `cargo run --release -- path/to/empty/folder --outpost`.
+
+![Outpost Kestrel](docs/img/outpost.png)
+
+`WASD` moves, the mouse aims, left click fires, `R` reloads, `Shift` runs, `Space` jumps. Clear each sector of security drones to open the next door, then destroy the three coolant nodes of the reactor.
+
+It shows first-person play in the engine: shots are `scene.raycast(...)` rays, drones check line of sight the same way, and the scene uses relief lighting (textures bump the light without normal maps) with coloured point lights at night. Models and textures come from `tools/make_outpost_assets.py`. The graphics are well short of a commercial shooter: there are no PBR materials, reflections or post-processing.
+
 ## Repository layout
 
 ```
@@ -149,12 +159,13 @@ crates/
     src/project.rs   project on disk, example game, import and export
     src/app.rs       editor state, menus, toolbar, layout
     src/ashen.rs     the Ashen Keep example: level layout, sounds, play-through tests
+    src/outpost.rs   the Outpost Kestrel example (first-person shooter)
     template/        scripts and generated assets of the example games
 tools/             make_ashen_assets.py: builds the Ashen Keep models and textures
 docs/              documentation site (GitHub Pages)
 ```
 
-## Known limits (0.7.0-beta)
+## Known limits (0.8.0-beta)
 
 - Skeletal animation: one clip per model at a time (blended when switching), up to 64 joints on the graphics card (more fall back to the CPU); no morph targets.
 - Modelling: `.obj` models, one material, automatic texture coordinates. No loop cuts, bevels or booleans yet.

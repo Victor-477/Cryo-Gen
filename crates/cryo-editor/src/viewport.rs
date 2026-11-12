@@ -1026,6 +1026,15 @@ impl State {
                     fill.set_width(r.width() * value.clamp(0.0, 1.0));
                     painter.rect_filled(fill, 2.0, color);
                 }
+                if play.rt.crosshair() && !cinema {
+                    let c = rect.center();
+                    for (a, b) in [((-11.0, 0.0), (-4.0, 0.0)), ((4.0, 0.0), (11.0, 0.0)), ((0.0, -11.0), (0.0, -4.0)), ((0.0, 4.0), (0.0, 11.0))] {
+                        let (p, q) = (c + egui::vec2(a.0, a.1), c + egui::vec2(b.0, b.1));
+                        painter.line_segment([p, q], egui::Stroke::new(3.5, Color32::from_black_alpha(160)));
+                        painter.line_segment([p, q], egui::Stroke::new(1.6, Color32::WHITE));
+                    }
+                    painter.circle_filled(c, 1.6, Color32::WHITE);
+                }
                 if let Some(text) = play.rt.banner() {
                     let pos = Pos2::new(rect.center().x, rect.top() + rect.height() * 0.36);
                     let size = (rect.width() * 0.055).clamp(24.0, 64.0);

@@ -1,0 +1,12 @@
+script Pickup {
+    prop kind: text = "ammo"
+    on update(dt) {
+        self.rotate(vec3(0, 70 * dt, 0))
+    }
+    on touch_start(other) {
+        if other.tag == "player" {
+            other.send("pickup", kind)
+            self.destroy()
+        }
+    }
+}

@@ -103,6 +103,7 @@ pub fn build_scene(dir: &Path) -> Scene {
     s.sky_horizon = [0.40, 0.44, 0.47];
     s.ambient = [0.30, 0.34, 0.42];
     s.fog = 0.021;
+    s.relief = 1.2;
     s.gravity = -24.0;
 
     let mut bounds: HashMap<String, ([f32; 3], [f32; 3])> = HashMap::new();

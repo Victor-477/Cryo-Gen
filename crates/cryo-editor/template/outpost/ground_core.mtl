@@ -1,0 +1,3 @@
+newmtl grate
+Kd 1 1 1
+map_Kd tex_grate.png

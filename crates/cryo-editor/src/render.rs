@@ -61,6 +61,7 @@ pub struct RenderFrame {
     pub sky_top: [f32; 3],
     pub sky_horizon: [f32; 3],
     pub fog: f32,
+    pub relief: f32,
     /// Lines: x, y, z, r, g, b, a per vertex.
     pub lines: Vec<f32>,
     /// Shadows from the first directional light: (centre of the covered area, radius).
@@ -184,6 +185,7 @@ impl RenderFrame {
             sky_top: scene.sky_top,
             sky_horizon: scene.sky_horizon,
             fog: scene.fog,
+            relief: scene.relief,
             lines: vec![],
             shadow,
         }
@@ -364,6 +366,7 @@ uniform vec3 u_cam;
 uniform vec3 u_ambient;
 uniform float u_fog;
 uniform vec3 u_fog_color;
+uniform float u_relief;
 uniform int u_ndir;
 uniform vec3 u_ldir[4];
 uniform vec3 u_ldir_color[4];
@@ -416,6 +419,20 @@ void main() {
     vec3 base = pow(albedo, vec3(2.2));
     vec3 n = normalize(v_normal);
     if (!gl_FrontFacing) n = -n;
+    if (u_relief > 0.0 && u_has_tex == 1) {
+        // bump mapping without a normal map: the brightness of the texture is the height,
+        // and screen-space derivatives give the slope (Mikkelsen's method)
+        float h = dot(texture(u_tex, v_uv).rgb, vec3(0.333));
+        vec3 dpx = dFdx(v_world);
+        vec3 dpy = dFdy(v_world);
+        float dhx = dFdx(h);
+        float dhy = dFdy(h);
+        vec3 r1 = cross(dpy, n);
+        vec3 r2 = cross(n, dpx);
+        float det = dot(dpx, r1);
+        vec3 grad = sign(det) * (dhx * r1 + dhy * r2);
+        n = normalize(abs(det) * n - u_relief * 0.06 * grad);
+    }
     vec3 v = normalize(u_cam - v_world);
     vec3 amb = mix(u_ambient * 0.45, u_ambient, n.y * 0.5 + 0.5);
     vec3 col = base * amb;
@@ -857,6 +874,7 @@ impl Renderer {
             gl.uniform_3_f32_slice(loc(p, "u_cam").as_ref(), &f.cam_pos.to_array());
             gl.uniform_3_f32_slice(loc(p, "u_ambient").as_ref(), &f.ambient);
             gl.uniform_1_f32(loc(p, "u_fog").as_ref(), f.fog.clamp(0.0, 1.0));
+            gl.uniform_1_f32(loc(p, "u_relief").as_ref(), f.relief.clamp(0.0, 4.0));
             gl.uniform_3_f32_slice(loc(p, "u_fog_color").as_ref(), &f.sky_horizon);
             gl.uniform_1_i32(loc(p, "u_ndir").as_ref(), f.dir_lights.len() as i32);
             for (i, (dir, color)) in f.dir_lights.iter().enumerate() {

@@ -368,6 +368,18 @@ impl State {
     }
 
     /// Creates the Ashen Keep example game in a folder chosen by the user and opens it.
+    /// Creates the Outpost Kestrel example game in a folder chosen by the user and opens it.
+    pub fn new_outpost_dialog(&mut self) {
+        let picked = rfd::FileDialog::new()
+            .set_title(tr!("Choose an empty folder for the Outpost Kestrel example", "Escolha uma pasta vazia para o exemplo Outpost Kestrel"))
+            .pick_folder();
+        let Some(dir) = picked else { return };
+        match crate::outpost::create(&dir) {
+            Ok(_) => self.open_project(dir),
+            Err(e) => self.error(e),
+        }
+    }
+
     pub fn new_ashen_dialog(&mut self) {
         let picked = rfd::FileDialog::new()
             .set_title(tr!("Choose an empty folder for the Ashen Keep example", "Escolha uma pasta vazia para o exemplo Ashen Keep"))
@@ -1149,6 +1161,17 @@ impl App {
                 {
                     ui.close();
                     st.new_ashen_dialog();
+                }
+                if ui
+                    .button(tr!("New example: Outpost Kestrel (first-person shooter)…", "Novo exemplo: Outpost Kestrel (tiro em primeira pessoa)…"))
+                    .on_hover_text(tr!(
+                        "A first-person shooter with one complete level: a rifle, security drones, three sectors and a reactor to shut down.",
+                        "Um jogo de tiro em primeira pessoa com uma fase completa: fuzil, drones de segurança, três setores e um reator para desligar."
+                    ))
+                    .clicked()
+                {
+                    ui.close();
+                    st.new_outpost_dialog();
                 }
                 ui.separator();
                 if ui.button(tr!("New scene", "Nova cena")).clicked() {

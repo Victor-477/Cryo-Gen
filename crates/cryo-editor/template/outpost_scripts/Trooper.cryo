@@ -1,0 +1,206 @@
+// The player of the first-person example. Mouse looks, WASD walks, Shift runs, Space jumps,
+// left click fires, R reloads, Tab frees the mouse.
+// Shots are rays: scene.raycast tells what the barrel is pointing at.
+script Trooper {
+    prop speed: num = 5.5
+    prop run_speed: num = 8.5
+    prop jump: num = 6.5
+    prop sensitivity: num = 0.12
+    prop max_health: num = 100
+    prop damage: num = 18
+    prop fire_every: num = 0.1
+    prop magazine: num = 30
+
+    var head: entity = nil
+    var gun: entity = nil
+    var flash: entity = nil
+    var yaw = 0
+    var pitch = 0
+    var health = 100
+    var ammo = 30
+    var reserve = 120
+    var cooldown = 0
+    var reloading = 0
+    var kick = 0
+    var flash_left = 0
+    var dead = false
+    var spawn = vec3(0)
+    var sparks = []
+    var gun_rest = vec3(0)
+    var safe = 0             // seconds of protection after coming back
+
+    on start() {
+        head = scene.find("Head")
+        gun = head.child("Rifle")
+        flash = head.child("Muzzle Flash")
+        gun_rest = gun.position
+        flash.visible = false
+        health = max_health
+        ammo = magazine
+        spawn = self.position
+        global.hero_alive = true
+        scene.set_camera(head)
+        input.lock_mouse(true)
+        crosshair(true)
+    }
+
+    fn eye() -> vec3 {
+        return self.position + vec3(0, 0.72, 0)
+    }
+
+    fn look() -> vec3 {
+        let a = rad(yaw)
+        let p = rad(pitch)
+        return vec3(-sin(a) * cos(p), sin(p), -cos(a) * cos(p))
+    }
+
+    fn fire() {
+        ammo -= 1
+        cooldown = fire_every
+        kick = 0.06
+        flash_left = 0.05
+        flash.visible = true
+        pitch = min(85, pitch + 0.5)                // recoil climbs a little
+        audio.play("sounds/shot.wav", 0.55)
+        let hit = scene.raycast(eye(), look(), 150, self)
+        if hit != nil {
+            if hit.entity.tag == "enemy" or hit.entity.tag == "target" {
+                hit.entity.send("hit", damage, hit.point)
+            }
+            let s = scene.spawn("sphere", hit.point)
+            s.scale = vec3(0.14)
+            s.color = vec3(1, 0.8, 0.35)
+            sparks.push({ dot: s, life: 0.07 })
+        }
+    }
+
+    on key_down(key) {
+        if key == "tab" {
+            input.lock_mouse(not input.mouse_locked)
+        }
+        if key == "r" and reloading <= 0 and ammo < magazine and reserve > 0 and not dead {
+            reloading = 1.4
+            audio.play("sounds/reload.wav", 0.7)
+        }
+    }
+
+    on hit(amount, from) {
+        if dead or safe > 0 {
+            return
+        }
+        health -= amount
+        pitch = clamp(pitch + random(-2, 2), -85, 85)
+        audio.play("sounds/hurt.wav", 0.7)
+        if health <= 0 {
+            dead = true
+            global.hero_alive = false
+            flash.visible = false
+            banner("YOU WERE KILLED", 3)
+            after(3.2, "respawn")
+        }
+    }
+
+    on respawn() {
+        self.position = spawn
+        self.velocity = vec3(0)
+        health = max_health
+        ammo = magazine
+        reserve = max(reserve, 90)
+        reloading = 0
+        dead = false
+        safe = 2.5
+        global.hero_alive = true
+        emit("hero_respawned")
+    }
+
+    on pickup(kind) {
+        if kind == "medkit" {
+            health = min(max_health, health + 50)
+        } else {
+            reserve += 60
+        }
+        audio.play("sounds/pickup.wav", 0.7)
+    }
+
+    on area_clear(area) {
+        spawn = self.position        // a cleared sector is a checkpoint
+    }
+
+    on update(dt) {
+        bar("Health", max(health, 0) / max_health, vec3(0.8, 0.16, 0.14))
+        bar("Magazine", ammo / magazine, vec3(0.85, 0.7, 0.25))
+        global.ammo = str(ammo) + " / " + str(reserve)
+
+        // sparks fade, the muzzle flash lasts a blink, the gun settles after each shot
+        var keep = []
+        for s in sparks {
+            s.life -= dt
+            if s.life > 0 {
+                keep.push(s)
+            } else {
+                s.dot.destroy()
+            }
+        }
+        sparks = keep
+        flash_left -= dt
+        if flash_left <= 0 {
+            flash.visible = false
+        }
+        kick = max(0, kick - dt * 0.5)
+        cooldown -= dt
+        safe = max(0, safe - dt)
+
+        if not dead and input.mouse_locked {
+            yaw -= input.mouse_dx * sensitivity
+            pitch = clamp(pitch - input.mouse_dy * sensitivity, -85, 85)
+        }
+        head.position = eye()
+        head.rotation = vec3(pitch, yaw, 0)
+        gun.position = gun_rest + vec3(0, 0, kick)
+
+        var v = self.velocity
+        if dead {
+            v.x = 0
+            v.z = 0
+            self.velocity = v
+            return
+        }
+        let a = rad(yaw)
+        var move = vec3(-sin(a), 0, -cos(a)) * input.axis("vertical") + vec3(cos(a), 0, -sin(a)) * input.axis("horizontal")
+        if length(move) > 1 {
+            move = normalize(move)
+        }
+        var pace = speed
+        if input.down("shift") {
+            pace = run_speed
+        }
+        v.x = move.x * pace
+        v.z = move.z * pace
+        if self.grounded and input.pressed("space") {
+            v.y = jump
+        }
+        self.velocity = v
+
+        if reloading > 0 {
+            reloading -= dt
+            gun.position = gun_rest + vec3(0, -0.12, 0.04)
+            if reloading <= 0 {
+                let take = min(magazine - ammo, reserve)
+                ammo += take
+                reserve -= take
+            }
+        } else if input.down("mouse_left") and cooldown <= 0 {
+            if ammo > 0 {
+                fire()
+            } else if reserve > 0 {
+                reloading = 1.4
+                audio.play("sounds/reload.wav", 0.7)
+            }
+        }
+        if self.position.y < -15 {
+            health = 0
+            dead = true
+            after(1, "respawn")
+        }
+    }
+}

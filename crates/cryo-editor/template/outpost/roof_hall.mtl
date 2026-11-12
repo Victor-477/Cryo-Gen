@@ -1,0 +1,3 @@
+newmtl panel
+Kd 1 1 1
+map_Kd tex_panel.png

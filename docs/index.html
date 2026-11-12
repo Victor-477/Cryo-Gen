@@ -77,7 +77,7 @@ footer { margin-top: 70px; color: var(--muted); font-size: .86rem; border-top: 1
 <div class="layout">
 <nav>
   <a class="brand" href="#top">❄ Cryo Engine</a>
-  <div class="version">Documentation · 0.7.0-beta</div>
+  <div class="version">Documentation · 0.8.0-beta</div>
   <h4>Start</h4>
   <a class="item" href="#top">Overview</a>
   <a class="item" href="#install">Download and install</a>
@@ -103,6 +103,7 @@ footer { margin-top: 70px; color: var(--muted); font-size: .86rem; border-top: 1
   <h4>Projects</h4>
   <a class="item" href="#example">Example: Frostpeak Isles</a>
   <a class="item" href="#ashen">Example: Ashen Keep</a>
+  <a class="item" href="#outpost">Example: Outpost Kestrel</a>
   <a class="item" href="#export">Exporting a game</a>
   <a class="item" href="#source">Building from source</a>
   <a class="item" href="#limits">Known limits</a>
@@ -614,6 +615,16 @@ scene.set_camera(scene.find(<span class="s">"Boss Camera"</span>))   <span class
 <tr><td><code>tools/make_ashen_assets.py</code></td><td>Generates every model (rigged characters with their animation clips, walls, towers, props) and texture from code.</td></tr>
 </table></div>
 <p>The models are generated from code and textured; the renderer has textures, coloured lights, shadows and fog (<b>Scene settings &gt; Fog</b>), but no PBR materials, normal maps or post-processing.</p>
+
+<h2 id="outpost">Example: Outpost Kestrel</h2>
+<p>A first-person shooter with one complete level. Create it with <b>File &gt; New example: Outpost Kestrel</b> and an empty folder. <kbd>WASD</kbd> moves, the mouse aims, left click fires, <kbd>R</kbd> reloads.</p>
+<figure><img src="img/outpost.png" alt="First-person view of a yard at night with containers, a rifle in hand and drones ahead">
+<figcaption>The yard. Clear each sector of drones to open the next door, then destroy the reactor's coolant nodes.</figcaption></figure>
+<div class="table-wrap"><table>
+<tr><td><code>scene.raycast(origin, direction, distance, ignore)</code></td><td>The first solid thing along a ray, as a map with <code>entity</code>, <code>point</code>, <code>normal</code> and <code>distance</code>, or <code>nil</code>. Shots and line-of-sight checks use it.</td></tr>
+<tr><td><code>crosshair(true)</code></td><td>Draws an aiming mark in the middle of the screen.</td></tr>
+<tr><td><b>Scene settings &gt; Relief</b></td><td>Textures also bump the lighting, so joints, rivets and scratches catch the light without normal maps.</td></tr>
+</table></div>
 
 <h2 id="export">Exporting a game</h2>
 <ol>

@@ -610,6 +610,12 @@ impl State {
         row(ui, tr!("Ambient light", "Luz ambiente"), |ui| color_edit(ui, &mut self.scene.ambient));
         row(ui, tr!("Sky (top)", "Céu (topo)"), |ui| color_edit(ui, &mut self.scene.sky_top));
         row(ui, tr!("Sky (horizon)", "Céu (horizonte)"), |ui| color_edit(ui, &mut self.scene.sky_horizon));
+        row(ui, tr!("Relief", "Relevo"), |ui| {
+            ui.add(egui::Slider::new(&mut self.scene.relief, 0.0..=3.0)).on_hover_text(tr!(
+                "Textures also bump the lighting, as if the surface had depth: joints between stones, rivets, scratches. 0 turns it off.",
+                "As texturas também afetam a iluminação, como se a superfície tivesse profundidade: juntas entre pedras, rebites, arranhões. 0 desliga."
+            ))
+        });
         row(ui, tr!("Fog", "Névoa"), |ui| {
             ui.add(egui::Slider::new(&mut self.scene.fog, 0.0..=0.12)).on_hover_text(tr!(
                 "Distant objects fade into the horizon colour. 0 turns it off.",

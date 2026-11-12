@@ -1,0 +1,10 @@
+newmtl gunmetal
+Kd 0.42 0.44 0.48
+map_Kd tex_gunmetal.png
+newmtl steel
+Kd 0.7 0.72 0.76
+map_Kd tex_gunmetal.png
+newmtl black
+Kd 0.03 0.03 0.035
+newmtl eye
+Kd 1.0 0.25 0.1

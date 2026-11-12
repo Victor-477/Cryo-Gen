@@ -1,0 +1,9 @@
+newmtl red
+Kd 0.62 0.22 0.18
+map_Kd tex_container.png
+newmtl gunmetal
+Kd 0.42 0.44 0.48
+map_Kd tex_gunmetal.png
+newmtl hazard
+Kd 1 1 1
+map_Kd tex_hazard.png

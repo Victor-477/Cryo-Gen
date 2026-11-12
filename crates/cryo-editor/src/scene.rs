@@ -344,6 +344,9 @@ pub struct Scene {
     /// Distance fog, in the colour of the horizon: 0 is off, 0.02 is a light haze, 0.06 is thick.
     #[serde(default)]
     pub fog: f32,
+    /// Surface relief: textures also bump the lighting (0 is off, 1 is normal, 2 is strong).
+    #[serde(default)]
+    pub relief: f32,
     /// Animation clips and cutscenes (see `anim.rs`).
     #[serde(default)]
     pub animations: Vec<crate::anim::Clip>,
@@ -362,6 +365,7 @@ impl Scene {
             sky_top: [0.16, 0.32, 0.58],
             sky_horizon: [0.66, 0.78, 0.90],
             fog: 0.0,
+            relief: 0.0,
             gravity: default_gravity(),
             animations: vec![],
         }

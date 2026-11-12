@@ -3,7 +3,7 @@
 use cryo_lang::lexer::{KEYWORDS, TYPES};
 use eframe::egui::{self, text::LayoutJob, Color32, FontId, TextFormat};
 
-const ENGINE: &[&str] = &["self", "input", "scene", "time", "audio", "anim", "qte", "global", "hud", "emit", "after", "every", "cancel", "PI"];
+const ENGINE: &[&str] = &["self", "input", "scene", "time", "audio", "anim", "qte", "global", "hud", "bar", "banner", "crosshair", "emit", "after", "every", "cancel", "PI"];
 
 pub fn highlight(src: &str, font: FontId) -> LayoutJob {
     let mut job = LayoutJob::default();

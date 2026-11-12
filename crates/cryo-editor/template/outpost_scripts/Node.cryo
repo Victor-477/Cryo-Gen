@@ -1,0 +1,30 @@
+// A coolant node of the reactor. Shoot it until it bursts.
+script Node {
+    prop max_health: num = 130
+    var health = 130
+    var glow = 0
+
+    on start() {
+        health = max_health
+    }
+
+    on hit(amount, from) {
+        health -= amount
+        glow = 0.08
+        self.scale = vec3(1.08)
+        if health <= 0 {
+            audio.play("sounds/boom.wav", 1)
+            emit("node_down")
+            self.destroy()
+        }
+    }
+
+    on update(dt) {
+        if glow > 0 {
+            glow -= dt
+            if glow <= 0 {
+                self.scale = vec3(1)
+            }
+        }
+    }
+}

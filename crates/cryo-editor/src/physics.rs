@@ -386,6 +386,82 @@ fn sphere_box(sp: Vec3, r: f32, bx: &Body, half: Vec3) -> Option<(Vec3, f32)> {
     }
 }
 
+/// The first solid collider a ray meets: (entity, distance, surface normal).
+/// Triggers and the `ignore` entity are skipped; so is a box the ray starts inside.
+pub fn raycast(scene: &Scene, origin: Vec3, dir: Vec3, max: f32, ignore: Option<u64>) -> Option<(u64, f32, Vec3)> {
+    let d = dir.normalize_or_zero();
+    if d == Vec3::ZERO {
+        return None;
+    }
+    let mut best: Option<(u64, f32, Vec3)> = None;
+    for b in gather(scene) {
+        if b.trigger || Some(b.id) == ignore {
+            continue;
+        }
+        let hit = match &b.col {
+            Col::Sphere { r } => {
+                let oc = origin - b.pos;
+                let half_b = oc.dot(d);
+                let disc = half_b * half_b - (oc.length_squared() - r * r);
+                let t = -half_b - disc.max(0.0).sqrt();
+                (disc >= 0.0 && t >= 0.0).then(|| (t, (origin + d * t - b.pos).normalize_or(Vec3::Y)))
+            }
+            Col::Box { half } => {
+                let inv = b.rot.inverse();
+                let (o, dl) = (inv * (origin - b.pos), inv * d);
+                let (mut t0, mut t1, mut axis) = (f32::NEG_INFINITY, f32::INFINITY, 0);
+                let mut miss = false;
+                for i in 0..3 {
+                    if dl[i].abs() < 1e-7 {
+                        miss |= o[i].abs() > half[i];
+                        continue;
+                    }
+                    let (a, c) = ((-half[i] - o[i]) / dl[i], (half[i] - o[i]) / dl[i]);
+                    let (near, far) = (a.min(c), a.max(c));
+                    if near > t0 {
+                        t0 = near;
+                        axis = i;
+                    }
+                    t1 = t1.min(far);
+                }
+                (!miss && t0 <= t1 && t0 >= 0.0).then(|| {
+                    let mut n = Vec3::ZERO;
+                    n[axis] = -sign(dl[axis]);
+                    (t0, b.rot * n)
+                })
+            }
+            Col::Mesh { tris } => {
+                let mut nearest: Option<(f32, Vec3)> = None;
+                for t in tris {
+                    // Moller-Trumbore
+                    let (e1, e2) = (t[1] - t[0], t[2] - t[0]);
+                    let p = d.cross(e2);
+                    let det = e1.dot(p);
+                    if det.abs() < 1e-8 {
+                        continue;
+                    }
+                    let s = origin - t[0];
+                    let u = s.dot(p) / det;
+                    let q = s.cross(e1);
+                    let v = d.dot(q) / det;
+                    let dist = e2.dot(q) / det;
+                    if u >= 0.0 && v >= 0.0 && u + v <= 1.0 && dist >= 0.0 && nearest.map(|n| dist < n.0).unwrap_or(true) {
+                        let n = e1.cross(e2).normalize_or(Vec3::Y);
+                        nearest = Some((dist, if n.dot(d) > 0.0 { -n } else { n }));
+                    }
+                }
+                nearest
+            }
+        };
+        if let Some((t, n)) = hit {
+            if t <= max && best.map(|h| t < h.1).unwrap_or(true) {
+                best = Some((b.id, t, n));
+            }
+        }
+    }
+    best
+}
+
 /// Advances the simulation and returns the contacts found.
 /// One touch between two entities. `normal` points from `b` towards `a`.
 #[derive(Clone, Copy, Debug)]

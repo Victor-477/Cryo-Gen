@@ -1,0 +1,5 @@
+newmtl gunmetal
+Kd 0.42 0.44 0.48
+map_Kd tex_gunmetal.png
+newmtl lamp
+Kd 1.0 0.9 0.7

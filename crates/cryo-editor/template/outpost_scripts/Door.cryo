@@ -1,0 +1,22 @@
+// A blast door that lifts when its sector has been cleared.
+script Door {
+    prop area: text = "yard"
+    prop rise: num = 4.3
+    var opening = false
+    var raised = 0
+
+    on area_clear(which) {
+        if which == area and not opening {
+            opening = true
+            audio.play("sounds/door.wav", 0.9)
+        }
+    }
+
+    on update(dt) {
+        if opening and raised < rise {
+            let step = min(rise - raised, 2.2 * dt)
+            raised += step
+            self.translate(vec3(0, step, 0))
+        }
+    }
+}

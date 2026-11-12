@@ -119,6 +119,7 @@ struct Queues {
     bars: Vec<(String, f32, [f32; 3])>,
     /// `banner("text", seconds)`: big text in the middle of the screen, and when it leaves (real time).
     banner: (String, f64),
+    crosshair: bool,
     real_time: f64,
     /// `time.scale`: 1 is normal speed, 0.25 is slow motion.
     time_scale: f64,
@@ -348,6 +349,14 @@ impl Host for EngineHost<'_> {
                     }
                     _ => Err("`bar` expects (name, value) or (name, value, colour)".into()),
                 },
+                // crosshair(true) draws an aiming mark in the middle of the screen
+                "crosshair" => match args {
+                    [Value::Bool(on)] => {
+                        self.queues.crosshair = *on;
+                        Ok(Value::Nil)
+                    }
+                    _ => Err("`crosshair` expects (true or false)".into()),
+                },
                 "banner" => match args {
                     [Value::Text(text), Value::Num(seconds)] => {
                         self.queues.banner = (text.to_string(), self.queues.real_time + seconds.max(0.0));
@@ -504,6 +513,27 @@ impl Host for EngineHost<'_> {
                     self.queues.qte = None;
                     self.queues.qte_cancel = true;
                     Ok(Value::Nil)
+                }
+                // scene.raycast(origin, direction, max_distance) or (..., ignore_entity):
+                // the first solid thing in that direction, as { entity, point, normal, distance }, or nil
+                ("scene", "raycast", [origin, dir, Value::Num(max), rest @ ..]) => {
+                    let ignore = match rest {
+                        [] => None,
+                        [Value::Entity(e)] => Some(*e),
+                        _ => return Err("`scene.raycast` expects (origin, direction, distance) or (origin, direction, distance, ignore)".into()),
+                    };
+                    let (o, d) = (from_v(origin, "raycast")?, from_v(dir, "raycast")?);
+                    Ok(match physics::raycast(self.scene, o, d, *max as f32, ignore) {
+                        Some((id, t, n)) => {
+                            let mut m = std::collections::BTreeMap::new();
+                            m.insert("entity".to_string(), Value::Entity(id));
+                            m.insert("distance".to_string(), Value::Num(t as f64));
+                            m.insert("point".to_string(), to_v(o + d.normalize_or_zero() * t));
+                            m.insert("normal".to_string(), to_v(n));
+                            Value::Map(Rc::new(std::cell::RefCell::new(m)))
+                        }
+                        None => Value::Nil,
+                    })
                 }
                 ("scene", "tagged", [Value::Text(tag)]) => Ok(Value::list(
                     self.scene.entities.iter().filter(|e| e.tag == **tag).map(|e| Value::Entity(e.id)).collect(),
@@ -850,6 +880,11 @@ impl Runtime {
     /// Meters asked by the game with `bar(...)`.
     pub fn bars(&self) -> &[(String, f32, [f32; 3])] {
         &self.queues.bars
+    }
+
+    /// The game asked for an aiming mark.
+    pub fn crosshair(&self) -> bool {
+        self.queues.crosshair
     }
 
     /// Text asked with `banner(...)`, while it is still due on screen.

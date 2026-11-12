@@ -15,6 +15,7 @@ mod audio;
 mod mesh_edit;
 mod meshmode;
 mod highlight;
+mod outpost;
 mod panels;
 mod physics;
 mod project;
@@ -36,11 +37,13 @@ fn main() -> eframe::Result {
     let mut autoplay = false;
     let mut game_flag = false;
     let mut ashen_flag = false;
+    let mut outpost_flag = false;
     for arg in std::env::args().skip(1) {
         match arg.as_str() {
             "--play" => autoplay = true,
             "--game" => game_flag = true,
             "--ashen" => ashen_flag = true,
+            "--outpost" => outpost_flag = true,
             "-h" | "--help" => {
                 println!("Cryo Engine\n\nUsage: cryo [project_folder] [--play | --game | --ashen]\n\n  --ashen  create the Ashen Keep example game in the folder (if it is empty) and open it\n  --play   open the project already in Play mode\n  --game   run only the game, without the editor");
                 return Ok(());
@@ -52,6 +55,15 @@ fn main() -> eframe::Result {
         let dir = project_dir.clone().unwrap_or_else(|| settings::default_project_dir().with_file_name("AshenKeep"));
         if project::list_files(&dir, project::SCENE_EXT).is_empty() {
             if let Err(e) = ashen::create(&dir) {
+                eprintln!("{e}");
+            }
+        }
+        project_dir = Some(dir);
+    }
+    if outpost_flag {
+        let dir = project_dir.clone().unwrap_or_else(|| settings::default_project_dir().with_file_name("OutpostKestrel"));
+        if project::list_files(&dir, project::SCENE_EXT).is_empty() {
+            if let Err(e) = outpost::create(&dir) {
                 eprintln!("{e}");
             }
         }
