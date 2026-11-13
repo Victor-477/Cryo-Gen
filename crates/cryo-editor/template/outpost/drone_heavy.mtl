@@ -1,13 +1,26 @@
 newmtl red
 Kd 0.62 0.22 0.18
-map_Kd tex_container.png
+map_Kd tex_container.jpg
+norm tex_container_n.jpg
+Pr 0.5
+Pm 0.35
 newmtl steel
 Kd 0.7 0.72 0.76
-map_Kd tex_gunmetal.png
+map_Kd tex_gunmetal.jpg
+norm tex_gunmetal_n.jpg
+Pr 0.3
+Pm 1.0
 newmtl black
 Kd 0.03 0.03 0.035
+Pr 0.7
+Pm 0.0
 newmtl eye
 Kd 1.0 0.25 0.1
+Pr 0.3
+Pm 0.0
 newmtl gunmetal
 Kd 0.42 0.44 0.48
-map_Kd tex_gunmetal.png
+map_Kd tex_gunmetal.jpg
+norm tex_gunmetal_n.jpg
+Pr 0.4
+Pm 0.8

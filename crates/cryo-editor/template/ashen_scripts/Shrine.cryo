@@ -6,6 +6,7 @@ script Shrine {
             other.send("checkpoint", self.position + vec3(0, 1, 2.5))
             if not lit {
                 lit = true
+                fx.burst(self.position + vec3(0, 1.8, 0), "magic", 60)
                 audio.play("sounds/heal.wav", 0.8)
                 banner("SHRINE KINDLED", 1.8)
             }

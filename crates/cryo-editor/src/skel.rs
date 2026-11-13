@@ -335,7 +335,7 @@ pub fn demo_rig_gltf() -> String {
             "attributes": {"POSITION": 0, "NORMAL": 1, "JOINTS_0": 2, "WEIGHTS_0": 3},
             "indices": 4, "material": 0
         }]}],
-        "materials": [{"pbrMetallicRoughness": {"baseColorFactor": [0.35, 0.8, 0.55, 1.0]}}],
+        "materials": [{"pbrMetallicRoughness": {"baseColorFactor": [0.35, 0.8, 0.55, 1.0], "roughnessFactor": 0.6, "metallicFactor": 0.0}}],
         "skins": [{"joints": (1..=JOINTS).collect::<Vec<usize>>(), "inverseBindMatrices": 5}],
         "animations": animations,
         "accessors": accessors,

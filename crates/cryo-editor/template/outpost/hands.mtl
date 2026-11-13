@@ -1,0 +1,12 @@
+newmtl glove
+Kd 0.11 0.1 0.095
+map_Kd tex_fabric.jpg
+norm tex_fabric_n.jpg
+Pr 0.85
+Pm 0.0
+newmtl sleeve
+Kd 0.27 0.29 0.24
+map_Kd tex_fabric.jpg
+norm tex_fabric_n.jpg
+Pr 0.92
+Pm 0.0

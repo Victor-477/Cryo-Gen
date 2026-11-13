@@ -27,6 +27,8 @@ script Trooper {
     var spawn = vec3(0)
     var sparks = []
     var gun_rest = vec3(0)
+    var stride = 0
+    var sway = vec3(0)
     var safe = 0             // seconds of protection after coming back
 
     on start() {
@@ -62,15 +64,17 @@ script Trooper {
         flash.visible = true
         pitch = min(85, pitch + 0.5)                // recoil climbs a little
         audio.play("sounds/shot.wav", 0.55)
+        fx.burst(eye() + look() * 0.8 + vec3(0, -0.12, 0), "sparks", 4, nil, look())
         let hit = scene.raycast(eye(), look(), 150, self)
         if hit != nil {
             if hit.entity.tag == "enemy" or hit.entity.tag == "target" {
                 hit.entity.send("hit", damage, hit.point)
+                fx.burst(hit.point, "sparks", 18, nil, hit.normal)
+            } else {
+                // a bullet on a wall or the floor: sparks and a puff of dust off the surface
+                fx.burst(hit.point, "sparks", 8, nil, hit.normal)
+                fx.burst(hit.point + hit.normal * 0.05, "dust", 5, nil, hit.normal)
             }
-            let s = scene.spawn("sphere", hit.point)
-            s.scale = vec3(0.14)
-            s.color = vec3(1, 0.8, 0.35)
-            sparks.push({ dot: s, life: 0.07 })
         }
     }
 
@@ -156,7 +160,14 @@ script Trooper {
         }
         head.position = eye()
         head.rotation = vec3(pitch, yaw, 0)
-        gun.position = gun_rest + vec3(0, 0, kick)
+        // the rifle lags a little behind the mouse and bobs with each step
+        let speed_now = length(vec3(self.velocity.x, 0, self.velocity.z))
+        if self.grounded {
+            stride += dt * speed_now * 1.7
+        }
+        sway = lerp(sway, vec3(-input.mouse_dx, input.mouse_dy, 0) * 0.0006, min(1, dt * 10))
+        let bob = vec3(cos(stride) * 0.012, abs(sin(stride)) * 0.014, 0) * min(1, speed_now / 5)
+        gun.position = gun_rest + vec3(0, 0, kick) + bob + vec3(clamp(sway.x, -0.03, 0.03), clamp(sway.y, -0.03, 0.03), 0)
 
         var v = self.velocity
         if dead {

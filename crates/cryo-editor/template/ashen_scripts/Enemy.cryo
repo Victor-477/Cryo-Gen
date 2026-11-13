@@ -19,6 +19,8 @@ script Enemy {
     var yaw = 180
     var struck = false
     var arrows = []
+    var route = []
+    var repath = 0
 
     on start() {
         model = self.child("Model")
@@ -130,6 +132,31 @@ script Enemy {
             if dist < reach * 0.8 {
                 goto swing
             }
+            // walls in the way: follow a path around them, asking for a new one now and then
+            let blocked = scene.raycast(self.position, hero.position - self.position, dist, self)
+            if blocked != nil and blocked.entity != hero {
+                repath -= dt
+                if repath <= 0 or len(route) == 0 {
+                    repath = 0.6
+                    let found = scene.path(self.position, hero.position)
+                    if found != nil {
+                        route = found
+                    }
+                }
+                if len(route) > 0 {
+                    var step = route[0] - self.position
+                    step.y = 0
+                    if length(step) < 0.6 {
+                        route.remove(0)
+                    } else {
+                        face(step)
+                        drive(normalize(step) * speed)
+                        return
+                    }
+                }
+            } else {
+                route = []
+            }
             drive(normalize(d) * speed)
         }
     }
@@ -146,7 +173,7 @@ script Enemy {
             let d = to_hero()
             if not struck and state_time() >= windup {
                 struck = true
-                audio.play("sounds/swing.wav", 0.35)
+                audio.play_at("sounds/swing.wav", self.position, 0.6)
                 if length(d) < reach + 0.5 and (length(d) < 0.6 or dot(normalize(d), forward()) > 0.25) {
                     hero.send("hit", damage, self.position)
                 }
@@ -177,7 +204,7 @@ script Enemy {
                 let aim = hero.position + vec3(0, 0.2, 0) - from
                 shaft.look_at(from + aim)
                 arrows.push({ shaft: shaft, velocity: normalize(aim) * 19, life: 2.5 })
-                audio.play("sounds/arrow.wav", 0.5)
+                audio.play_at("sounds/arrow.wav", self.position, 0.7)
             }
             if state_time() >= 1.2 {
                 goto recover
@@ -213,7 +240,8 @@ script Enemy {
         on enter() {
             self.tag = "fallen"
             model.animate("Die", 1, false)
-            audio.play("sounds/bones.wav", 0.6)
+            audio.play_at("sounds/bones.wav", self.position, 0.8)
+            fx.burst(self.position, "dust", 30)
             emit("enemy_down", area)
             after(2.6, "vanish")
         }

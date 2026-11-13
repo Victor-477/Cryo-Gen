@@ -13,7 +13,9 @@ script Node {
         glow = 0.08
         self.scale = vec3(1.08)
         if health <= 0 {
-            audio.play("sounds/boom.wav", 1)
+            fx.burst(self.position + vec3(0, 1, 0), "explosion", 60)
+            fx.burst(self.position + vec3(0, 1, 0), "magic", 40)
+            audio.play_at("sounds/boom.wav", self.position, 1)
             emit("node_down")
             self.destroy()
         }

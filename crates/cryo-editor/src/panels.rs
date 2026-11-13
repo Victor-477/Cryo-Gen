@@ -616,6 +616,20 @@ impl State {
                 "As texturas também afetam a iluminação, como se a superfície tivesse profundidade: juntas entre pedras, rebites, arranhões. 0 desliga."
             ))
         });
+        row(ui, tr!("Bloom", "Brilho das luzes"), |ui| {
+            ui.add(egui::Slider::new(&mut self.scene.bloom, 0.0..=2.0))
+                .on_hover_text(tr!("A soft glow around lights and very bright surfaces.", "Um brilho suave em volta de luzes e superfícies muito claras."))
+        });
+        row(ui, tr!("Ambient occlusion", "Oclusão de ambiente"), |ui| {
+            ui.add(egui::Slider::new(&mut self.scene.ssao, 0.0..=1.5))
+                .on_hover_text(tr!("Darkens creases, corners and the ground under objects.", "Escurece frestas, cantos e o chão embaixo dos objetos."))
+        });
+        row(ui, tr!("Reflections", "Reflexos"), |ui| {
+            ui.add(egui::Slider::new(&mut self.scene.reflections, 0.0..=1.5)).on_hover_text(tr!(
+                "Glossy surfaces reflect what is on screen (needs Relief). Costs the most of the three.",
+                "Superfícies brilhantes refletem o que está na tela (precisa de Relevo). É o mais pesado dos três."
+            ))
+        });
         row(ui, tr!("Fog", "Névoa"), |ui| {
             ui.add(egui::Slider::new(&mut self.scene.fog, 0.0..=0.12)).on_hover_text(tr!(
                 "Distant objects fade into the horizon colour. 0 turns it off.",

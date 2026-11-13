@@ -45,14 +45,17 @@ If you get a graphics configuration error, run with `CRYO_MSAA=0`.
 |---|---|
 | **Editor** | Dockable panels (Hierarchy, Scene, Game, Inspector, Content, Console, script editor), move/rotate/scale gizmos, undo/redo, parent/child entities, Play/Pause/Stop. |
 | **Performance** | Skeletal animation runs on the graphics card, objects out of view are skipped, and physics only tests bodies that are near each other. |
-| **Rendering** | Primitives and imported models (`.obj`, `.gltf`, `.glb`), textures, directional/point/spot lights, shadows, sky gradient, distance fog. |
+| **Rendering** | Primitives and imported models (`.obj`, `.gltf`, `.glb`), physically based materials (roughness, metallic, normal maps), textures with anisotropic filtering, directional/point/spot lights, shadows from the sun and the nearest point lights and spotlights, sky gradient, distance fog, relief lighting, sky reflections. |
+| **Post-processing** | Bloom, ambient occlusion, screen-space reflections, filmic tone curve, vignette (per scene). |
 | **Physics** | Gravity, box, sphere and triangle-mesh colliders, triggers, contact events with normals, optional rotation (bodies that roll and tip over). |
 | **Scripting** | The Cryo language: typed, with maps, `match`, state machines, global events and live error checking. Script properties are editable in the Inspector. |
 | **Animation** | Timeline with keyframes, real-time clips started from scripts, cutscenes with camera cuts, and events fired at exact instants. Timers in scripts (`after`, `every`). Skeletal animation from rigged glTF models, with blending between clips. |
 | **Quick time events** | `qte.press("e", 1.5)` shows the prompt and answers with `on qte_success` / `on qte_fail`; also mash, hold and sequences, from scripts or from the Timeline. |
 | **First person** | One menu item creates a first-person player: mouse look, walk, run, jump. |
 | **Modelling** | Edit Mesh mode: select faces or vertices, move, extrude, inset, subdivide, merge, fill; saved as `.obj`. |
-| **Audio** | Sound effects and looping music (`.wav`, `.ogg`, `.mp3`). |
+| **Audio** | Sound effects, positional sounds and looping music (`.wav`, `.ogg`, `.mp3`). |
+| **Effects** | Particles: sparks, smoke, dust, fire, embers, magic, explosions. |
+| **Gameplay** | Path finding around obstacles, saving values between sessions. |
 | **Camera tools** | Fly, orbit, pan, zoom, trackpad gestures, orthographic axis views, framing, bookmarks. |
 | **Export** | One menu item produces a standalone game, for your system or for another one. |
 | **Tutorials** | Twelve guided tours inside the editor (Help > Tutorials, or F1). |
@@ -132,7 +135,7 @@ A first-person shooter with one complete level in three sectors: the yard, the w
 
 `WASD` moves, the mouse aims, left click fires, `R` reloads, `Shift` runs, `Space` jumps. Clear each sector of security drones to open the next door, then destroy the three coolant nodes of the reactor.
 
-It shows first-person play in the engine: shots are `scene.raycast(...)` rays, drones check line of sight the same way, and the scene uses relief lighting (textures bump the light without normal maps) with coloured point lights at night. Models and textures come from `tools/make_outpost_assets.py`. The graphics are well short of a commercial shooter: there are no PBR materials, reflections or post-processing.
+It shows first-person play in the engine: shots are `scene.raycast(...)` rays, drones check line of sight the same way, and the scene uses relief lighting (textures bump the light without normal maps) with coloured point lights at night. Models and textures come from `tools/make_outpost_assets.py`. It uses the post-processing effects (bloom, ambient occlusion, screen-space reflections), shadows from the yard lamps and 1024 x 1024 textures. It is still short of a commercial shooter: the hands have no animated fingers and lighting has no global illumination.
 
 ## Repository layout
 
@@ -165,12 +168,12 @@ tools/             make_ashen_assets.py: builds the Ashen Keep models and textur
 docs/              documentation site (GitHub Pages)
 ```
 
-## Known limits (0.9.0-beta)
+## Known limits (0.11.0-beta)
 
 - Skeletal animation: one clip per model at a time (blended when switching), up to 64 joints on the graphics card (more fall back to the CPU); no morph targets.
 - Modelling: `.obj` models, one material, automatic texture coordinates. No loop cuts, bevels or booleans yet.
 - Models use base colour and base texture; full PBR materials are not read yet.
-- Shadows: first directional light only (its reach is adjustable).
+- Shadows: the first directional light, plus 16 shadow tiles for the nearest local lights (a spotlight uses one, a point light six).
 - Lights: 4 directional, and the 16 point/spot lights nearest the camera, per view.
 - Physics: mesh colliders are for static bodies; rotating bodies use a simplified model, so stacks of boxes are not stable.
 - The macOS app is not signed.

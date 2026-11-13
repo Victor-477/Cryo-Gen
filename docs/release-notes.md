@@ -4,15 +4,42 @@ Cryo Engine is a native 3D game engine with a visual editor, scripted in the Cry
 
 | System | File |
 |---|---|
-| Windows 10/11 (64-bit) | `CryoEngine-v0.9.0-beta-windows-x86_64.zip` |
-| macOS 11+ (Apple Silicon and Intel) | `CryoEngine-v0.9.0-beta-macos-universal.zip` |
-| Linux (x86_64) | `CryoEngine-v0.9.0-beta-linux-x86_64.zip` |
+| Windows 10/11 (64-bit) | `CryoEngine-v0.11.0-beta-windows-x86_64.zip` |
+| macOS 11+ (Apple Silicon and Intel) | `CryoEngine-v0.11.0-beta-macos-universal.zip` |
+| Linux (x86_64) | `CryoEngine-v0.11.0-beta-linux-x86_64.zip` |
 
 Unzip and run. On first launch the editor creates the example game in `~/CryoProjects/FrostpeakIsles` and starts a welcome tour.
 
 **macOS:** the app is not signed. Right-click **Cryo Engine.app** and choose **Open** the first time. If macOS still refuses, run `xattr -dr com.apple.quarantine "Cryo Engine.app"` in a terminal.
 
-## New in 0.9.0-beta
+## New in 0.11.0-beta
+
+- **Physically based materials**: GGX lighting with roughness and metallic per material (MTL `Pr`/`Pm`, glTF metallic-roughness), and **normal maps** (MTL `norm`/`map_Bump`, glTF `normalTexture`), with no tangents needed in the file. Materials without these values keep using the entity's Shininess.
+- **Shadows from point lights**: torches and lamps now cast shadows too (a cube of six views). Together with spotlights they share 16 shadow tiles, given to the lights nearest the camera.
+- **Particles**: `fx.burst(position, "sparks")` with sparks, smoke, dust, fire, embers, magic, explosion and blood, optional count, colour and direction. Glowing particles feed the bloom.
+- **Path finding**: `scene.path(from, to)` returns the corners of a walkable way around walls and crates.
+- **Positional sound**: `audio.play_at(file, position)` gets quieter with distance from the camera.
+- **Saving**: `save.set`, `save.get`, `save.has`, `save.remove`, `save.clear` keep values between sessions.
+- **Examples**: every surface has a normal map and its own finish; bullet impacts, explosions, sword hits, torch embers and magic use particles; enemies in Ashen Keep walk around obstacles; the rifle sways with the mouse and bobs with each step; both games remember a record (best time, victories).
+
+## From 0.10.0-beta
+
+Post-processing (bloom, ambient occlusion, screen-space reflections), spotlight shadows, 1024 textures, hands in the first-person view.
+
+## Details of 0.10.0-beta
+
+- **Post-processing**, turned on per scene (Scene settings): **bloom** (glow around lights and glowing objects), **ambient occlusion** (shading in creases, corners and under objects), and **screen-space reflections** (glossy floors and metal reflect what is on screen). The scene is drawn into an off-screen HDR image with its own multisampling, then a filmic tone curve, a soft vignette and dithering finish the picture. `CRYO_POST=0` turns it off for very old graphics cards.
+- **Spotlight shadows**: the four spotlights nearest the camera cast shadows, besides the sun or moon.
+- **High-resolution textures**: the example games' surfaces are now 1024 x 1024 (JPEG), with anisotropic filtering so floors stay sharp at a distance.
+- **Hands in the first-person view**: Outpost Kestrel shows gloved hands and sleeves holding the rifle; they follow recoil and reloading.
+- OBJ materials with a tinted or dark diffuse colour now tint their texture (containers, banners and gloves show their real colours).
+- Outpost Kestrel's lamps and ceiling lights are now spotlights that cast shadows; both example games use the new effects.
+
+## From 0.9.0-beta
+
+Sky reflections with Fresnel and the filmic tone curve, the rounded rifle, camera collision in Ashen Keep.
+
+## Details of 0.9.0-beta
 
 - **More lifelike lighting** (in scenes with Relief on): glossy surfaces mirror the sky, most strongly at grazing angles; the texture decides how polished each spot is; and a filmic tone curve gives deeper shadows and softer highlights.
 - **Outpost Kestrel**: a rifle with rounded parts instead of blocks, a reload movement, floors that catch the lamps, and drones that keep clear of each other.

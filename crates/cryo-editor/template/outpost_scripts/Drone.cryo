@@ -88,7 +88,7 @@ script Drone {
             self.rotate(vec3(0, 25 * dt, 0))
             if global.hero_alive == true and sees() {
                 awake = true
-                audio.play("sounds/alert.wav", 0.5)
+                audio.play_at("sounds/alert.wav", self.position, 0.6)
                 emit("alarm", area)
             }
             return
@@ -127,7 +127,7 @@ script Drone {
             shot.scale = vec3(0.2)
             shot.color = vec3(1, 0.35, 0.1)
             bolts.push({ shot: shot, velocity: normalize(target() - from) * 24, life: 3 })
-            audio.play("sounds/bolt.wav", 0.45)
+            audio.play_at("sounds/bolt.wav", self.position, 0.6)
         }
     }
 
@@ -141,10 +141,8 @@ script Drone {
             dead = true
             self.tag = "wreck"
             self.visible = false
-            blast = scene.spawn("sphere", self.position)
-            blast.color = vec3(1, 0.6, 0.15)
-            blast.scale = vec3(0.4)
-            audio.play("sounds/boom.wav", 0.8)
+            fx.burst(self.position, "explosion", 40)
+            audio.play_at("sounds/boom.wav", self.position, 1)
             emit("enemy_down", area)
             after(0.3, "vanish")
         }

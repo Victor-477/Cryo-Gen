@@ -1,6 +1,11 @@
 newmtl concrete
 Kd 1 1 1
-map_Kd tex_concrete.png
+map_Kd tex_concrete.jpg
+norm tex_concrete_n.jpg
+Pr 0.85
+Pm 0.0
 newmtl hazard
 Kd 1 1 1
-map_Kd tex_hazard.png
+map_Kd tex_hazard.jpg
+Pr 0.6
+Pm 0.0

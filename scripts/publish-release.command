@@ -6,7 +6,7 @@
 #  2. pushes the tag below, which starts the "Release" workflow on GitHub: it builds the editor
 #     for Windows, macOS and Linux and attaches the zips to a new release (about 15 minutes);
 #  3. meanwhile, builds and packages the macOS app locally into dist/ as a backup.
-TAG="v0.9.0-beta"
+TAG="v0.11.0-beta"
 cd "$(dirname "$0")/.." || exit 1
 [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
 

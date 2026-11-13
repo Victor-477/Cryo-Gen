@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Packages the release build of the editor into dist/CryoEngine-<tag>-<platform>.zip.
 #
-#   bash scripts/package.sh v0.9.0-beta macos-universal
+#   bash scripts/package.sh v0.11.0-beta macos-universal
 #
 # Expects `cargo build --release` to have been run already. On macOS the result is an .app bundle.
 set -euo pipefail

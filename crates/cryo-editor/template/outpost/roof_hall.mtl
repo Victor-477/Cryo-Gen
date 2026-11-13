@@ -1,3 +1,6 @@
 newmtl panel
 Kd 1 1 1
-map_Kd tex_panel.png
+map_Kd tex_panel.jpg
+norm tex_panel_n.jpg
+Pr 0.45
+Pm 0.75

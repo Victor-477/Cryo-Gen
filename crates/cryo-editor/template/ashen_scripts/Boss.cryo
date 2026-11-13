@@ -196,6 +196,8 @@ script Boss {
             if not struck and state_time() >= 0.68 / pace() {
                 struck = true
                 audio.play("sounds/slam.wav", 1)
+                fx.burst(self.position + forward() * 2 - vec3(0, 1.2, 0), "dust", 60)
+                fx.burst(self.position + forward() * 2 - vec3(0, 1.2, 0), "sparks", 20, nil, vec3(0, 1, 0))
                 emit("shake", 0.8)
                 if length(d) < 3.6 {
                     hero.send("hit", damage * 1.5, self.position)
@@ -240,6 +242,8 @@ script Boss {
             model.animate("Die", 0.7, false)
             audio.play("sounds/slam.wav", 0.8)
             emit("shake", 0.7)
+            fx.burst(self.position, "embers", 120)
+            fx.burst(self.position, "smoke", 30)
             emit("victory")
         }
         on update(dt) {

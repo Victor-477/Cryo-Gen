@@ -5,6 +5,7 @@ script Potion {
     on touch_start(other) {
         if other.tag == "player" {
             other.send("pickup_potion")
+            fx.burst(self.position, "magic", 30)
             self.destroy()
         }
     }

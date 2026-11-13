@@ -1,3 +1,6 @@
 newmtl iron
 Kd 0.22 0.22 0.25
-map_Kd tex_metal.png
+map_Kd tex_metal.jpg
+norm tex_metal_n.jpg
+Pr 0.5
+Pm 0.8

@@ -347,6 +347,14 @@ pub struct Scene {
     /// Surface relief: textures also bump the lighting (0 is off, 1 is normal, 2 is strong).
     #[serde(default)]
     pub relief: f32,
+    /// Post-processing (0 = off): glow around bright lights, shading in creases and corners,
+    /// and reflections of what is on screen in glossy surfaces.
+    #[serde(default)]
+    pub bloom: f32,
+    #[serde(default)]
+    pub ssao: f32,
+    #[serde(default)]
+    pub reflections: f32,
     /// Animation clips and cutscenes (see `anim.rs`).
     #[serde(default)]
     pub animations: Vec<crate::anim::Clip>,
@@ -366,6 +374,9 @@ impl Scene {
             sky_horizon: [0.66, 0.78, 0.90],
             fog: 0.0,
             relief: 0.0,
+            bloom: 0.0,
+            ssao: 0.0,
+            reflections: 0.0,
             gravity: default_gravity(),
             animations: vec![],
         }

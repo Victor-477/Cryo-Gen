@@ -1,8 +1,16 @@
 newmtl gun_mid
 Kd 0.13 0.135 0.15
+Pr 0.38
+Pm 0.6
 newmtl gun_dark
 Kd 0.05 0.05 0.06
+Pr 0.45
+Pm 0.4
 newmtl gun_tan
 Kd 0.3 0.26 0.19
+Pr 0.7
+Pm 0.0
 newmtl cyan
 Kd 0.3 0.9 1.0
+Pr 0.1
+Pm 0.0

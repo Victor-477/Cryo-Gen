@@ -13,6 +13,9 @@ pub const MAX_POINT: usize = 16;
 /// Joints per skin that the vertex shader accepts; larger skeletons are skinned on the CPU.
 pub const MAX_JOINTS: usize = 64;
 const SHADOW_SIZE: i32 = 2048;
+/// Shadow maps of local lights: 16 tiles of 512 x 512 (a spotlight uses one, a point light six).
+const SPOT_ATLAS: i32 = 2048;
+const SHADOW_TILES: usize = 16;
 
 pub enum MeshRef {
     Shape(Shape),
@@ -46,6 +49,8 @@ pub struct LocalLight {
     pub dir: Vec3,
     /// Cosine of the cone's outer angle; -2 = point light (no cone).
     pub cos_outer: f32,
+    /// A spotlight that casts shadows.
+    pub shadow: bool,
 }
 
 /// Everything needed to draw one frame (assembled on the UI thread).
@@ -62,8 +67,14 @@ pub struct RenderFrame {
     pub sky_horizon: [f32; 3],
     pub fog: f32,
     pub relief: f32,
+    /// Post-processing amounts (0 = off): bloom, ambient occlusion, screen-space reflections.
+    pub bloom: f32,
+    pub ssao: f32,
+    pub reflections: f32,
     /// Lines: x, y, z, r, g, b, a per vertex.
     pub lines: Vec<f32>,
+    /// Particles to draw: position, size, colour and opacity, and whether they add light.
+    pub particles: Vec<(Vec3, f32, [f32; 4], bool)>,
     /// Shadows from the first directional light: (centre of the covered area, radius).
     pub shadow: Option<(Vec3, f32)>,
 }
@@ -141,6 +152,7 @@ impl RenderFrame {
                             } else {
                                 -2.0
                             },
+                            shadow: l.shadows,
                         });
                     }
                     _ => {}
@@ -186,7 +198,11 @@ impl RenderFrame {
             sky_horizon: scene.sky_horizon,
             fog: scene.fog,
             relief: scene.relief,
+            bloom: scene.bloom,
+            ssao: scene.ssao,
+            reflections: scene.reflections,
             lines: vec![],
+            particles: vec![],
             shadow,
         }
     }
@@ -273,6 +289,9 @@ struct GpuMesh {
     count: i32,
     color: [f32; 3],
     texture: Option<Arc<TextureData>>,
+    normal: Option<Arc<TextureData>>,
+    rough: f32,
+    metal: f32,
     /// Index of the skin whose joints move this mesh on the graphics card.
     skin: Option<usize>,
 }
@@ -300,6 +319,9 @@ pub struct Renderer {
     mesh_prog: glow::Program,
     depth_prog: glow::Program,
     line_prog: glow::Program,
+    fx_prog: glow::Program,
+    fx_vao: glow::VertexArray,
+    fx_vbo: glow::Buffer,
     sky_prog: glow::Program,
     shapes: HashMap<Shape, GpuMesh>,
     models: HashMap<u64, Vec<GpuMesh>>,
@@ -310,6 +332,12 @@ pub struct Renderer {
     empty_vao: glow::VertexArray,
     shadow_fbo: Option<glow::Framebuffer>,
     shadow_tex: Option<glow::Texture>,
+    /// Shadows of up to four spotlights, one quarter of this image each.
+    spot_fbo: Option<glow::Framebuffer>,
+    spot_tex: Option<glow::Texture>,
+    post: Option<crate::post::Post>,
+    /// Strongest anisotropic filtering the card offers (sharper textures seen at an angle).
+    anisotropy: f32,
     /// 1×1 white texture bound when a mesh has no texture (some drivers, notably on macOS,
     /// complain about a sampler with nothing bound even if it is never sampled).
     white_tex: Option<glow::Texture>,
@@ -384,12 +412,77 @@ uniform int u_has_tex;
 uniform sampler2DShadow u_shadow;
 uniform mat4 u_light_vp;
 uniform int u_has_shadow;
+uniform sampler2DShadow u_spot_shadow;
+uniform mat4 u_spot_vp[16];
+uniform int u_pshadow[16];
+uniform int u_post;
+uniform sampler2D u_normal_tex;
+uniform int u_has_normal;
+uniform float u_rough;
+uniform float u_metal;
 
+float spot_shadow(int i, vec3 n) {
+    int tile = u_pshadow[i];
+    if (tile < 0) return 1.0;
+    if (u_pcone[i] < -1.5) {
+        // a point light: the face of its shadow cube that looks towards this point
+        vec3 d = v_world - u_ppos[i];
+        vec3 a = abs(d);
+        tile += a.x >= a.y && a.x >= a.z ? (d.x > 0.0 ? 0 : 1) : (a.y >= a.z ? (d.y > 0.0 ? 2 : 3) : (d.z > 0.0 ? 4 : 5));
+    }
+    vec4 lp = u_spot_vp[tile] * vec4(v_world + n * 0.05, 1.0);
+    if (lp.w <= 0.0) return 1.0;
+    vec3 p = lp.xyz / lp.w * 0.5 + 0.5;
+    if (p.z >= 1.0) return 1.0;
+    float texel = 1.0 / float(textureSize(u_spot_shadow, 0).x);
+    vec2 inner = clamp(p.xy, vec2(texel * 6.0), vec2(1.0 - texel * 6.0));
+    if (u_pcone[i] > -1.5 && (p.x <= 0.0 || p.x >= 1.0 || p.y <= 0.0 || p.y >= 1.0)) return 1.0;
+    vec2 base = (inner + vec2(float(tile - (tile / 4) * 4), float(tile / 4))) * 0.25;
+    float sum = 0.0;
+    for (int x = -1; x <= 1; x++)
+        for (int y = -1; y <= 1; y++)
+            sum += texture(u_spot_shadow, vec3(base + vec2(float(x), float(y)) * texel, p.z - 0.0008));
+    return sum / 9.0;
+}
+
+// surface finish of the pixel being shaded (set in main)
+float g_rough;
+float g_metal;
+vec3 g_f0;
+
+// physically based light: GGX microfacets, Smith shadowing, Schlick Fresnel
 vec3 shade(vec3 n, vec3 v, vec3 l, vec3 lc, vec3 base) {
     float ndl = max(dot(n, l), 0.0);
+    if (ndl <= 0.0) return vec3(0.0);
     vec3 h = normalize(l + v);
-    float spec = pow(max(dot(n, h), 0.0), mix(8.0, 96.0, u_shine)) * u_shine * step(0.0001, ndl);
-    return lc * (base * ndl + vec3(spec));
+    float ndh = max(dot(n, h), 0.0);
+    float ndv = max(dot(n, v), 0.001);
+    float vdh = max(dot(v, h), 0.0);
+    float a = g_rough * g_rough;
+    float a2 = a * a;
+    float d = ndh * ndh * (a2 - 1.0) + 1.0;
+    float D = a2 / (3.14159 * d * d);
+    float k = (g_rough + 1.0) * (g_rough + 1.0) / 8.0;
+    float G = ndl / (ndl * (1.0 - k) + k) * ndv / (ndv * (1.0 - k) + k);
+    vec3 F = g_f0 + (1.0 - g_f0) * pow(1.0 - vdh, 5.0);
+    vec3 spec = D * G * F / (4.0 * ndl * ndv);
+    vec3 kd = (1.0 - F) * (1.0 - g_metal);
+    return lc * (kd * base + spec * 3.14159) * ndl;
+}
+
+// normal mapping without stored tangents: the frame comes from screen-space derivatives
+vec3 perturb(vec3 N, vec3 p, vec2 uv) {
+    vec3 m = texture(u_normal_tex, uv).xyz * 2.0 - 1.0;
+    vec3 dp1 = dFdx(p);
+    vec3 dp2 = dFdy(p);
+    vec2 duv1 = dFdx(uv);
+    vec2 duv2 = dFdy(uv);
+    vec3 dp2perp = cross(dp2, N);
+    vec3 dp1perp = cross(N, dp1);
+    vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+    vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+    float invmax = inversesqrt(max(max(dot(T, T), dot(B, B)), 1e-20));
+    return normalize(mat3(T * invmax, B * invmax, N) * m);
 }
 
 float shadow_factor(vec3 n) {
@@ -409,18 +502,21 @@ float shadow_factor(vec3 n) {
 }
 
 void main() {
-    if (u_mode == 2) { frag = vec4(u_color, 1.0); return; }
+    if (u_mode == 2) { frag = vec4(u_post == 1 ? pow(u_color, vec3(2.2)) : u_color, 0.0); return; }
     vec3 albedo = u_color;
     if (u_has_tex == 1) {
         vec4 t = texture(u_tex, v_uv);
         if (t.a < 0.3) discard;
         albedo *= t.rgb;
     }
-    if (u_mode == 1) { frag = vec4(albedo, 1.0); return; }
+    // unlit things (flames, lamps, screens) glow when there is bloom
+    if (u_mode == 1) { frag = u_post == 1 ? vec4(pow(albedo, vec3(2.2)) * 3.0, 0.0) : vec4(albedo, 1.0); return; }
     vec3 base = pow(albedo, vec3(2.2));
     vec3 n = normalize(v_normal);
     if (!gl_FrontFacing) n = -n;
-    if (u_relief > 0.0 && u_has_tex == 1) {
+    if (u_has_normal == 1) {
+        n = perturb(n, v_world, v_uv);
+    } else if (u_relief > 0.0 && u_has_tex == 1) {
         // bump mapping without a normal map: the brightness of the texture is the height,
         // and screen-space derivatives give the slope (Mikkelsen's method)
         float h = dot(texture(u_tex, v_uv).rgb, vec3(0.333));
@@ -435,8 +531,17 @@ void main() {
         n = normalize(abs(det) * n - u_relief * 0.06 * grad);
     }
     vec3 v = normalize(u_cam - v_world);
+    // surface finish: from the material, or from the entity's Shininess for older content
+    g_rough = u_rough >= 0.0 ? u_rough : clamp(1.0 - u_shine * 0.9, 0.08, 1.0);
+    if (u_relief > 0.0 && u_has_tex == 1 && u_has_normal == 0) {
+        // darker spots of a texture (grime, joints) are rougher than the polished ones
+        float bright = dot(albedo, vec3(0.333)) / max(dot(u_color, vec3(0.333)), 0.05);
+        g_rough = clamp(g_rough + (0.6 - bright) * 0.35, 0.05, 1.0);
+    }
+    g_metal = clamp(u_metal, 0.0, 1.0);
+    g_f0 = mix(vec3(0.04), base, g_metal);
     vec3 amb = mix(u_ambient * 0.45, u_ambient, n.y * 0.5 + 0.5);
-    vec3 col = base * amb;
+    vec3 col = base * (1.0 - g_metal) * amb;
     for (int i = 0; i < 4; i++) {
         if (i >= u_ndir) break;
         float s = i == 0 ? shadow_factor(n) : 1.0;
@@ -453,17 +558,27 @@ void main() {
             float c = dot(-l, u_pdir[i]);
             att *= smoothstep(u_pcone[i], mix(u_pcone[i], 1.0, 0.25), c);
         }
+        if (att > 0.0) att *= spot_shadow(i, n);
         col += shade(n, v, l, u_pcolor[i] * att, base);
     }
+    // the surroundings mirrored in the surface: sharp on smooth materials, a soft
+    // average of the sky on rough ones, strongest at grazing angles (Fresnel)
+    vec3 r = reflect(-v, n);
+    vec3 env = r.y >= 0.0 ? mix(u_fog_color, u_sky_top, clamp(r.y * 1.5, 0.0, 1.0))
+                          : u_fog_color * mix(1.0, 0.2, clamp(-r.y * 3.0, 0.0, 1.0));
+    vec3 env_lin = mix(pow(env, vec3(2.2)), pow(mix(u_fog_color, u_sky_top, 0.5), vec3(2.2)) * 0.6, g_rough);
+    float ndv = max(dot(n, v), 0.0);
+    vec3 fr = g_f0 + (max(vec3(1.0 - g_rough), g_f0) - g_f0) * pow(1.0 - ndv, 5.0);
+    col += env_lin * fr * mix(1.6, 0.5, g_rough);
+    float reflectivity = max(fr.r, max(fr.g, fr.b)) * (1.0 - g_rough) * (1.0 - g_rough);
+    if (u_post == 1) {
+        // post-processing does the tone curve; this pass stays in linear light
+        float fd = length(u_cam - v_world) * u_fog;
+        col = mix(col, pow(u_fog_color, vec3(2.2)), 1.0 - exp(-fd * fd));
+        frag = vec4(col, reflectivity);
+        return;
+    }
     if (u_relief > 0.0) {
-        // glossy surfaces mirror the sky, most of all at grazing angles (Fresnel);
-        // the brightness of the texture decides how polished each spot is
-        vec3 r = reflect(-v, n);
-        vec3 env = r.y >= 0.0 ? mix(u_fog_color, u_sky_top, clamp(r.y * 1.5, 0.0, 1.0))
-                              : u_fog_color * mix(1.0, 0.2, clamp(-r.y * 3.0, 0.0, 1.0));
-        float fres = pow(1.0 - max(dot(n, v), 0.0), 5.0);
-        float gloss = u_shine * (u_has_tex == 1 ? 0.35 + 0.65 * dot(albedo, vec3(0.333)) / max(dot(u_color, vec3(0.333)), 0.05) : 1.0);
-        col += pow(env, vec3(2.2)) * (0.05 + 0.95 * fres) * clamp(gloss, 0.0, 1.0) * 2.2;
         // filmic tone curve: deep shadows, highlights that roll off instead of clipping
         col *= 1.5;
         col = clamp((col * (2.51 * col + 0.03)) / (col * (2.43 * col + 0.59) + 0.14), 0.0, 1.0);
@@ -474,6 +589,37 @@ void main() {
     float fog_d = length(u_cam - v_world) * u_fog;
     col = mix(col, u_fog_color, 1.0 - exp(-fog_d * fog_d));
     frag = vec4(col, 1.0);
+}
+"#;
+
+const FX_VS: &str = r#"
+in vec3 a_pos;
+in vec4 a_color;
+in vec2 a_uv;
+uniform mat4 u_view_proj;
+out vec4 v_color;
+out vec2 v_uv;
+void main() {
+    v_color = a_color;
+    v_uv = a_uv;
+    gl_Position = u_view_proj * vec4(a_pos, 1.0);
+}
+"#;
+
+const FX_FS: &str = r#"
+in vec4 v_color;
+in vec2 v_uv;
+out vec4 frag;
+uniform int u_post;
+uniform int u_glow;
+void main() {
+    // a soft round sprite
+    float d = length(v_uv * 2.0 - 1.0);
+    float a = v_color.a * smoothstep(1.0, 0.25, d);
+    if (a < 0.003) discard;
+    vec3 c = v_color.rgb;
+    if (u_post == 1) c = pow(c, vec3(2.2)) * (u_glow == 1 ? 4.0 : 1.0);
+    frag = u_glow == 1 ? vec4(c * a, 1.0) : vec4(c, a);
 }
 "#;
 
@@ -530,12 +676,13 @@ in vec3 v_dir;
 out vec4 frag;
 uniform vec3 u_top;
 uniform vec3 u_horizon;
+uniform int u_post;
 void main() {
     float y = normalize(v_dir).y;
     vec3 ground = u_horizon * 0.35;
     vec3 c = y >= 0.0 ? mix(u_horizon, u_top, pow(y, 0.55))
                       : mix(u_horizon, ground, pow(min(-y * 4.0, 1.0), 0.6));
-    frag = vec4(c, 1.0);
+    frag = u_post == 1 ? vec4(pow(c, vec3(2.2)), 0.0) : vec4(c, 1.0);
 }
 "#;
 
@@ -621,13 +768,25 @@ impl Renderer {
             let mesh_prog = compile(gl, MESH_VS, MESH_FS, &["a_pos", "a_normal", "a_uv", "a_joints", "a_weights"])?;
             let depth_prog = compile(gl, DEPTH_VS, DEPTH_FS, &["a_pos", "a_normal", "a_uv", "a_joints", "a_weights"])?;
             let line_prog = compile(gl, LINE_VS, LINE_FS, &["a_pos", "a_color"])?;
+            let fx_prog = compile(gl, FX_VS, FX_FS, &["a_pos", "a_color", "a_uv"])?;
+            let fx_vao = gl.create_vertex_array()?;
+            gl.bind_vertex_array(Some(fx_vao));
+            let fx_vbo = gl.create_buffer()?;
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(fx_vbo));
+            gl.enable_vertex_attrib_array(0);
+            gl.vertex_attrib_pointer_f32(0, 3, glow::FLOAT, false, 36, 0);
+            gl.enable_vertex_attrib_array(1);
+            gl.vertex_attrib_pointer_f32(1, 4, glow::FLOAT, false, 36, 12);
+            gl.enable_vertex_attrib_array(2);
+            gl.vertex_attrib_pointer_f32(2, 2, glow::FLOAT, false, 36, 28);
+            gl.bind_vertex_array(None);
             let sky_prog = compile(gl, SKY_VS, SKY_FS, &[])?;
 
             let mut shapes = HashMap::new();
             for shape in Shape::ALL {
                 let (verts, idx) = build_mesh(shape);
                 let (vao, buffers, count) = upload_mesh(gl, &verts, &idx)?;
-                shapes.insert(shape, GpuMesh { vao, buffers, count, color: [1.0; 3], texture: None, skin: None });
+                shapes.insert(shape, GpuMesh { vao, buffers, count, color: [1.0; 3], texture: None, skin: None, normal: None, rough: -1.0, metal: 0.0 });
             }
 
             let line_vao = gl.create_vertex_array()?;
@@ -642,15 +801,58 @@ impl Renderer {
             gl.bind_vertex_array(None);
 
             // shadow map (if the card does not support it, the engine carries on without shadows)
-            let (shadow_fbo, shadow_tex) = match Self::create_shadow_map(gl) {
+            let (shadow_fbo, shadow_tex) = match Self::create_shadow_map(gl, SHADOW_SIZE) {
                 Ok((f, t)) => (Some(f), Some(t)),
                 Err(_) => (None, None),
+            };
+            let (spot_fbo, spot_tex) = match Self::create_shadow_map(gl, SPOT_ATLAS) {
+                Ok((f, t)) => (Some(f), Some(t)),
+                Err(_) => (None, None),
+            };
+            let post = if std::env::var("CRYO_POST").as_deref() == Ok("0") {
+                None
+            } else {
+                let progs = (|| -> Result<_, String> {
+                    Ok((
+                        compile(gl, crate::post::QUAD_VS, &crate::post::ao_fs(), &[])?,
+                        compile(gl, crate::post::QUAD_VS, crate::post::BRIGHT_FS, &[])?,
+                        compile(gl, crate::post::QUAD_VS, crate::post::BLUR_FS, &[])?,
+                        compile(gl, crate::post::QUAD_VS, &crate::post::composite_fs(), &[])?,
+                    ))
+                })();
+                match progs {
+                    Ok((ao_prog, bright_prog, blur_prog, composite_prog)) => {
+                        let max_samples = gl.get_parameter_i32(glow::MAX_SAMPLES);
+                        let wanted = std::env::var("CRYO_POST_MSAA").ok().and_then(|v| v.parse().ok()).unwrap_or(4);
+                        Some(crate::post::Post {
+                            ao_prog,
+                            bright_prog,
+                            blur_prog,
+                            composite_prog,
+                            targets: vec![],
+                            samples: wanted.min(max_samples),
+                        })
+                    }
+                    Err(e) => {
+                        eprintln!("post-processing unavailable: {e}");
+                        None
+                    }
+                }
+            };
+            let exts = gl.supported_extensions();
+            let anisotropy = if exts.contains("GL_EXT_texture_filter_anisotropic") || exts.contains("GL_ARB_texture_filter_anisotropic") {
+                gl.get_parameter_f32(0x84FF).min(16.0)
+            } else {
+                0.0
             };
 
             Ok(Renderer {
                 mesh_prog,
                 depth_prog,
                 line_prog,
+                fx_prog,
+                fx_vao,
+                fx_vbo,
                 sky_prog,
                 shapes,
                 models: HashMap::new(),
@@ -661,6 +863,10 @@ impl Renderer {
                 empty_vao,
                 shadow_fbo,
                 shadow_tex,
+                spot_fbo,
+                spot_tex,
+                post,
+                anisotropy,
                 white_tex: None,
                 frame_no: 0,
                 model_used: HashMap::new(),
@@ -668,7 +874,7 @@ impl Renderer {
         }
     }
 
-    unsafe fn create_shadow_map(gl: &glow::Context) -> Result<(glow::Framebuffer, glow::Texture), String> {
+    unsafe fn create_shadow_map(gl: &glow::Context, size: i32) -> Result<(glow::Framebuffer, glow::Texture), String> {
         let prev = gl.get_parameter_framebuffer(glow::DRAW_FRAMEBUFFER_BINDING);
         let tex = gl.create_texture()?;
         gl.bind_texture(glow::TEXTURE_2D, Some(tex));
@@ -676,8 +882,8 @@ impl Renderer {
             glow::TEXTURE_2D,
             0,
             glow::DEPTH_COMPONENT24 as i32,
-            SHADOW_SIZE,
-            SHADOW_SIZE,
+            size,
+            size,
             0,
             glow::DEPTH_COMPONENT,
             glow::FLOAT,
@@ -727,6 +933,9 @@ impl Renderer {
         );
         gl.generate_mipmap(glow::TEXTURE_2D);
         gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR_MIPMAP_LINEAR as i32);
+        if self.anisotropy > 1.0 {
+            gl.tex_parameter_f32(glow::TEXTURE_2D, 0x84FE, self.anisotropy);
+        }
         gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
         gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, glow::REPEAT as i32);
         gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, glow::REPEAT as i32);
@@ -768,7 +977,17 @@ impl Renderer {
                 _ => upload_mesh(gl, &s.vertices, &s.indices).map(|r| (r, None)),
             };
             if let Ok(((vao, buffers, count), skin)) = uploaded {
-                parts.push(GpuMesh { vao, buffers, count, color: s.color, texture: s.texture.clone(), skin });
+                parts.push(GpuMesh {
+                    vao,
+                    buffers,
+                    count,
+                    color: s.color,
+                    texture: s.texture.clone(),
+                    skin,
+                    normal: s.normal.clone(),
+                    rough: s.rough,
+                    metal: s.metal,
+                });
             }
         }
         self.models.insert(m.id, parts);
@@ -786,6 +1005,9 @@ impl Renderer {
                     self.ensure_model(gl, m);
                     for s in &m.subs {
                         if let Some(t) = &s.texture {
+                            self.ensure_texture(gl, t);
+                        }
+                        if let Some(t) = &s.normal {
                             self.ensure_texture(gl, t);
                         }
                     }
@@ -863,6 +1085,97 @@ impl Renderer {
                 has_shadow = true;
             }
 
+            // --- shadows of local lights: the nearest ones that cast shadows share a 4 x 4 atlas.
+            // A spotlight takes one tile; a point light takes six, one per face of a cube.
+            let mut tile_vps: Vec<Mat4> = vec![];
+            let mut tile_of = [-1i32; MAX_POINT];
+            if let Some(fbo) = self.spot_fbo {
+                let mut casters: Vec<usize> = f.locals.iter().enumerate().filter(|(_, l)| l.shadow).map(|(i, _)| i).collect();
+                casters.sort_by(|a, b| f.locals[*a].pos.distance(f.cam_pos).total_cmp(&f.locals[*b].pos.distance(f.cam_pos)));
+                let mut jobs: Vec<(usize, Vec<Mat4>)> = vec![];
+                let mut used = 0;
+                for li in casters {
+                    let l = &f.locals[li];
+                    let views: Vec<Mat4> = if l.cos_outer > -1.5 {
+                        let angle = l.cos_outer.clamp(-1.0, 1.0).acos() * 2.0 + 0.1;
+                        let up = if l.dir.y.abs() > 0.95 { Vec3::X } else { Vec3::Y };
+                        vec![crate::viewport::perspective(angle.min(3.0), 1.0, 0.1, l.range.max(0.5)) * look_to(l.pos, l.dir, up)]
+                    } else {
+                        let proj = crate::viewport::perspective(96f32.to_radians(), 1.0, 0.08, l.range.max(0.5));
+                        [(Vec3::X, Vec3::Y), (Vec3::NEG_X, Vec3::Y), (Vec3::Y, Vec3::Z), (Vec3::NEG_Y, Vec3::Z), (Vec3::Z, Vec3::Y), (Vec3::NEG_Z, Vec3::Y)]
+                            .into_iter()
+                            .map(|(d, up)| proj * look_to(l.pos, d, up))
+                            .collect()
+                    };
+                    if used + views.len() > SHADOW_TILES {
+                        continue;
+                    }
+                    tile_of[li] = used as i32;
+                    used += views.len();
+                    jobs.push((li, views));
+                }
+                if !jobs.is_empty() {
+                    let prev = gl.get_parameter_framebuffer(glow::DRAW_FRAMEBUFFER_BINDING);
+                    gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+                    gl.disable(glow::SCISSOR_TEST);
+                    gl.viewport(0, 0, SPOT_ATLAS, SPOT_ATLAS);
+                    gl.clear_depth_f32(1.0);
+                    gl.clear(glow::DEPTH_BUFFER_BIT);
+                    gl.use_program(Some(self.depth_prog));
+                    let u_mvp = gl.get_uniform_location(self.depth_prog, "u_mvp");
+                    let d_flag = gl.get_uniform_location(self.depth_prog, "u_skinned");
+                    let d_mats = gl.get_uniform_location(self.depth_prog, "u_joints[0]");
+                    gl.disable(glow::CULL_FACE);
+                    gl.enable(glow::POLYGON_OFFSET_FILL);
+                    gl.polygon_offset(2.0, 4.0);
+                    let tile = SPOT_ATLAS / 4;
+                    for (li, views) in jobs {
+                        let l = &f.locals[li];
+                        for vp in views {
+                            let t = tile_vps.len() as i32;
+                            gl.viewport((t % 4) * tile, (t / 4) * tile, tile, tile);
+                            for item in f.items.iter().filter(|i| i.cast_shadow && i.center.distance(l.pos) < l.range + i.radius) {
+                                gl.uniform_matrix_4_f32_slice(u_mvp.as_ref(), false, &(vp * item.model).to_cols_array());
+                                let parts: &[GpuMesh] = match &item.mesh {
+                                    MeshRef::Shape(s) => self.shapes.get(s).map(std::slice::from_ref).unwrap_or(&[]),
+                                    MeshRef::Model(m) => self.models.get(&m.id).map(|v| v.as_slice()).unwrap_or(&[]),
+                                };
+                                for m in parts {
+                                    bind_skin(gl, &d_flag, &d_mats, m, &item.joints);
+                                    gl.bind_vertex_array(Some(m.vao));
+                                    gl.draw_elements(glow::TRIANGLES, m.count, glow::UNSIGNED_INT, 0);
+                                }
+                            }
+                            gl.uniform_1_i32(d_flag.as_ref(), 0);
+                            tile_vps.push(vp);
+                        }
+                    }
+                    gl.disable(glow::POLYGON_OFFSET_FILL);
+                    gl.bind_framebuffer(glow::FRAMEBUFFER, prev);
+                    gl.viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+                    gl.enable(glow::SCISSOR_TEST);
+                }
+            }
+
+            // --- post-processing: draw into an off-screen image first ---
+            let use_post = f.bloom > 0.0 || f.ssao > 0.0 || f.reflections > 0.0;
+            let frame_no = self.frame_no;
+            let (vw, vh) = (viewport[2].max(1), viewport[3].max(1));
+            let screen_fbo = gl.get_parameter_framebuffer(glow::DRAW_FRAMEBUFFER_BINDING);
+            let target = match (&mut self.post, use_post) {
+                (Some(post), true) => post.targets(gl, vw, vh, frame_no),
+                _ => None,
+            };
+            if let (Some(post), Some(ti)) = (&self.post, target) {
+                let t = &post.targets[ti];
+                gl.bind_framebuffer(glow::FRAMEBUFFER, Some(t.msaa_fbo.unwrap_or(t.scene_fbo)));
+                gl.viewport(0, 0, vw, vh);
+                gl.disable(glow::SCISSOR_TEST);
+                gl.clear_color(0.0, 0.0, 0.0, 0.0);
+                gl.clear(glow::COLOR_BUFFER_BIT);
+            }
+            let post_on = target.is_some();
+
             gl.clear_depth_f32(1.0);
             gl.clear(glow::DEPTH_BUFFER_BIT);
             gl.disable(glow::CULL_FACE);
@@ -877,6 +1190,7 @@ impl Renderer {
             );
             gl.uniform_3_f32_slice(loc(self.sky_prog, "u_top").as_ref(), &f.sky_top);
             gl.uniform_3_f32_slice(loc(self.sky_prog, "u_horizon").as_ref(), &f.sky_horizon);
+            gl.uniform_1_i32(loc(self.sky_prog, "u_post").as_ref(), post_on as i32);
             gl.depth_mask(false);
             gl.bind_vertex_array(Some(self.empty_vao));
             gl.draw_arrays(glow::TRIANGLES, 0, 3);
@@ -891,6 +1205,16 @@ impl Renderer {
             gl.uniform_1_f32(loc(p, "u_fog").as_ref(), f.fog.clamp(0.0, 1.0));
             gl.uniform_1_f32(loc(p, "u_relief").as_ref(), f.relief.clamp(0.0, 4.0));
             gl.uniform_3_f32_slice(loc(p, "u_sky_top").as_ref(), &f.sky_top);
+            gl.uniform_1_i32(loc(p, "u_post").as_ref(), post_on as i32);
+            for i in 0..MAX_POINT {
+                gl.uniform_1_i32(loc(p, &format!("u_pshadow[{i}]")).as_ref(), if i < f.locals.len() { tile_of[i] } else { -1 });
+            }
+            for (i, vp) in tile_vps.iter().enumerate() {
+                gl.uniform_matrix_4_f32_slice(loc(p, &format!("u_spot_vp[{i}]")).as_ref(), false, &vp.to_cols_array());
+            }
+            gl.uniform_1_i32(loc(p, "u_spot_shadow").as_ref(), 2);
+            gl.active_texture(glow::TEXTURE2);
+            gl.bind_texture(glow::TEXTURE_2D, self.spot_tex.or(self.shadow_tex));
             gl.uniform_3_f32_slice(loc(p, "u_fog_color").as_ref(), &f.sky_horizon);
             gl.uniform_1_i32(loc(p, "u_ndir").as_ref(), f.dir_lights.len() as i32);
             for (i, (dir, color)) in f.dir_lights.iter().enumerate() {
@@ -921,6 +1245,10 @@ impl Renderer {
             let u_mode = loc(p, "u_mode");
             let u_outline = loc(p, "u_outline");
             let u_has_tex = loc(p, "u_has_tex");
+            let u_has_normal = loc(p, "u_has_normal");
+            let u_rough = loc(p, "u_rough");
+            let u_metal = loc(p, "u_metal");
+            gl.uniform_1_i32(loc(p, "u_normal_tex").as_ref(), 4);
             if self.white_tex.is_none() {
                 if let Ok(t) = gl.create_texture() {
                     gl.bind_texture(glow::TEXTURE_2D, Some(t));
@@ -993,16 +1321,155 @@ impl Renderer {
                         .and_then(|t| self.textures.get(&t.id).copied());
                     gl.uniform_1_i32(u_has_tex.as_ref(), tex.is_some() as i32);
                     gl.bind_texture(glow::TEXTURE_2D, tex.or(white));
+                    let normal = m.normal.as_ref().and_then(|t| self.textures.get(&t.id).copied());
+                    gl.uniform_1_i32(u_has_normal.as_ref(), normal.is_some() as i32);
+                    gl.uniform_1_f32(u_rough.as_ref(), m.rough);
+                    gl.uniform_1_f32(u_metal.as_ref(), m.metal);
+                    gl.active_texture(glow::TEXTURE4);
+                    gl.bind_texture(glow::TEXTURE_2D, normal.or(white));
+                    gl.active_texture(glow::TEXTURE0);
                     bind_skin(gl, &u_flag, &u_mats, m, &item.joints);
                     gl.bind_vertex_array(Some(m.vao));
                     gl.draw_elements(glow::TRIANGLES, m.count, glow::UNSIGNED_INT, 0);
                 }
             }
             gl.disable(glow::CULL_FACE);
+
+            // --- particles: soft sprites facing the camera, smoke behind glow ---
+            if !f.particles.is_empty() {
+                let inv = f.view.inverse();
+                let (right, up) = (inv.x_axis.truncate(), inv.y_axis.truncate());
+                let mut order: Vec<&(Vec3, f32, [f32; 4], bool)> = f.particles.iter().collect();
+                // covering particles far to near; glowing ones need no order
+                order.sort_by(|a, b| (a.3 as u8).cmp(&(b.3 as u8)).then(b.0.distance(f.cam_pos).total_cmp(&a.0.distance(f.cam_pos))));
+                let split = order.iter().position(|p| p.3).unwrap_or(order.len());
+                let mut verts: Vec<f32> = Vec::with_capacity(order.len() * 54);
+                for (pos, size, c, _) in &order {
+                    let (r, u) = (right * *size, up * *size);
+                    let corners = [(*pos - r - u, 0.0, 0.0), (*pos + r - u, 1.0, 0.0), (*pos + r + u, 1.0, 1.0), (*pos - r + u, 0.0, 1.0)];
+                    for k in [0, 1, 2, 0, 2, 3] {
+                        let (p, s, t) = corners[k];
+                        verts.extend_from_slice(&[p.x, p.y, p.z, c[0], c[1], c[2], c[3], s, t]);
+                    }
+                }
+                gl.use_program(Some(self.fx_prog));
+                gl.uniform_matrix_4_f32_slice(loc(self.fx_prog, "u_view_proj").as_ref(), false, &view_proj.to_cols_array());
+                gl.uniform_1_i32(loc(self.fx_prog, "u_post").as_ref(), post_on as i32);
+                gl.bind_vertex_array(Some(self.fx_vao));
+                gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.fx_vbo));
+                gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes(&verts), glow::STREAM_DRAW);
+                gl.enable(glow::BLEND);
+                gl.depth_mask(false);
+                // the alpha channel of the off-screen image holds reflectivity: leave it alone
+                gl.color_mask(true, true, true, false);
+                gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
+                gl.uniform_1_i32(loc(self.fx_prog, "u_glow").as_ref(), 0);
+                gl.draw_arrays(glow::TRIANGLES, 0, (split * 6) as i32);
+                gl.blend_func(glow::ONE, glow::ONE);
+                gl.uniform_1_i32(loc(self.fx_prog, "u_glow").as_ref(), 1);
+                gl.draw_arrays(glow::TRIANGLES, (split * 6) as i32, ((order.len() - split) * 6) as i32);
+                gl.color_mask(true, true, true, true);
+                gl.depth_mask(true);
+                gl.disable(glow::BLEND);
+                gl.use_program(Some(p));
+            }
+
             gl.bind_texture(glow::TEXTURE_2D, None);
             gl.active_texture(glow::TEXTURE1);
             gl.bind_texture(glow::TEXTURE_2D, None);
+            gl.active_texture(glow::TEXTURE2);
+            gl.bind_texture(glow::TEXTURE_2D, None);
+            gl.active_texture(glow::TEXTURE4);
+            gl.bind_texture(glow::TEXTURE_2D, None);
             gl.active_texture(glow::TEXTURE0);
+
+            // --- post-processing: occlusion, bloom, reflections, tone curve ---
+            if let (Some(post), Some(ti)) = (&self.post, target) {
+                let t = &post.targets[ti];
+                if let Some(ms) = t.msaa_fbo {
+                    gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(ms));
+                    gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, Some(t.scene_fbo));
+                    gl.blit_framebuffer(0, 0, vw, vh, 0, 0, vw, vh, glow::COLOR_BUFFER_BIT, glow::NEAREST);
+                    gl.blit_framebuffer(0, 0, vw, vh, 0, 0, vw, vh, glow::DEPTH_BUFFER_BIT, glow::NEAREST);
+                }
+                gl.disable(glow::DEPTH_TEST);
+                gl.bind_vertex_array(Some(self.empty_vao));
+                let texel = [1.0 / vw as f32, 1.0 / vh as f32];
+                let inv_proj = f.proj.inverse();
+                let bind = |unit: u32, tex: glow::Texture| {
+                    gl.active_texture(glow::TEXTURE0 + unit);
+                    gl.bind_texture(glow::TEXTURE_2D, Some(tex));
+                };
+                // ambient occlusion
+                if f.ssao > 0.0 {
+                    gl.bind_framebuffer(glow::FRAMEBUFFER, Some(t.ao_fbo));
+                    gl.viewport(0, 0, vw, vh);
+                    let q = post.ao_prog;
+                    gl.use_program(Some(q));
+                    bind(0, t.depth);
+                    gl.uniform_1_i32(loc(q, "u_depth").as_ref(), 0);
+                    gl.uniform_matrix_4_f32_slice(loc(q, "u_inv_proj").as_ref(), false, &inv_proj.to_cols_array());
+                    gl.uniform_matrix_4_f32_slice(loc(q, "u_proj").as_ref(), false, &f.proj.to_cols_array());
+                    gl.uniform_2_f32_slice(loc(q, "u_texel").as_ref(), &texel);
+                    gl.uniform_1_f32(loc(q, "u_radius").as_ref(), 0.7);
+                    gl.draw_arrays(glow::TRIANGLES, 0, 3);
+                }
+                // bloom: bright parts at half size, blurred twice each way
+                let (bw, bh) = ((vw / 2).max(1), (vh / 2).max(1));
+                gl.bind_framebuffer(glow::FRAMEBUFFER, Some(t.bloom_fbo[0]));
+                gl.viewport(0, 0, bw, bh);
+                if f.bloom > 0.0 {
+                    let q = post.bright_prog;
+                    gl.use_program(Some(q));
+                    bind(0, t.color);
+                    gl.uniform_1_i32(loc(q, "u_src").as_ref(), 0);
+                    gl.uniform_2_f32_slice(loc(q, "u_texel").as_ref(), &texel);
+                    gl.draw_arrays(glow::TRIANGLES, 0, 3);
+                    let q = post.blur_prog;
+                    gl.use_program(Some(q));
+                    gl.uniform_1_i32(loc(q, "u_src").as_ref(), 0);
+                    for pass in 0..4 {
+                        let (from, to) = (pass % 2, 1 - pass % 2);
+                        gl.bind_framebuffer(glow::FRAMEBUFFER, Some(t.bloom_fbo[to]));
+                        bind(0, t.bloom[from]);
+                        let spread = 1.0 + (pass / 2) as f32 * 1.5;
+                        let step = if pass % 2 == 0 { [spread / bw as f32, 0.0] } else { [0.0, spread / bh as f32] };
+                        gl.uniform_2_f32_slice(loc(q, "u_step").as_ref(), &step);
+                        gl.draw_arrays(glow::TRIANGLES, 0, 3);
+                    }
+                } else {
+                    gl.clear_color(0.0, 0.0, 0.0, 0.0);
+                    gl.clear(glow::COLOR_BUFFER_BIT);
+                }
+                // composite into the panel, writing depth so the editor's lines are hidden properly
+                gl.bind_framebuffer(glow::FRAMEBUFFER, screen_fbo);
+                gl.viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+                gl.enable(glow::SCISSOR_TEST);
+                gl.enable(glow::DEPTH_TEST);
+                gl.depth_func(glow::ALWAYS);
+                gl.depth_mask(true);
+                let q = post.composite_prog;
+                gl.use_program(Some(q));
+                bind(0, t.color);
+                bind(1, t.depth);
+                bind(2, t.ao);
+                bind(3, t.bloom[0]);
+                for (name, unit) in [("u_color", 0), ("u_depth", 1), ("u_ao", 2), ("u_bloom", 3)] {
+                    gl.uniform_1_i32(loc(q, name).as_ref(), unit);
+                }
+                gl.uniform_matrix_4_f32_slice(loc(q, "u_inv_proj").as_ref(), false, &inv_proj.to_cols_array());
+                gl.uniform_matrix_4_f32_slice(loc(q, "u_proj").as_ref(), false, &f.proj.to_cols_array());
+                gl.uniform_2_f32_slice(loc(q, "u_texel").as_ref(), &texel);
+                gl.uniform_1_f32(loc(q, "u_ssao").as_ref(), f.ssao);
+                gl.uniform_1_f32(loc(q, "u_bloom_amount").as_ref(), f.bloom);
+                gl.uniform_1_f32(loc(q, "u_ssr").as_ref(), f.reflections);
+                gl.draw_arrays(glow::TRIANGLES, 0, 3);
+                gl.depth_func(glow::LEQUAL);
+                for unit in (0..4).rev() {
+                    gl.active_texture(glow::TEXTURE0 + unit);
+                    gl.bind_texture(glow::TEXTURE_2D, None);
+                }
+            }
 
             // --- lines (grid, camera gizmos, colliders) ---
             if !f.lines.is_empty() {

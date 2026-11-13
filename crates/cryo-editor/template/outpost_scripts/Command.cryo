@@ -39,7 +39,13 @@ script Command {
             goal = "Reactor offline. Mission complete"
             audio.stop_music()
             audio.play("sounds/win.wav", 0.9)
+            // the best time is kept between sessions
+            let best = save.get("outpost_best_time", 0)
+            if best == 0 or time.total < best {
+                save.set("outpost_best_time", round(time.total))
+            }
             banner("OUTPOST SECURED", 8)
+            goal = goal + "\nTime: " + round(time.total) + " s (best: " + save.get("outpost_best_time", 0) + " s)"
             emit("core_down")
         } else if nodes > 0 {
             goal = "Destroy the coolant nodes: " + nodes + " left"

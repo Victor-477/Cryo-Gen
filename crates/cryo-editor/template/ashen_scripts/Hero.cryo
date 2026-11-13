@@ -75,6 +75,7 @@ script Hero {
             let dist = length(d)
             if dist < reach and (dist < 0.6 or dot(normalize(d), forward()) > arc) {
                 e.send("hit", amount, self.position)
+                fx.burst(e.position + vec3(0, 0.3, 0), "sparks", 14, nil, normalize(self.position - e.position))
                 landed = true
             }
         }

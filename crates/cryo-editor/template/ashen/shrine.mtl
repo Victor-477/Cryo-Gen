@@ -1,5 +1,8 @@
 newmtl stone
 Kd 1 1 1
-map_Kd tex_stone.png
+map_Kd tex_stone.jpg
+norm tex_stone_n.jpg
+Pr 0.88
+Pm 0.0
 newmtl glow
 Kd 0.5 0.85 1.0

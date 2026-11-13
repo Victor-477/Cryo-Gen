@@ -1,5 +1,10 @@
 newmtl glass
 Kd 0.75 0.1 0.12
+Pr 0.08
+Pm 0.0
 newmtl wood
 Kd 1 1 1
-map_Kd tex_wood.png
+map_Kd tex_wood.jpg
+norm tex_wood_n.jpg
+Pr 0.78
+Pm 0.0

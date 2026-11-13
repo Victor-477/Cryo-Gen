@@ -1,12 +1,23 @@
 newmtl concrete
 Kd 1 1 1
-map_Kd tex_concrete.png
+map_Kd tex_concrete.jpg
+norm tex_concrete_n.jpg
+Pr 0.85
+Pm 0.0
 newmtl hazard
 Kd 1 1 1
-map_Kd tex_hazard.png
+map_Kd tex_hazard.jpg
+Pr 0.6
+Pm 0.0
 newmtl gunmetal
 Kd 0.42 0.44 0.48
-map_Kd tex_gunmetal.png
+map_Kd tex_gunmetal.jpg
+norm tex_gunmetal_n.jpg
+Pr 0.4
+Pm 0.8
 newmtl steel
 Kd 0.7 0.72 0.76
-map_Kd tex_gunmetal.png
+map_Kd tex_gunmetal.jpg
+norm tex_gunmetal_n.jpg
+Pr 0.3
+Pm 1.0

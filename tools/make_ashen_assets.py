@@ -169,6 +169,22 @@ class Mesh:
 def ball(y, r, n=7, squash=1.0):
     return [(y + math.cos(math.pi * (1 - i / n)) * r * squash, max(math.sin(math.pi * i / n) * r, 0.0)) for i in range(n + 1)]
 
+# Surface finish per material name: (roughness 0 = mirror .. 1 = chalk, metallic 0 .. 1).
+PBR = {
+    "plate": (0.42, 0.85), "trim": (0.38, 1.0), "blade": (0.25, 1.0), "mail": (0.5, 0.85), "rusty": (0.72, 0.35),
+    "cloth": (0.92, 0.0), "rag": (0.95, 0.0), "leather": (0.68, 0.0), "bone": (0.62, 0.0), "wood": (0.78, 0.0),
+    "dark": (0.6, 0.3), "black": (0.7, 0.0), "stone": (0.88, 0.0), "cobble": (0.8, 0.0), "flag": (0.55, 0.0),
+    "grass": (0.95, 0.0), "roof": (0.7, 0.0), "iron": (0.5, 0.8), "gold": (0.35, 1.0), "rock": (0.9, 0.0),
+    "bark": (0.85, 0.0), "leaf": (0.8, 0.0), "leaf2": (0.8, 0.0), "glass": (0.08, 0.0),
+}
+
+def normal_for(tex):
+    """The normal map that goes with a colour texture, when the generator wrote one."""
+    if not tex:
+        return None
+    n = tex.replace(".jpg", "_n.jpg").replace(".png", "_n.png")
+    return n if os.path.exists(os.path.join(OUT, n)) else None
+
 # ------------------------------------------------------------------ OBJ output (scenery)
 def write_obj(name, mesh, materials, tile=2.0):
     """`materials`: name -> (rgb, texture file or None). Texture coordinates repeat every `tile` metres."""
@@ -191,6 +207,10 @@ def write_obj(name, mesh, materials, tile=2.0):
     for mat in mesh.tris:
         rgb, tex = materials[mat]
         mtl += [f"newmtl {mat}", f"Kd {rgb[0]} {rgb[1]} {rgb[2]}"] + ([f"map_Kd {tex}"] if tex else [])
+        if normal_for(tex):
+            mtl.append(f"norm {normal_for(tex)}")
+        if mat in PBR:
+            mtl += [f"Pr {PBR[mat][0]}", f"Pm {PBR[mat][1]}"]
     open(os.path.join(OUT, name + ".mtl"), "w").write("\n".join(mtl) + "\n")
 
 # ------------------------------------------------------------------ glTF output (characters)
@@ -230,13 +250,19 @@ def write_gltf(name, mesh, materials, joints, clips):
             "JOINTS_0": add(jnt, "H", "VEC4", count, 5123), "WEIGHTS_0": add(wgt, "f", "VEC4", count, 5126)},
             "indices": add(idx, "I", "SCALAR", len(idx), 5125), "material": len(mats)})
         rgb, tex = materials[mat]
-        pbr = {"baseColorFactor": list(rgb) + [1.0]}
-        if tex:
-            if {"uri": tex} not in images:
-                images.append({"uri": tex})
+        rough, metal = PBR.get(mat, (0.7, 0.0))
+        pbr = {"baseColorFactor": list(rgb) + [1.0], "roughnessFactor": rough, "metallicFactor": metal}
+        def image(uri):
+            if {"uri": uri} not in images:
+                images.append({"uri": uri})
                 textures.append({"source": len(images) - 1})
-            pbr["baseColorTexture"] = {"index": images.index({"uri": tex})}
-        mats.append({"name": mat, "pbrMetallicRoughness": pbr})
+            return images.index({"uri": uri})
+        material = {"name": mat, "pbrMetallicRoughness": pbr}
+        if tex:
+            pbr["baseColorTexture"] = {"index": image(tex)}
+            if normal_for(tex):
+                material["normalTexture"] = {"index": image(normal_for(tex))}
+        mats.append(material)
     ibm = []
     for _, _, p in joints:
         ibm += [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, -p[0], -p[1], -p[2], 1]
@@ -551,7 +577,7 @@ def clips_for(style):
                             "move": [(0, (0, 0, 0)), (0.6, (0, -0.42, 0))]})
     return c
 
-METAL, MAILT, CLOTH, LEATHER, BONE, WOODT = "tex_metal.png", "tex_mail.png", "tex_cloth.png", "tex_leather.png", "tex_bone.png", "tex_wood.png"
+METAL, MAILT, CLOTH, LEATHER, BONE, WOODT = "tex_metal.jpg", "tex_mail.jpg", "tex_cloth.jpg", "tex_leather.jpg", "tex_bone.jpg", "tex_wood.jpg"
 PALETTES = {
     "knight": {"plate": ((0.40, 0.41, 0.45), METAL), "mail": ((0.24, 0.24, 0.27), MAILT), "trim": ((0.52, 0.43, 0.27), METAL),
                "cloth": ((0.2, 0.25, 0.27), CLOTH), "leather": ((0.28, 0.2, 0.15), LEATHER), "blade": ((0.74, 0.76, 0.8), METAL),
@@ -581,13 +607,33 @@ def fbm(size, seed, octaves=(4, 8, 16, 32, 64)):
     out = sum(noise(size, c, seed + k) / (2 ** k) for k, c in enumerate(octaves))
     return (out - out.min()) / (out.max() - out.min())
 
+LAST_RELIEF = []
+
 def relief(height, strength):
-    """Shades a height map as if lit from the upper left. The engine has no normal maps,
-    so the bumps of stone, mail and bone are painted into the colour."""
+    """Shades a height map as if lit from the upper left (a little relief painted into the colour).
+    The height is also remembered, so the next save_texture writes a matching normal map."""
+    LAST_RELIEF[:] = [(height, strength)]
     return 1 + strength * ((height - np.roll(height, 2, 1)) + (height - np.roll(height, 2, 0)))
 
+def normal_map(height, strength):
+    """Tangent-space normal map (OpenGL convention: green points along +v) from a height map."""
+    k = strength * height.shape[0] / 256.0
+    du = (np.roll(height, -2, 1) - np.roll(height, 2, 1)) * k
+    dv = (np.roll(height, -2, 0) - np.roll(height, 2, 0)) * k
+    n = np.stack([-du, -dv, np.ones_like(height)], -1)
+    n /= np.linalg.norm(n, axis=-1, keepdims=True)
+    return n * 0.5 + 0.5
+
 def save_texture(name, rgb):
-    Image.fromarray((np.clip(rgb, 0, 1) * 255).astype(np.uint8), "RGB").save(os.path.join(OUT, name), optimize=True)
+    if LAST_RELIEF:
+        height, strength = LAST_RELIEF.pop()
+        nm = Image.fromarray((np.clip(normal_map(height, strength), 0, 1) * 255).astype(np.uint8), "RGB")
+        nm.save(os.path.join(OUT, name.replace(".jpg", "_n.jpg").replace(".png", "_n.png")), quality=92, subsampling=0)
+    img = Image.fromarray((np.clip(rgb, 0, 1) * 255).astype(np.uint8), "RGB")
+    if name.endswith(".jpg"):
+        img.save(os.path.join(OUT, name), quality=90, optimize=True, subsampling=0)
+    else:
+        img.save(os.path.join(OUT, name), optimize=True)
 
 def bricks(size, rows, cols, seed, stagger=True, joint=0.07):
     """Returns (mortar 0..1, a random value per brick, rounded height of each brick)."""
@@ -604,7 +650,7 @@ def grey(v, tint=(1, 1, 1)):
     return np.stack([v * tint[0], v * tint[1], v * tint[2]], -1)
 
 def make_textures():
-    S = 512
+    S = 1024   # high resolution: walls and floors are seen up close
     grain, fine, pits = fbm(S, 1), fbm(S, 7, (32, 64, 128)), fbm(S, 5, (64, 128, 256))
     # castle wall: weathered blocks, chipped edges, damp streaks and moss
     mortar, tone, dome = bricks(S, 8, 4, 2)
@@ -612,23 +658,23 @@ def make_textures():
     streak = fbm(S, 40, (2, 4, 8))[:, (np.arange(S) // 6) % S] * 0.12
     v = (0.5 + (tone - 0.5) * 0.22 + (grain - 0.5) * 0.2 - streak) * relief(height, 1.6) * (1 - mortar * 0.55)
     moss = np.clip((fbm(S, 11) - 0.6) * 4, 0, 1)[..., None] * (0.4 + 0.6 * mortar[..., None])
-    save_texture("tex_stone.png", grey(v, (1.0, 0.98, 0.95)) * (1 - moss * 0.55) + np.array([0.2, 0.28, 0.12]) * moss * 0.55)
+    save_texture("tex_stone.jpg", grey(v, (1.0, 0.98, 0.95)) * (1 - moss * 0.55) + np.array([0.2, 0.28, 0.12]) * moss * 0.55)
     # cobbles: rounded stones, each with its own colour, dirt between them
     mortar, tone, dome = bricks(S, 12, 12, 3, joint=0.16)
     v = (0.42 + (tone - 0.5) * 0.3 + (fine - 0.5) * 0.12) * relief(dome + pits * 0.2, 2.2)
     warm = (tone[..., None] - 0.5) * np.array([0.06, 0.0, -0.06])
-    save_texture("tex_cobble.png", (grey(v, (1.02, 0.98, 0.93)) + warm) * (1 - mortar[..., None] * 0.72))
+    save_texture("tex_cobble.jpg", (grey(v, (1.02, 0.98, 0.93)) + warm) * (1 - mortar[..., None] * 0.72))
     # hall floor: worn flagstones with cracks
     mortar, tone, dome = bricks(S, 4, 4, 5, stagger=False, joint=0.04)
     cracks = np.clip(1 - np.abs(fbm(S, 61, (3, 6, 12, 24)) - 0.5) * 60, 0, 1)
     v = (0.3 + (tone - 0.5) * 0.1 + (grain - 0.5) * 0.12) * relief(dome * 0.5 + grain * 0.6 - cracks * 0.4, 1.5)
-    save_texture("tex_flag.png", grey(v, (0.95, 0.95, 1.05)) * (1 - mortar[..., None] * 0.6) * (1 - cracks[..., None] * 0.5))
+    save_texture("tex_flag.jpg", grey(v, (0.95, 0.95, 1.05)) * (1 - mortar[..., None] * 0.6) * (1 - cracks[..., None] * 0.5))
     # grass: fine blades over uneven ground, with trodden earth here and there
     g, blades = fbm(S, 21, (3, 6, 12, 24)), fbm(S, 23, (128, 256))
     earth = np.clip((fbm(S, 29, (2, 4, 8, 16)) - 0.68) * 7, 0, 1)[..., None]
-    green = np.stack([0.2 + g * 0.1 + blades * 0.08, 0.22 + g * 0.1 + blades * 0.1, 0.12 + g * 0.05], -1)   # dry, dying grass * relief(blades, 0.9)[..., None]
-    save_texture("tex_grass.png", green * (1 - earth) + np.array([0.3, 0.24, 0.17]) * (0.75 + pits[..., None] * 0.5) * earth)
-    S = 256
+    green = np.stack([0.2 + g * 0.1 + blades * 0.08, 0.22 + g * 0.1 + blades * 0.1, 0.12 + g * 0.05], -1) * relief(blades, 0.9)[..., None]   # dry, dying grass
+    save_texture("tex_grass.jpg", green * (1 - earth) + np.array([0.3, 0.24, 0.17]) * (0.75 + pits[..., None] * 0.5) * earth)
+    S = 512
     grain, fine = fbm(S, 1), fbm(S, 7, (32, 64, 128))
     y, x = np.mgrid[0:S, 0:S] / S
     # planks with grain and nail heads
@@ -637,37 +683,37 @@ def make_textures():
     rings = 0.5 + 0.5 * np.sin(y * 46 + streak * 16 + plank * 5)
     gap = np.clip(1 - np.minimum(x * 4 - plank, 1 - (x * 4 - plank)) / 0.05, 0, 1)
     v = (0.44 + rings * 0.09 + (np.random.default_rng(4).random(4)[plank.astype(int)] - 0.5) * 0.12) * relief(rings * 0.3 - gap, 1.2)
-    save_texture("tex_wood.png", grey(v, (1.1, 0.78, 0.5)) * (1 - gap[..., None] * 0.7))
+    save_texture("tex_wood.jpg", grey(v, (1.1, 0.78, 0.5)) * (1 - gap[..., None] * 0.7))
     mortar, tone, dome = bricks(S, 8, 6, 9)
     v = (0.4 + (tone - 0.5) * 0.25 + (fine - 0.5) * 0.1) * relief(dome, 1.5)
-    save_texture("tex_roof.png", grey(v, (0.62, 0.66, 0.78)) * (1 - mortar[..., None] * 0.55))
+    save_texture("tex_roof.jpg", grey(v, (0.62, 0.66, 0.78)) * (1 - mortar[..., None] * 0.55))
     # plate: brushed steel with scratches and dents; tinted per material (steel, gold, rust)
     brushed = fbm(S, 51, (2, 4))[:, (np.arange(S) * 13) % S] * 0.5 + noise(S, 128, 52)[(np.arange(S) * 3) % S][:, :] * 0.5
     scratches = np.clip(1 - np.abs(fbm(S, 53, (5, 9, 17)) - 0.5) * 70, 0, 1)
     v = (0.78 + (brushed - 0.5) * 0.16 + (grain - 0.5) * 0.14 + scratches * 0.2) * relief(grain * 0.8 - scratches * 0.3, 0.8)
     rust = np.clip((fbm(S, 57, (3, 6, 12, 24)) - 0.55) * 5, 0, 1)[..., None]
-    save_texture("tex_metal.png", grey(v) * (1 - rust * 0.75) + np.array([0.62, 0.36, 0.2]) * (0.7 + fine[..., None] * 0.5) * rust * 0.75)
+    save_texture("tex_metal.jpg", grey(v) * (1 - rust * 0.75) + np.array([0.62, 0.36, 0.2]) * (0.7 + fine[..., None] * 0.5) * rust * 0.75)
     # mail: rows of interlocked rings
     rings = np.maximum(np.sin(x * math.tau * 16) * np.sin(y * math.tau * 16), np.sin(x * math.tau * 16 + math.pi / 2) * np.sin(y * math.tau * 16 + math.pi / 2))
     hole = np.clip(rings * 1.4, 0, 1)
-    save_texture("tex_mail.png", grey((0.35 + hole * 0.6) * relief(hole, 1.8)))
+    save_texture("tex_mail.jpg", grey((0.35 + hole * 0.6) * relief(hole, 1.8)))
     # cloth: a visible weave
     weave = (np.sin(x * math.tau * 48) * 0.5 + 0.5) * (np.sin(y * math.tau * 48) * 0.5 + 0.5)
-    save_texture("tex_cloth.png", grey((0.74 + weave * 0.22 + (grain - 0.5) * 0.2) * relief(weave, 0.5)))
+    save_texture("tex_cloth.jpg", grey((0.74 + weave * 0.22 + (grain - 0.5) * 0.2) * relief(weave, 0.5)))
     # leather: creased
     crease = np.clip(1 - np.abs(fbm(S, 71, (6, 12, 24)) - 0.5) * 18, 0, 1)
-    save_texture("tex_leather.png", grey((0.8 + (grain - 0.5) * 0.25 - crease * 0.3) * relief(-crease, 0.9)))
+    save_texture("tex_leather.jpg", grey((0.8 + (grain - 0.5) * 0.25 - crease * 0.3) * relief(-crease, 0.9)))
     # bone: porous, stained in the hollows, with hairline cracks
     crack = np.clip(1 - np.abs(fbm(S, 81, (4, 8, 16)) - 0.5) * 50, 0, 1)
     stain = fbm(S, 83, (3, 6))
     v = (0.9 + (fine - 0.5) * 0.14 - stain * 0.16 - crack * 0.35) * relief(fine * 0.6 - crack, 0.8)
-    save_texture("tex_bone.png", grey(v, (1.0, 0.97, 0.88)))
+    save_texture("tex_bone.jpg", grey(v, (1.0, 0.97, 0.88)))
 
 # ------------------------------------------------------------------ scenery
-MAT = {"stone": ((1, 1, 1), "tex_stone.png"), "cobble": ((1, 1, 1), "tex_cobble.png"), "flag": ((1, 1, 1), "tex_flag.png"),
-       "grass": ((1, 1, 1), "tex_grass.png"), "wood": ((1, 1, 1), "tex_wood.png"), "roof": ((1, 1, 1), "tex_roof.png"),
-       "iron": ((0.22, 0.22, 0.25), "tex_metal.png"), "cloth": ((0.3, 0.07, 0.07), "tex_cloth.png"), "gold": ((0.95, 0.74, 0.3), "tex_metal.png"),
-       "leaf": ((0.09, 0.13, 0.11), None), "leaf2": ((0.12, 0.16, 0.12), None), "bark": ((0.5, 0.36, 0.26), "tex_wood.png"),
+MAT = {"stone": ((1, 1, 1), "tex_stone.jpg"), "cobble": ((1, 1, 1), "tex_cobble.jpg"), "flag": ((1, 1, 1), "tex_flag.jpg"),
+       "grass": ((1, 1, 1), "tex_grass.jpg"), "wood": ((1, 1, 1), "tex_wood.jpg"), "roof": ((1, 1, 1), "tex_roof.jpg"),
+       "iron": ((0.22, 0.22, 0.25), "tex_metal.jpg"), "cloth": ((0.3, 0.07, 0.07), "tex_cloth.jpg"), "gold": ((0.95, 0.74, 0.3), "tex_metal.jpg"),
+       "leaf": ((0.09, 0.13, 0.11), None), "leaf2": ((0.12, 0.16, 0.12), None), "bark": ((0.5, 0.36, 0.26), "tex_wood.jpg"),
        "rock": ((0.4, 0.4, 0.43), None), "glass": ((0.75, 0.1, 0.12), None), "glow": ((0.5, 0.85, 1.0), None),
        "black": ((0.03, 0.03, 0.04), None)}
 

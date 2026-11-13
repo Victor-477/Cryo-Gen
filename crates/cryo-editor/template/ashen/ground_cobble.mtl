@@ -1,3 +1,6 @@
 newmtl cobble
 Kd 1 1 1
-map_Kd tex_cobble.png
+map_Kd tex_cobble.jpg
+norm tex_cobble_n.jpg
+Pr 0.8
+Pm 0.0

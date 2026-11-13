@@ -1,3 +1,6 @@
 newmtl flag
 Kd 1 1 1
-map_Kd tex_flag.png
+map_Kd tex_flag.jpg
+norm tex_flag_n.jpg
+Pr 0.55
+Pm 0.0

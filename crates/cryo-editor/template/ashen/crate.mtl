@@ -1,6 +1,12 @@
 newmtl wood
 Kd 1 1 1
-map_Kd tex_wood.png
+map_Kd tex_wood.jpg
+norm tex_wood_n.jpg
+Pr 0.78
+Pm 0.0
 newmtl bark
 Kd 0.5 0.36 0.26
-map_Kd tex_wood.png
+map_Kd tex_wood.jpg
+norm tex_wood_n.jpg
+Pr 0.85
+Pm 0.0

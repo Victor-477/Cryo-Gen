@@ -1,3 +1,6 @@
 newmtl grass
 Kd 1 1 1
-map_Kd tex_grass.png
+map_Kd tex_grass.jpg
+norm tex_grass_n.jpg
+Pr 0.95
+Pm 0.0

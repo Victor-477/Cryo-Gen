@@ -1,5 +1,10 @@
 newmtl gunmetal
 Kd 0.42 0.44 0.48
-map_Kd tex_gunmetal.png
+map_Kd tex_gunmetal.jpg
+norm tex_gunmetal_n.jpg
+Pr 0.4
+Pm 0.8
 newmtl lamp
 Kd 1.0 0.9 0.7
+Pr 0.5
+Pm 0.0

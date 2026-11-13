@@ -55,7 +55,10 @@ script Director {
     }
 
     on celebrate() {
+        // victories are counted between sessions
+        save.set("ashen_victories", save.get("ashen_victories", 0) + 1)
         banner("VICTORY", 8)
+        goal = goal + "\nVictories: " + save.get("ashen_victories", 0)
     }
 
     on update(dt) {

@@ -166,7 +166,70 @@ fn qte_from_args(method: &str, args: &[Value], me: u64) -> Result<Qte, String> {
     Ok(q)
 }
 
+/// Values a game keeps between sessions (`save.set` / `save.get`), in a JSON file in the
+/// user's Cryo Engine folder.
+#[derive(Default)]
+pub struct Saves {
+    pub path: Option<std::path::PathBuf>,
+    pub data: std::collections::BTreeMap<String, serde_json::Value>,
+}
+
+impl Saves {
+    pub fn open(path: Option<std::path::PathBuf>) -> Saves {
+        let data = path
+            .as_ref()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+        Saves { path, data }
+    }
+    fn write(&self) -> Result<(), String> {
+        let Some(p) = &self.path else { return Ok(()) };
+        if let Some(dir) = p.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("could not save: {e}"))?;
+        }
+        std::fs::write(p, serde_json::to_string_pretty(&self.data).unwrap_or_default()).map_err(|e| format!("could not save: {e}"))
+    }
+}
+
+fn to_json(v: &Value) -> Result<serde_json::Value, String> {
+    Ok(match v {
+        Value::Nil => serde_json::Value::Null,
+        Value::Num(n) => serde_json::json!(n),
+        Value::Bool(b) => serde_json::json!(b),
+        Value::Text(s) => serde_json::json!(&**s),
+        Value::Vec3(a) => serde_json::json!({ "vec3": a }),
+        Value::List(l) => serde_json::Value::Array(l.borrow().iter().map(to_json).collect::<Result<_, _>>()?),
+        Value::Map(m) => serde_json::Value::Object(
+            m.borrow().iter().map(|(k, v)| Ok((k.clone(), to_json(v)?))).collect::<Result<_, String>>()?,
+        ),
+        Value::Entity(_) | Value::Object(_) => return Err(format!("`{}` values cannot be saved", v.type_name())),
+    })
+}
+
+fn from_json(j: &serde_json::Value) -> Value {
+    match j {
+        serde_json::Value::Null => Value::Nil,
+        serde_json::Value::Bool(b) => Value::Bool(*b),
+        serde_json::Value::Number(n) => Value::Num(n.as_f64().unwrap_or(0.0)),
+        serde_json::Value::String(s) => Value::text(s),
+        serde_json::Value::Array(a) => Value::list(a.iter().map(from_json).collect()),
+        serde_json::Value::Object(o) => {
+            if let (1, Some(serde_json::Value::Array(a))) = (o.len(), o.get("vec3")) {
+                if a.len() == 3 {
+                    return Value::Vec3([0, 1, 2].map(|i| a[i].as_f64().unwrap_or(0.0)));
+                }
+            }
+            Value::Map(Rc::new(std::cell::RefCell::new(o.iter().map(|(k, v)| (k.clone(), from_json(v))).collect())))
+        }
+    }
+}
+
 struct EngineHost<'a> {
+    fx: &'a mut crate::fx::Particles,
+    saves: &'a mut Saves,
+    /// Where the player hears from: the active camera.
+    listener: Vec3,
     scene: &'a mut Scene,
     me: u64,
     input: &'a InputState,
@@ -190,7 +253,7 @@ impl Host for EngineHost<'_> {
     fn global(&mut self, name: &str) -> Option<Value> {
         match name {
             "self" => Some(Value::Entity(self.me)),
-            "input" | "scene" | "time" | "audio" | "anim" | "qte" | "global" => Some(Value::Object(Rc::from(name))),
+            "input" | "scene" | "time" | "audio" | "anim" | "qte" | "global" | "fx" | "save" => Some(Value::Object(Rc::from(name))),
             _ => None,
         }
     }
@@ -554,6 +617,76 @@ impl Host for EngineHost<'_> {
                     }
                     Ok(Value::Nil)
                 }
+                // audio.play_at(file, position) or (file, position, volume): quieter with distance
+                ("audio", "play_at", [Value::Text(file), pos, rest @ ..]) => {
+                    let volume = match rest {
+                        [] => 1.0,
+                        [Value::Num(v)] => *v as f32,
+                        _ => return Err("`audio.play_at` expects (file, position) or (file, position, volume)".into()),
+                    };
+                    let d = from_v(pos, "play_at")?.distance(self.listener);
+                    let fall = 1.0 / (1.0 + (d / 7.0).powi(2));
+                    if fall > 0.01 {
+                        if let Some(w) = self.audio.play(file, volume * fall)? {
+                            log(self.logs, LogLevel::Warn, w);
+                        }
+                    }
+                    Ok(Value::Nil)
+                }
+                // fx.burst(position, "sparks") / (position, preset, count) / (..., count, colour) / (..., colour, direction)
+                ("fx", "burst", [pos, Value::Text(preset), rest @ ..]) => {
+                    let p = from_v(pos, "fx.burst")?;
+                    let (count, tint, toward) = match rest {
+                        [] => (24, None, Vec3::ZERO),
+                        [Value::Num(n)] => (*n as u32, None, Vec3::ZERO),
+                        [Value::Num(n), c] => (*n as u32, Some(from_v(c, "fx.burst")?.to_array()), Vec3::ZERO),
+                        [Value::Num(n), c, dir] => (
+                            *n as u32,
+                            if matches!(c, Value::Nil) { None } else { Some(from_v(c, "fx.burst")?.to_array()) },
+                            from_v(dir, "fx.burst")?.normalize_or_zero(),
+                        ),
+                        _ => return Err("`fx.burst` expects (position, preset), (..., count), (..., count, colour) or (..., count, colour, direction)".into()),
+                    };
+                    self.fx.burst(p, preset, count, tint, toward)?;
+                    Ok(Value::Nil)
+                }
+                ("fx", "clear", []) => {
+                    self.fx.list.clear();
+                    Ok(Value::Nil)
+                }
+                ("save", "set", [Value::Text(k), v]) => {
+                    let j = to_json(v)?;
+                    self.saves.data.insert(k.to_string(), j);
+                    self.saves.write()?;
+                    Ok(Value::Nil)
+                }
+                ("save", "get", [Value::Text(k), default]) => {
+                    Ok(self.saves.data.get(&**k).map(from_json).unwrap_or_else(|| default.clone()))
+                }
+                ("save", "has", [Value::Text(k)]) => Ok(Value::Bool(self.saves.data.contains_key(&**k))),
+                ("save", "remove", [Value::Text(k)]) => {
+                    self.saves.data.remove(&**k);
+                    self.saves.write()?;
+                    Ok(Value::Nil)
+                }
+                ("save", "clear", []) => {
+                    self.saves.data.clear();
+                    self.saves.write()?;
+                    Ok(Value::Nil)
+                }
+                // scene.path(from, to): corner points of a walkable way around obstacles, or nil
+                ("scene", "path", [a, b, rest @ ..]) => {
+                    let radius = match rest {
+                        [] => 0.45,
+                        [Value::Num(r)] => (*r as f32).clamp(0.05, 3.0),
+                        _ => return Err("`scene.path` expects (from, to) or (from, to, radius)".into()),
+                    };
+                    let me = self.me;
+                    Ok(match crate::nav::find_path(self.scene, from_v(a, "path")?, from_v(b, "path")?, radius, &[me]) {
+                        Some(points) => Value::list(points.into_iter().map(to_v).collect()),
+                        None => Value::Nil,
+                    })
+                }
                 ("audio", "stop_music", []) => {
                     self.audio.stop_music();
                     Ok(Value::Nil)
@@ -625,6 +758,9 @@ pub struct Runtime {
     pub time: f64,
     pub hud: String,
     pub audio: Audio,
+    /// Particles started by scripts.
+    pub fx: crate::fx::Particles,
+    pub saves: Saves,
     queues: Queues,
     /// Clips currently playing.
     pub playing: Vec<Playing>,
@@ -655,6 +791,8 @@ impl Runtime {
             qte_result: None,
             real_time: 0.0,
             contacts: HashSet::new(),
+            fx: crate::fx::Particles::default(),
+            saves: Saves::open(crate::settings::save_file(project_dir)),
         };
         let input = InputState::default();
         let mut cache: HashMap<String, Option<Rc<cryo_lang::Script>>> = HashMap::new();
@@ -688,6 +826,9 @@ impl Runtime {
             let name = script.name.clone();
             let created = {
                 let mut host = EngineHost {
+                    fx: &mut rt.fx,
+                    saves: &mut rt.saves,
+                    listener: Vec3::ZERO,
                     scene,
                     me: id,
                     input: &input,
@@ -743,12 +884,21 @@ impl Runtime {
             return;
         }
         let Some(mut running) = self.instances.remove(&id) else { return };
+        let listener = self
+            .active_camera
+            .filter(|c| scene.get(*c).is_some())
+            .or(scene.main_camera())
+            .map(|c| scene.world_matrix(c).w_axis.truncate())
+            .unwrap_or(Vec3::ZERO);
         if !running.inst.has_handler(event) {
             self.instances.insert(id, running);
             return;
         }
         let result = {
             let mut host = EngineHost {
+                fx: &mut self.fx,
+                saves: &mut self.saves,
+                listener,
                 scene,
                 me: id,
                 input,
@@ -1038,6 +1188,8 @@ impl Runtime {
             self.dispatch(scene, input, dt as f64, logs, id, "update", &[Value::Num(dt as f64)]);
         }
         self.flush(scene, input, dt as f64, logs);
+
+        self.fx.update(dt);
 
         // skeletal animation of rigged models
         for e in &mut scene.entities {
@@ -1808,6 +1960,54 @@ mod tests {
         rt.update(&mut scene, &InputState::default(), step, &mut logs);
         assert!(!rt.mouse_locked());
         no_errors(&logs);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn saves_effects_sound_and_paths_from_scripts() {
+        let dir = std::env::temp_dir().join(format!("cryo_newapi_{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("scripts")).unwrap();
+        std::fs::write(
+            dir.join("scripts/T.cryo"),
+            "script T {\n on start() {\n\
+             save.set(\"level\", 3)\n save.set(\"spot\", vec3(1, 2, 3))\n save.set(\"bag\", { keys: [\"red\"], gold: 12 })\n\
+             fx.burst(vec3(0, 1, 0), \"sparks\", 20)\n fx.burst(vec3(0, 1, 0), \"smoke\", 5, vec3(1, 0, 0), vec3(0, 1, 0))\n\
+             let p = scene.path(vec3(0, 0.9, 6), vec3(0, 0.9, -6))\n\
+             hud(save.get(\"level\", 0) + \" \" + save.get(\"spot\", nil).y + \" \" + save.get(\"bag\", nil).keys[0] + \" \" + save.get(\"none\", \"default\") + \" \" + len(p))\n }\n}",
+        )
+        .unwrap();
+        let mut scene = Scene::default_scene();
+        let cube = scene.find_by_name("Cube").unwrap();
+        scene.get_mut(cube).unwrap().script = Some(ScriptRef { path: "scripts/T.cryo".into(), ..Default::default() });
+        // a wall between the two ends of the path
+        let wall = scene.add_mesh(Shape::Cube);
+        {
+            let e = scene.get_mut(wall).unwrap();
+            e.position = Vec3::new(0.0, 1.5, 0.0);
+            e.scale = Vec3::new(10.0, 3.0, 1.0);
+            e.physics = Some(Physics::new(BodyKind::Static, ColliderShape::Box));
+        }
+        let save_file = dir.join("save.json");
+        std::fs::remove_file(&save_file).ok();
+        let mut logs = vec![];
+        let mut rt = Runtime::start(&mut scene, &dir, &mut logs);
+        // the real runtime keeps saves in the user's folder; here they go to a temporary file
+        rt.saves = Saves::open(Some(save_file.clone()));
+        rt.queues.messages.push((cube, "start".into(), vec![]));
+        rt.update(&mut scene, &InputState::default(), 0.016, &mut logs);
+        let errs: Vec<_> = logs.iter().filter(|l| l.level == LogLevel::Error).map(|l| l.text.clone()).collect();
+        assert!(errs.is_empty(), "{errs:?}");
+        let parts: Vec<&str> = rt.hud.split(' ').collect();
+        assert_eq!(&parts[..4], ["3", "2", "red", "default"], "{}", rt.hud);
+        assert!(parts[4].parse::<usize>().unwrap() >= 2, "the path bends round the wall: {}", rt.hud);
+        assert!(rt.fx.list.len() >= 50, "two bursts, from start and from the message");
+        // the file survives the session
+        let again = Saves::open(Some(save_file.clone()));
+        assert_eq!(again.data.get("level"), Some(&serde_json::json!(3.0)));
+        for _ in 0..300 {
+            rt.update(&mut scene, &InputState::default(), 1.0 / 60.0, &mut logs);
+        }
+        assert!(rt.fx.list.is_empty(), "particles end");
         std::fs::remove_dir_all(dir).ok();
     }
 }

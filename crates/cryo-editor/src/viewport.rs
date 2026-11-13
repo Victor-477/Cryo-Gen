@@ -779,6 +779,9 @@ impl State {
 
         // ---------- 3D drawing ----------
         let mut frame = RenderFrame::from_scene(&self.scene, &mut self.assets, view, proj, self.selected);
+        if let Some(play) = &self.play {
+            frame.particles = play.rt.fx.list.iter().map(|p| { let (s, c) = p.look(); (p.pos, s, c, p.glow) }).collect();
+        }
         if self.cam.ortho {
             // in orthographic views the "camera" has no useful position: shadows around the pivot
             frame.shadow = frame.shadow.map(|(_, r)| (self.cam.pivot(), r.max(self.cam.dist)));
@@ -988,7 +991,10 @@ impl State {
             cam.near.max(0.01),
             cam.far.max(cam.near + 1.0),
         );
-        let frame = RenderFrame::from_scene(&self.scene, &mut self.assets, view, proj, None);
+        let mut frame = RenderFrame::from_scene(&self.scene, &mut self.assets, view, proj, None);
+        if let Some(play) = &self.play {
+            frame.particles = play.rt.fx.list.iter().map(|p| { let (s, c) = p.look(); (p.pos, s, c, p.glow) }).collect();
+        }
         self.paint_3d(ui, rect, frame);
 
         match &self.play {

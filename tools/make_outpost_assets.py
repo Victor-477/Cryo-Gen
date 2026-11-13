@@ -15,7 +15,7 @@ os.makedirs(OUT, exist_ok=True)
 A.OUT = OUT
 
 def textures():
-    S = 512
+    S = 1024   # high resolution: everything is seen from eye level, up close
     grain, fine, pits = fbm(S, 101), fbm(S, 107, (32, 64, 128)), fbm(S, 105, (64, 128, 256))
     y, x = np.mgrid[0:S, 0:S] / S
     # poured concrete: form lines, pores, stains, hairline cracks
@@ -24,11 +24,11 @@ def textures():
     stain = fbm(S, 113, (2, 4, 8))
     holes = np.clip((pits - 0.78) * 9, 0, 1)
     v = (0.5 + (grain - 0.5) * 0.16 + (fine - 0.5) * 0.08 - stain * 0.12 - holes * 0.25 - crack * 0.3 - seam * 0.25)
-    A.save_texture("tex_concrete.png", grey(v * relief(fine * 0.5 - holes - crack - seam, 1.0), (1.0, 0.99, 0.96)))
+    A.save_texture("tex_concrete.jpg", grey(v * relief(fine * 0.5 - holes - crack - seam, 1.0), (1.0, 0.99, 0.96)))
     # floor: concrete slabs with worn yellow guide lines
     v2 = 0.36 + (grain - 0.5) * 0.14 + (fine - 0.5) * 0.1 - holes * 0.2 - seam * 0.3
     line = (np.abs(x - 0.5) < 0.035) * np.clip(fbm(S, 117, (16, 32, 64)) * 1.6 - 0.3, 0, 1)
-    A.save_texture("tex_floor.png", grey(v2 * relief(fine * 0.5 - holes - seam, 1.0)) * (1 - line[..., None]) + np.array([0.75, 0.6, 0.12]) * line[..., None] * (0.7 + fine[..., None] * 0.4))
+    A.save_texture("tex_floor.jpg", grey(v2 * relief(fine * 0.5 - holes - seam, 1.0)) * (1 - line[..., None]) + np.array([0.75, 0.6, 0.12]) * line[..., None] * (0.7 + fine[..., None] * 0.4))
     # wall panels: riveted steel plates with grime running down
     mortar, tone, dome = bricks(S, 2, 2, 121, stagger=False, joint=0.03)
     rivet = np.zeros((S, S))
@@ -39,32 +39,44 @@ def textures():
     grime = fbm(S, 123, (2, 4, 8))[:, (np.arange(S) // 5) % S]
     brushed = fbm(S, 125, (2, 4))[(np.arange(S) * 11) % S, :]
     v3 = 0.5 + (tone - 0.5) * 0.08 + (brushed - 0.5) * 0.12 - grime * 0.2 + rivet * 0.25
-    A.save_texture("tex_panel.png", grey(v3 * relief(rivet * 1.5 - mortar * 1.2 + fine * 0.2, 1.1) * (1 - mortar * 0.6), (0.92, 0.97, 1.05)))
+    A.save_texture("tex_panel.jpg", grey(v3 * relief(rivet * 1.5 - mortar * 1.2 + fine * 0.2, 1.1) * (1 - mortar * 0.6), (0.92, 0.97, 1.05)))
     # hazard stripes, chipped
     stripe = (((x + y) * 8) % 1 < 0.5)
     chip = np.clip((fbm(S, 127, (8, 16, 32, 64)) - 0.62) * 8, 0, 1)
     col = np.where(stripe[..., None], np.array([0.85, 0.65, 0.08]), np.array([0.07, 0.07, 0.08])) * (0.85 + fine[..., None] * 0.3)
-    A.save_texture("tex_hazard.png", col * (1 - chip[..., None]) + grey(0.4 + fine * 0.2) * chip[..., None])
+    A.save_texture("tex_hazard.jpg", col * (1 - chip[..., None]) + grey(0.4 + fine * 0.2) * chip[..., None])
     # shipping-container ribs
     ribs = 0.5 + 0.5 * np.sin(x * math.tau * 14)
     rust = np.clip((fbm(S, 131, (3, 6, 12, 24)) - 0.56) * 5, 0, 1)[..., None]
     v5 = (0.62 + (grain - 0.5) * 0.12) * relief(ribs * 1.6, 1.3)
-    A.save_texture("tex_container.png", grey(v5) * (1 - rust * 0.7) + np.array([0.5, 0.28, 0.16]) * (0.7 + fine[..., None] * 0.5) * rust * 0.7)
+    A.save_texture("tex_container.jpg", grey(v5) * (1 - rust * 0.7) + np.array([0.5, 0.28, 0.16]) * (0.7 + fine[..., None] * 0.5) * rust * 0.7)
     # dark gunmetal with wear on the edges of a grid of plates
     mortar, tone, dome = bricks(S, 6, 6, 133, joint=0.05)
     v6 = (0.55 + (tone - 0.5) * 0.1 + (fine - 0.5) * 0.14 + mortar * 0.18) * relief(dome * 0.6 + fine * 0.3, 1.0)
-    A.save_texture("tex_gunmetal.png", grey(v6))
+    A.save_texture("tex_gunmetal.jpg", grey(v6))
     # floor grating
     g = np.maximum(np.clip(1 - np.abs((x * 16) % 1 - 0.5) / 0.18, 0, 1), np.clip(1 - np.abs((y * 16) % 1 - 0.5) / 0.18, 0, 1))
-    A.save_texture("tex_grate.png", grey((0.12 + g * 0.5 + (fine - 0.5) * 0.1) * relief(g, 1.6)))
+    # woven fabric for sleeves and gloves
+    weave = (np.sin(x * math.tau * 48) * 0.5 + 0.5) * (np.sin(y * math.tau * 48) * 0.5 + 0.5)
+    A.save_texture("tex_fabric.jpg", grey((0.7 + weave * 0.25 + (grain - 0.5) * 0.3 - stain * 0.1) * relief(weave, 0.6)))
+    A.save_texture("tex_grate.jpg", grey((0.12 + g * 0.5 + (fine - 0.5) * 0.1) * relief(g, 1.6)))
 
-M = {"concrete": ((1, 1, 1), "tex_concrete.png"), "floor": ((1, 1, 1), "tex_floor.png"), "panel": ((1, 1, 1), "tex_panel.png"),
-     "hazard": ((1, 1, 1), "tex_hazard.png"), "grate": ((1, 1, 1), "tex_grate.png"), "gunmetal": ((0.42, 0.44, 0.48), "tex_gunmetal.png"),
-     "blue": ((0.25, 0.42, 0.62), "tex_container.png"), "red": ((0.62, 0.22, 0.18), "tex_container.png"), "green": ((0.26, 0.42, 0.3), "tex_container.png"),
-     "steel": ((0.7, 0.72, 0.76), "tex_gunmetal.png"), "black": ((0.03, 0.03, 0.035), None), "rubber": ((0.08, 0.08, 0.09), None),
+A.PBR.update({
+    "concrete": (0.85, 0.0), "floor": (0.4, 0.0), "panel": (0.45, 0.75), "hazard": (0.6, 0.0), "grate": (0.4, 0.9),
+    "gunmetal": (0.4, 0.8), "blue": (0.5, 0.35), "red": (0.5, 0.35), "green": (0.5, 0.35), "steel": (0.3, 1.0),
+    "rubber": (0.9, 0.0), "lamp": (0.5, 0.0), "white": (0.5, 0.0), "medic": (0.5, 0.0), "ammo": (0.6, 0.2),
+    "brass": (0.3, 1.0), "gun_dark": (0.45, 0.4), "gun_mid": (0.38, 0.6), "gun_tan": (0.7, 0.0),
+    "glove": (0.85, 0.0), "sleeve": (0.92, 0.0), "eye": (0.3, 0.0), "cyan": (0.1, 0.0),
+})
+
+M = {"concrete": ((1, 1, 1), "tex_concrete.jpg"), "floor": ((1, 1, 1), "tex_floor.jpg"), "panel": ((1, 1, 1), "tex_panel.jpg"),
+     "hazard": ((1, 1, 1), "tex_hazard.jpg"), "grate": ((1, 1, 1), "tex_grate.jpg"), "gunmetal": ((0.42, 0.44, 0.48), "tex_gunmetal.jpg"),
+     "blue": ((0.25, 0.42, 0.62), "tex_container.jpg"), "red": ((0.62, 0.22, 0.18), "tex_container.jpg"), "green": ((0.26, 0.42, 0.3), "tex_container.jpg"),
+     "steel": ((0.7, 0.72, 0.76), "tex_gunmetal.jpg"), "black": ((0.03, 0.03, 0.035), None), "rubber": ((0.08, 0.08, 0.09), None),
      "lamp": ((1.0, 0.9, 0.7), None), "eye": ((1.0, 0.25, 0.1), None), "cyan": ((0.3, 0.9, 1.0), None), "white": ((0.9, 0.9, 0.9), None),
      "gun_dark": ((0.05, 0.05, 0.06), None), "gun_mid": ((0.13, 0.135, 0.15), None), "gun_tan": ((0.3, 0.26, 0.19), None),
-     "medic": ((0.85, 0.15, 0.15), None), "ammo": ((0.35, 0.4, 0.25), "tex_gunmetal.png"), "brass": ((0.85, 0.65, 0.3), None)}
+     "glove": ((0.11, 0.1, 0.095), "tex_fabric.jpg"), "sleeve": ((0.27, 0.29, 0.24), "tex_fabric.jpg"),
+     "medic": ((0.85, 0.15, 0.15), None), "ammo": ((0.35, 0.4, 0.25), "tex_gunmetal.jpg"), "brass": ((0.85, 0.65, 0.3), None)}
 
 def wall(length, height=7.0, thick=0.8, mat="concrete"):
     m = Mesh()
@@ -180,6 +192,23 @@ def rifle():
     m.box("cyan", (0, 0.16, -0.019), (0.03, 0.03, 0.003))                             # the lens, at the back of the sight
     return m
 
+def hands():
+    """The trooper's gloved hands and sleeves, in the rifle's own coordinates (they ride along with it)."""
+    m = Mesh()
+    m.box("glove", (0.028, -0.045, 0.065), (0.03, 0.1, 0.085), r=(18, 0, 0))
+    for i, y in enumerate((-0.005, -0.035, -0.065, -0.093)):
+        m.tube("glove", [(0.035, y, 0.08), (0.03, y - 0.01, 0.02), (0.0, y - 0.012, 0.0), (-0.027, y - 0.01, 0.03)], 0.0115, sides=6)
+    m.tube("glove", [(0.03, 0.02, 0.1), (0.0, 0.05, 0.06), (-0.022, 0.064, 0.0)], [0.016, 0.013, 0.011], sides=6)   # thumb
+    m.tube("glove", [(0.03, -0.06, 0.12), (0.06, -0.1, 0.2)], 0.042, sides=10)                                    # cuff
+    m.tube("sleeve", [(0.06, -0.1, 0.2), (0.15, -0.22, 0.42), (0.24, -0.34, 0.66)], [0.047, 0.058, 0.07], sides=12)
+    m.box("glove", (0, 0.022, -0.48), (0.085, 0.03, 0.12))
+    for z in (-0.44, -0.47, -0.5, -0.53):
+        m.tube("glove", [(-0.035, 0.035, z), (-0.042, 0.072, z), (-0.02, 0.104, z), (0.018, 0.1, z)], 0.0115, sides=6)
+    m.tube("glove", [(0.03, 0.03, -0.43), (0.042, 0.07, -0.47), (0.03, 0.095, -0.5)], [0.015, 0.012, 0.01], sides=6)  # thumb
+    m.tube("glove", [(-0.01, 0.01, -0.41), (-0.08, -0.04, -0.33)], 0.04, sides=10)
+    m.tube("sleeve", [(-0.08, -0.04, -0.33), (-0.22, -0.16, -0.16), (-0.4, -0.32, 0.05)], [0.046, 0.056, 0.068], sides=12)
+    return m
+
 def pickup(kind):
     m = Mesh()
     if kind == "medkit":
@@ -226,9 +255,9 @@ if __name__ == "__main__":
               ("roof_hall", slab("panel", 32, 32, 0.5)), ("roof_core", slab("panel", 28, 28, 0.5)),
               ("container_blue", container("blue")), ("container_red", container("red")), ("container_green", container("green")),
               ("crate", crate()), ("barrel", barrel()), ("lamp", lamp()), ("drone", drone(False)), ("drone_heavy", drone(True)),
-              ("rifle", rifle()), ("medkit", pickup("medkit")), ("ammo", pickup("ammo")), ("core", core()), ("node", node())]
+              ("rifle", rifle()), ("hands", hands()), ("medkit", pickup("medkit")), ("ammo", pickup("ammo")), ("core", core()), ("node", node())]
     for name, mesh in models:
-        A.write_obj(name, mesh, M, tile=4.0 if name.startswith(("ground", "roof")) else (0.5 if name in ("rifle", "drone", "drone_heavy") else 3.0))
+        A.write_obj(name, mesh, M, tile=4.0 if name.startswith(("ground", "roof")) else (0.25 if name == "hands" else (0.5 if name in ("rifle", "drone", "drone_heavy") else 3.0)))
     files = sorted(os.listdir(OUT))
     rs = "// Generated by tools/make_outpost_assets.py. Do not edit.\npub const FILES: &[(&str, &[u8])] = &[\n"
     rs += "".join(f'    ("{f}", include_bytes!("../template/outpost/{f}")),\n' for f in files) + "];\n"

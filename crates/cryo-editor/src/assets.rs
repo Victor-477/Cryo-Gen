@@ -37,6 +37,12 @@ pub struct SubMesh {
     pub texture: Option<Arc<TextureData>>,
     /// Joints and weights, when the sub-mesh follows a skeleton.
     pub skin: Option<Arc<SkinData>>,
+    /// Tangent-space normal map: small surface detail that catches the light.
+    pub normal: Option<Arc<TextureData>>,
+    /// Surface finish: roughness 0 (mirror) to 1 (chalk), negative = take it from the entity's
+    /// Shininess; metallic 0 to 1.
+    pub rough: f32,
+    pub metal: f32,
 }
 
 pub struct ModelData {
@@ -182,6 +188,9 @@ impl Assets {
                     color: s.color,
                     texture: s.texture.clone(),
                     skin: None, // already in its pose: drawn like any static mesh
+                    normal: s.normal.clone(),
+                    rough: s.rough,
+                    metal: s.metal,
                 }
             })
             .collect();
@@ -358,6 +367,9 @@ fn push_vertex(out: &mut Vec<f32>, p: Vec3, n: Vec3, uv: Vec2) {
 struct Material {
     color: [f32; 3],
     texture: Option<String>,
+    normal: Option<String>,
+    rough: f32,
+    metal: f32,
 }
 
 fn load_mtl(path: &Path) -> HashMap<String, Material> {
@@ -371,13 +383,32 @@ fn load_mtl(path: &Path) -> HashMap<String, Material> {
         match key {
             "newmtl" => {
                 current = Some(rest.to_string());
-                out.insert(rest.to_string(), Material { color: [0.8; 3], texture: None });
+                out.insert(rest.to_string(), Material { color: [0.8; 3], texture: None, normal: None, rough: -1.0, metal: 0.0 });
             }
             "Kd" => {
                 let v: Vec<f32> = rest.split_whitespace().filter_map(|t| t.parse().ok()).collect();
                 if let (Some(name), [r, g, b, ..]) = (&current, v.as_slice()) {
                     if let Some(m) = out.get_mut(name) {
                         m.color = [*r, *g, *b];
+                    }
+                }
+            }
+            // the PBR extension of MTL: roughness, metallic, normal map
+            "Pr" | "Pm" => {
+                if let (Some(name), Ok(v)) = (&current, rest.parse::<f32>()) {
+                    if let Some(m) = out.get_mut(name) {
+                        if key == "Pr" {
+                            m.rough = v.clamp(0.02, 1.0);
+                        } else {
+                            m.metal = v.clamp(0.0, 1.0);
+                        }
+                    }
+                }
+            }
+            "norm" | "map_Kn" | "map_Bump" | "map_bump" | "bump" => {
+                if let (Some(name), Some(file)) = (&current, rest.split_whitespace().last()) {
+                    if let Some(m) = out.get_mut(name) {
+                        m.normal = Some(file.replace('\\', "/"));
                     }
                 }
             }
@@ -538,13 +569,33 @@ fn load_obj(path: &Path) -> Result<Vec<SubMesh>, String> {
                     .or_insert_with(|| load_texture(&dir.join(&file)).ok().map(Arc::new))
                     .clone()
             });
-            // with a texture, the diffuse colour is usually just a neutral multiplier
+            // with a texture, a plain grey diffuse colour is usually just an exporter default (ignored);
+            // a tinted or dark one is meant, and multiplies the texture
             let color = match (mat, &texture) {
-                (Some(_), Some(_)) => [1.0; 3],
+                (Some(m), Some(_)) => {
+                    let [r, g, b] = m.color;
+                    let neutral = (r - g).abs() < 0.01 && (g - b).abs() < 0.01 && r >= 0.6;
+                    if neutral { [1.0; 3] } else { m.color }
+                }
                 (Some(m), None) => m.color,
                 (None, _) => [1.0; 3],
             };
-            SubMesh { vertices: g.vertices, indices: g.indices, color, texture, skin: None }
+            let normal = mat.and_then(|m| m.normal.clone()).and_then(|file| {
+                tex_cache
+                    .entry(file.clone())
+                    .or_insert_with(|| load_texture(&dir.join(&file)).ok().map(Arc::new))
+                    .clone()
+            });
+            SubMesh {
+                vertices: g.vertices,
+                indices: g.indices,
+                color,
+                texture,
+                skin: None,
+                normal,
+                rough: mat.map(|m| m.rough).unwrap_or(-1.0),
+                metal: mat.map(|m| m.metal).unwrap_or(0.0),
+            }
         })
         .collect())
 }
@@ -625,6 +676,8 @@ fn load_gltf(path: &Path) -> Result<(Vec<SubMesh>, Option<Skeleton>), String> {
             let pbr = prim.material().pbr_metallic_roughness();
             let c = pbr.base_color_factor();
             let texture = pbr.base_color_texture().and_then(|t| texture_for(t.texture().source().index()));
+            let normal = prim.material().normal_texture().and_then(|t| texture_for(t.texture().source().index()));
+            let (rough, metal) = (pbr.roughness_factor().clamp(0.02, 1.0), pbr.metallic_factor().clamp(0.0, 1.0));
 
             // a skinned primitive follows its joints, not its own node
             if let (Some(skin), Some(joints), Some(weights)) =
@@ -662,6 +715,9 @@ fn load_gltf(path: &Path) -> Result<(Vec<SubMesh>, Option<Skeleton>), String> {
                         color: [c[0], c[1], c[2]],
                         texture,
                         skin: Some(Arc::new(data)),
+                        normal: normal.clone(),
+                        rough,
+                        metal,
                     });
                     continue;
                 }
@@ -696,7 +752,7 @@ fn load_gltf(path: &Path) -> Result<(Vec<SubMesh>, Option<Skeleton>), String> {
                     tri.swap(1, 2);
                 }
             }
-            subs.push(SubMesh { vertices, indices: out_idx, color: [c[0], c[1], c[2]], texture, skin: None });
+            subs.push(SubMesh { vertices, indices: out_idx, color: [c[0], c[1], c[2]], texture, skin: None, normal, rough, metal });
         }
     }
     Ok((subs, skeleton))

@@ -23,6 +23,18 @@ fn home() -> Option<PathBuf> {
     std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from)
 }
 
+/// Where a game's `save.set` values are kept: one file per project, by folder name.
+pub fn save_file(project: &std::path::Path) -> Option<PathBuf> {
+    let name: String = project
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("game")
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect();
+    settings_dir().map(|d| d.join("saves").join(format!("{name}.json")))
+}
+
 fn settings_dir() -> Option<PathBuf> {
     match std::env::var_os("CRYO_HOME") {
         Some(dir) => Some(PathBuf::from(dir)),

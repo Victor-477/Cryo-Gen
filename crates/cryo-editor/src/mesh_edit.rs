@@ -462,7 +462,7 @@ impl EditMesh {
             id,
             version: 0,
             skeleton: None,
-            subs: vec![SubMesh { vertices, indices, color: [1.0; 3], texture: None, skin: None }],
+            subs: vec![SubMesh { vertices, indices, color: [1.0; 3], texture: None, skin: None, normal: None, rough: -1.0, metal: 0.0 }],
             center: (min + max) * 0.5,
             half: ((max - min) * 0.5).max(Vec3::splat(0.001)),
             triangles,

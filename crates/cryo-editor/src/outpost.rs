@@ -81,6 +81,9 @@ pub fn build_scene(dir: &Path) -> Scene {
     s.ambient = [0.20, 0.23, 0.30];
     s.fog = 0.014;
     s.relief = 1.6;
+    s.bloom = 0.7;
+    s.ssao = 1.0;
+    s.reflections = 1.0;
     s.gravity = -24.0;
 
     let mut bounds: HashMap<String, ([f32; 3], [f32; 3])> = HashMap::new();
@@ -130,6 +133,21 @@ pub fn build_scene(dir: &Path) -> Scene {
         id
     };
 
+    // a lamp pointing straight down, casting shadows
+    let spot = |s: &mut Scene, name: &str, pos: Vec3, color: [f32; 3], intensity: f32, range: f32, angle: f32| -> u64 {
+        let id = s.add_light(LightKind::Spot);
+        let e = s.get_mut(id).unwrap();
+        e.name = name.into();
+        e.position = pos;
+        e.rotation = v(-90.0, 0.0, 0.0);
+        let l = e.light.as_mut().unwrap();
+        l.color = color;
+        l.intensity = intensity;
+        l.range = range;
+        l.angle = angle;
+        l.shadows = true;
+        id
+    };
     let moon = s.add_light(LightKind::Directional);
     {
         let e = s.get_mut(moon).unwrap();
@@ -222,11 +240,11 @@ pub fn build_scene(dir: &Path) -> Scene {
         let id = model(&mut s, "Lamp Post", "lamp.obj", v(x, 0.0, z), yaw);
         adopt(&mut s, props, id);
         let a = yaw.to_radians();
-        let l = point(&mut s, "Lamp", v(x + a.sin() * 1.1, 5.0, z - a.cos() * 1.1), [1.0, 0.72, 0.38], 3.4, 17.0);
+        let l = spot(&mut s, "Lamp", v(x + a.sin() * 1.1, 5.3, z - a.cos() * 1.1), [1.0, 0.72, 0.38], 4.2, 20.0, 58.0);
         adopt(&mut s, props, l);
     }
     for (x, z) in [(-8.0, -6.0), (8.0, -6.0), (-8.0, -22.0), (8.0, -22.0), (0.0, -14.0)] {
-        let l = point(&mut s, "Ceiling Light", v(x, 6.2, z), [0.8, 0.9, 1.0], 2.6, 15.0);
+        let l = spot(&mut s, "Ceiling Light", v(x, 6.6, z), [0.8, 0.9, 1.0], 3.2, 16.0, 66.0);
         adopt(&mut s, props, l);
     }
     for (x, z) in [(-9.0, -36.0), (9.0, -36.0), (-9.0, -53.0), (9.0, -53.0)] {
@@ -311,6 +329,15 @@ pub fn build_scene(dir: &Path) -> Scene {
         let m = e.mesh.as_mut().unwrap();
         m.cast_shadow = false;
         m.shininess = 0.7;
+    }
+    // the hands ride on the rifle: recoil and reloading move them too. Cloth is matte.
+    let hands = model(&mut s, "Hands", "hands.obj", Vec3::ZERO, 0.0);
+    {
+        let e = s.get_mut(hands).unwrap();
+        e.parent = Some(rifle);
+        let m = e.mesh.as_mut().unwrap();
+        m.cast_shadow = false;
+        m.shininess = 0.05;
     }
     let flash = point(&mut s, "Muzzle Flash", v(0.17, -0.1, -1.2), [1.0, 0.75, 0.4], 4.0, 9.0);
     s.get_mut(flash).unwrap().parent = Some(head);

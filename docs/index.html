@@ -77,7 +77,7 @@ footer { margin-top: 70px; color: var(--muted); font-size: .86rem; border-top: 1
 <div class="layout">
 <nav>
   <a class="brand" href="#top">❄ Cryo Engine</a>
-  <div class="version">Documentation · 0.9.0-beta</div>
+  <div class="version">Documentation · 0.11.0-beta</div>
   <h4>Start</h4>
   <a class="item" href="#top">Overview</a>
   <a class="item" href="#install">Download and install</a>
@@ -444,14 +444,16 @@ scene.set_camera(scene.find(<span class="s">"Boss Camera"</span>))   <span class
 <h3>Globals</h3>
 <div class="table-wrap"><table>
 <tr><td><code>input</code></td><td><code>.down(key)</code> held, <code>.pressed(key)</code> / <code>.released(key)</code> this frame, <code>.axis("horizontal"|"vertical")</code> from WASD and arrows, <code>.mouse_dx</code>, <code>.mouse_dy</code>, <code>.scroll</code>, <code>.lock_mouse(true|false)</code>, <code>.mouse_locked</code>.<br>Keys: letters, digits, <code>space</code>, <code>enter</code>, <code>shift</code>, <code>escape</code>, <code>tab</code>, <code>up</code> <code>down</code> <code>left</code> <code>right</code>, <code>mouse_left</code> <code>mouse_right</code> <code>mouse_middle</code>.</td></tr>
-<tr><td><code>scene</code></td><td><code>.find("Name")</code> (entity or <code>nil</code>), <code>.all()</code>, <code>.tagged("tag")</code>, <code>.spawn("cube", position)</code>, <code>.destroy(entity)</code>, <code>.set_camera(entity)</code>.</td></tr>
+<tr><td><code>scene</code></td><td><code>.find("Name")</code> (entity or <code>nil</code>), <code>.all()</code>, <code>.tagged("tag")</code>, <code>.path(from, to)</code> (corner points around obstacles, or <code>nil</code>), <code>.spawn("cube", position)</code>, <code>.destroy(entity)</code>, <code>.set_camera(entity)</code>.</td></tr>
 <tr><td><code>anim</code></td><td><code>.play("Clip")</code>, <code>.stop("Clip")</code>, <code>.playing("Clip")</code>.</td></tr>
 <tr><td><code>after</code>, <code>every</code>, <code>cancel</code></td><td>Timers: see <a href="#timing">Timers and sync</a>.</td></tr>
 <tr><td><code>emit(...)</code>, <code>global</code></td><td>See <a href="#events">Events</a>.</td></tr>
 <tr><td><code>qte</code></td><td>See <a href="#qte">Quick time events</a>.</td></tr>
 <tr><td><code>time</code></td><td><code>.dt</code>, <code>.total</code> (seconds since Play), <code>.scale</code> (1 is normal speed, 0.3 is slow motion, 0 freezes the game).</td></tr>
-<tr><td><code>audio</code></td><td><code>.play(file)</code>, <code>.play(file, volume)</code>, <code>.music(file)</code> (loops), <code>.stop_music()</code>, <code>.stop()</code>, <code>.volume</code>.</td></tr>
+<tr><td><code>audio</code></td><td><code>.play(file)</code>, <code>.play(file, volume)</code>, <code>.play_at(file, position)</code> (quieter far from the camera), <code>.music(file)</code> (loops), <code>.stop_music()</code>, <code>.stop()</code>, <code>.volume</code>.</td></tr>
 <tr><td><code>log(...)</code></td><td>Print to the Console.</td></tr>
+<tr><td><code>fx</code></td><td><code>.burst(position, "sparks")</code>, <code>.burst(position, preset, count)</code>, <code>(..., count, colour)</code>, <code>(..., count, colour, direction)</code>, <code>.clear()</code>. Presets: sparks, smoke, dust, fire, embers, magic, explosion, blood.</td></tr>
+<tr><td><code>save</code></td><td><code>.set(key, value)</code>, <code>.get(key, default)</code>, <code>.has(key)</code>, <code>.remove(key)</code>, <code>.clear()</code>. Values survive closing the game.</td></tr>
 <tr><td><code>bar(name, value)</code>, <code>banner(text, seconds)</code></td><td>Meters and large messages on the game screen: see <a href="#ashen">Ashen Keep</a>.</td></tr>
 <tr><td><code>hud(...)</code></td><td>Text on the game screen (use <code>\n</code> for a second line).</td></tr>
 </table></div>
@@ -623,6 +625,7 @@ scene.set_camera(scene.find(<span class="s">"Boss Camera"</span>))   <span class
 <div class="table-wrap"><table>
 <tr><td><code>scene.raycast(origin, direction, distance, ignore)</code></td><td>The first solid thing along a ray, as a map with <code>entity</code>, <code>point</code>, <code>normal</code> and <code>distance</code>, or <code>nil</code>. Shots and line-of-sight checks use it.</td></tr>
 <tr><td><code>crosshair(true)</code></td><td>Draws an aiming mark in the middle of the screen.</td></tr>
+<tr><td><b>Scene settings &gt; Bloom, Ambient occlusion, Reflections</b></td><td>Post-processing: glow around lights, shading in creases and corners, and glossy surfaces reflecting what is on screen. Reflections need Relief.</td></tr>
 <tr><td><b>Scene settings &gt; Relief</b></td><td>Textures also bump the lighting, so joints, rivets and scratches catch the light without normal maps.</td></tr>
 </table></div>
 
@@ -648,8 +651,8 @@ cargo test                               <span class="c"># all tests</span></cod
 <ul>
   <li>Skeletal animation plays one clip at a time per model (with a blend when switching). Models with up to 64 joints are posed on the graphics card; larger skeletons fall back to the processor. There are no morph targets.</li>
   <li>Modelling works on <code>.obj</code> models, one material per model, with automatic texture coordinates. There are no loop cuts, bevels or boolean operations yet.</li>
-  <li>Models use base colour and base texture; full PBR materials are not read yet.</li>
-  <li>Shadows come from the first directional light only. Their reach is a setting of the light.</li>
+  <li>Materials: base colour and texture, roughness, metallic and normal map. Emissive, occlusion and transparency maps are not read yet.</li>
+  <li>Shadows come from the first directional light and from the local lights nearest the camera (16 shadow tiles: a spotlight uses one, a point light six).</li>
   <li>Up to 4 directional lights, and the 16 point/spot lights closest to the camera, are used in each view.</li>
   <li>Mesh colliders are for static bodies. Bodies that can rotate use a simplified model: stacks of boxes are not stable.</li>
   <li>The macOS app is not signed.</li>
