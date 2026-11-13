@@ -43,6 +43,10 @@ pub struct SubMesh {
     /// Shininess; metallic 0 to 1.
     pub rough: f32,
     pub metal: f32,
+    /// Light the surface gives off by itself (screens, lamps, embers), in linear colour.
+    pub emissive: [f32; 3],
+    /// 1 is solid; less lets what is behind show through (glass, liquids).
+    pub opacity: f32,
 }
 
 pub struct ModelData {
@@ -55,6 +59,8 @@ pub struct ModelData {
     pub center: Vec3,
     pub half: Vec3,
     pub triangles: usize,
+    /// Simpler versions for when the model is small on screen (level of detail), coarsest last.
+    pub lods: Vec<Arc<ModelData>>,
 }
 
 /// Cache of assets loaded from disk (CPU side; the GPU side is filled by the renderer).
@@ -191,6 +197,8 @@ impl Assets {
                     normal: s.normal.clone(),
                     rough: s.rough,
                     metal: s.metal,
+                    emissive: s.emissive,
+                    opacity: s.opacity,
                 }
             })
             .collect();
@@ -202,6 +210,7 @@ impl Assets {
             center: base.center,
             half: base.half,
             triangles: base.triangles,
+            lods: vec![],
         });
         if self.posed.len() > 512 {
             self.posed.clear();
@@ -238,8 +247,75 @@ pub fn load_model(path: &Path) -> Result<ModelData, String> {
     let mut model = finish(subs)?;
     if model.subs.iter().any(|s| s.skin.is_some()) {
         model.skeleton = skeleton.map(Arc::new);
+    } else if model.triangles > 2500 {
+        // detailed static models get two simpler versions for when they are far away
+        for cells in [36.0, 14.0] {
+            if let Some(lod) = simplify(&model, cells) {
+                if lod.triangles * 10 < model.triangles * 8 {
+                    model.lods.push(Arc::new(lod));
+                }
+            }
+        }
     }
     Ok(model)
+}
+
+/// A coarser copy of a model by vertex clustering: vertices in the same cell of a grid
+/// (`cells` across the longest side) are merged and triangles that collapse are dropped.
+pub fn simplify(model: &ModelData, cells: f32) -> Option<ModelData> {
+    let size = (model.half * 2.0).max_element().max(1e-4) / cells;
+    let origin = model.center - model.half;
+    let mut subs = vec![];
+    for s in &model.subs {
+        // cell -> (sum of position, normal and uv, count, new index)
+        let mut cell_of: HashMap<(i32, i32, i32), usize> = HashMap::new();
+        let mut acc: Vec<([f32; 8], f32)> = vec![];
+        let mut remap = Vec::with_capacity(s.vertices.len() / 8);
+        for v in s.vertices.chunks_exact(8) {
+            let p = (Vec3::new(v[0], v[1], v[2]) - origin) / size;
+            // the normal is part of the key, so hard edges between faces survive
+            let n = Vec3::new(v[3], v[4], v[5]);
+            let axis: usize = if n.x.abs() > n.y.abs() && n.x.abs() > n.z.abs() { 0 } else if n.y.abs() > n.z.abs() { 1 } else { 2 };
+            let side = axis as i32 * 2 + (n[axis] < 0.0) as i32;
+            let key = (p.x.floor() as i32 * 8 + side, p.y.floor() as i32, p.z.floor() as i32);
+            let i = *cell_of.entry(key).or_insert_with(|| {
+                acc.push(([0.0; 8], 0.0));
+                acc.len() - 1
+            });
+            for k in 0..8 {
+                acc[i].0[k] += v[k];
+            }
+            acc[i].1 += 1.0;
+            remap.push(i as u32);
+        }
+        let mut vertices = Vec::with_capacity(acc.len() * 8);
+        for (sum, n) in &acc {
+            let mut v = sum.map(|x| x / n);
+            let nl = Vec3::new(v[3], v[4], v[5]).normalize_or(Vec3::Y);
+            v[3..6].copy_from_slice(&nl.to_array());
+            vertices.extend_from_slice(&v);
+        }
+        let mut indices = vec![];
+        for t in s.indices.chunks_exact(3) {
+            let (a, b, c) = (remap[t[0] as usize], remap[t[1] as usize], remap[t[2] as usize]);
+            if a != b && b != c && a != c {
+                indices.extend_from_slice(&[a, b, c]);
+            }
+        }
+        subs.push(SubMesh {
+            vertices,
+            indices,
+            color: s.color,
+            texture: s.texture.clone(),
+            skin: None,
+            normal: s.normal.clone(),
+            rough: s.rough,
+            metal: s.metal,
+            emissive: s.emissive,
+            opacity: s.opacity,
+        });
+    }
+    finish(subs).ok()
 }
 
 /// Reads the node tree, the skins and the animation clips of a glTF document.
@@ -352,6 +428,7 @@ fn finish(subs: Vec<SubMesh>) -> Result<ModelData, String> {
         center: (min + max) * 0.5,
         half: ((max - min) * 0.5).max(Vec3::splat(0.001)),
         triangles,
+        lods: vec![],
     })
 }
 
@@ -370,6 +447,8 @@ struct Material {
     normal: Option<String>,
     rough: f32,
     metal: f32,
+    emissive: [f32; 3],
+    opacity: f32,
 }
 
 fn load_mtl(path: &Path) -> HashMap<String, Material> {
@@ -383,7 +462,7 @@ fn load_mtl(path: &Path) -> HashMap<String, Material> {
         match key {
             "newmtl" => {
                 current = Some(rest.to_string());
-                out.insert(rest.to_string(), Material { color: [0.8; 3], texture: None, normal: None, rough: -1.0, metal: 0.0 });
+                out.insert(rest.to_string(), Material { color: [0.8; 3], texture: None, normal: None, rough: -1.0, metal: 0.0, emissive: [0.0; 3], opacity: 1.0 });
             }
             "Kd" => {
                 let v: Vec<f32> = rest.split_whitespace().filter_map(|t| t.parse().ok()).collect();
@@ -394,6 +473,21 @@ fn load_mtl(path: &Path) -> HashMap<String, Material> {
                 }
             }
             // the PBR extension of MTL: roughness, metallic, normal map
+            "Ke" => {
+                let v: Vec<f32> = rest.split_whitespace().filter_map(|t| t.parse().ok()).collect();
+                if let (Some(name), [r, g, b, ..]) = (&current, v.as_slice()) {
+                    if let Some(m) = out.get_mut(name) {
+                        m.emissive = [*r, *g, *b];
+                    }
+                }
+            }
+            "d" | "Tr" => {
+                if let (Some(name), Ok(v)) = (&current, rest.parse::<f32>()) {
+                    if let Some(m) = out.get_mut(name) {
+                        m.opacity = if key == "d" { v } else { 1.0 - v }.clamp(0.0, 1.0);
+                    }
+                }
+            }
             "Pr" | "Pm" => {
                 if let (Some(name), Ok(v)) = (&current, rest.parse::<f32>()) {
                     if let Some(m) = out.get_mut(name) {
@@ -595,6 +689,8 @@ fn load_obj(path: &Path) -> Result<Vec<SubMesh>, String> {
                 normal,
                 rough: mat.map(|m| m.rough).unwrap_or(-1.0),
                 metal: mat.map(|m| m.metal).unwrap_or(0.0),
+                emissive: mat.map(|m| m.emissive).unwrap_or([0.0; 3]),
+                opacity: mat.map(|m| m.opacity).unwrap_or(1.0),
             }
         })
         .collect())
@@ -678,6 +774,8 @@ fn load_gltf(path: &Path) -> Result<(Vec<SubMesh>, Option<Skeleton>), String> {
             let texture = pbr.base_color_texture().and_then(|t| texture_for(t.texture().source().index()));
             let normal = prim.material().normal_texture().and_then(|t| texture_for(t.texture().source().index()));
             let (rough, metal) = (pbr.roughness_factor().clamp(0.02, 1.0), pbr.metallic_factor().clamp(0.0, 1.0));
+            let emissive = prim.material().emissive_factor();
+            let opacity = if prim.material().alpha_mode() == gltf::material::AlphaMode::Blend { c[3].clamp(0.0, 1.0) } else { 1.0 };
 
             // a skinned primitive follows its joints, not its own node
             if let (Some(skin), Some(joints), Some(weights)) =
@@ -718,6 +816,8 @@ fn load_gltf(path: &Path) -> Result<(Vec<SubMesh>, Option<Skeleton>), String> {
                         normal: normal.clone(),
                         rough,
                         metal,
+                        emissive,
+                        opacity,
                     });
                     continue;
                 }
@@ -752,7 +852,7 @@ fn load_gltf(path: &Path) -> Result<(Vec<SubMesh>, Option<Skeleton>), String> {
                     tri.swap(1, 2);
                 }
             }
-            subs.push(SubMesh { vertices, indices: out_idx, color: [c[0], c[1], c[2]], texture, skin: None, normal, rough, metal });
+            subs.push(SubMesh { vertices, indices: out_idx, color: [c[0], c[1], c[2]], texture, skin: None, normal, rough, metal, emissive, opacity });
         }
     }
     Ok((subs, skeleton))
@@ -869,6 +969,45 @@ mod tests {
         mesh.advance_animation(0.3);
         assert_eq!(mesh.anim.fade, 0.0);
         std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn materials_levels_of_detail_and_glass() {
+        let d = tmp("pbr");
+        std::fs::write(
+            d.join("m.mtl"),
+            "newmtl glass\nKd 0.5 0.6 0.7\nd 0.3\nPr 0.05\nPm 0\nnewmtl lamp\nKd 1 1 1\nKe 4 3 2\nnorm lamp_n.png\n",
+        )
+        .unwrap();
+        // a finely divided sphere: thousands of triangles, two materials
+        let mut obj = String::from("mtllib m.mtl\n");
+        let (rings, segs) = (60, 60);
+        for r in 0..=rings {
+            for k in 0..segs {
+                let (a, b) = (r as f32 / rings as f32 * std::f32::consts::PI, k as f32 / segs as f32 * std::f32::consts::TAU);
+                obj += &format!("v {} {} {}\nvn {} {} {}\n", a.sin() * b.cos(), a.cos(), a.sin() * b.sin(), a.sin() * b.cos(), a.cos(), a.sin() * b.sin());
+            }
+        }
+        for r in 0..rings {
+            obj += if r < rings / 2 { "usemtl glass\n" } else { "usemtl lamp\n" };
+            for k in 0..segs {
+                let i = |r: usize, k: usize| r * segs + k % segs + 1;
+                let (a, b, c, e) = (i(r, k), i(r + 1, k), i(r + 1, k + 1), i(r, k + 1));
+                obj += &format!("f {a}//{a} {b}//{b} {c}//{c}\nf {a}//{a} {c}//{c} {e}//{e}\n");
+            }
+        }
+        std::fs::write(d.join("ball.obj"), obj).unwrap();
+        let m = load_model(&d.join("ball.obj")).unwrap();
+        let glass = m.subs.iter().find(|s| s.opacity < 1.0).expect("a see-through part");
+        assert!((glass.opacity - 0.3).abs() < 1e-6 && (glass.rough - 0.05).abs() < 1e-6);
+        let lamp = m.subs.iter().find(|s| s.opacity == 1.0).unwrap();
+        assert_eq!(lamp.emissive, [4.0, 3.0, 2.0]);
+        // simpler versions were made, each much lighter, keeping the shape
+        assert!(m.triangles > 5000);
+        assert_eq!(m.lods.len(), 2, "{}", m.triangles);
+        assert!(m.lods[0].triangles * 10 < m.triangles * 8 && m.lods[1].triangles * 3 < m.triangles, "{} {} {}", m.triangles, m.lods[0].triangles, m.lods[1].triangles);
+        assert!((m.lods[1].half - m.half).length() < 0.15, "same size: {:?} {:?}", m.lods[1].half, m.half);
+        assert!(m.lods[1].subs.iter().any(|s| s.opacity < 1.0), "materials are kept");
     }
 
     #[test]

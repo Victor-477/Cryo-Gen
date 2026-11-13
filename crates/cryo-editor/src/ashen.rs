@@ -107,6 +107,7 @@ pub fn build_scene(dir: &Path) -> Scene {
     s.bloom = 0.5;
     s.ssao = 1.0;
     s.reflections = 0.5;
+    s.indirect = 0.6;
     s.gravity = -24.0;
 
     let mut bounds: HashMap<String, ([f32; 3], [f32; 3])> = HashMap::new();

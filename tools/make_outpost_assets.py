@@ -66,14 +66,16 @@ A.PBR.update({
     "gunmetal": (0.4, 0.8), "blue": (0.5, 0.35), "red": (0.5, 0.35), "green": (0.5, 0.35), "steel": (0.3, 1.0),
     "rubber": (0.9, 0.0), "lamp": (0.5, 0.0), "white": (0.5, 0.0), "medic": (0.5, 0.0), "ammo": (0.6, 0.2),
     "brass": (0.3, 1.0), "gun_dark": (0.45, 0.4), "gun_mid": (0.38, 0.6), "gun_tan": (0.7, 0.0),
-    "glove": (0.85, 0.0), "sleeve": (0.92, 0.0), "eye": (0.3, 0.0), "cyan": (0.1, 0.0),
+    "glove": (0.85, 0.0), "sleeve": (0.92, 0.0), "eye": (0.3, 0.0), "cyan": (0.1, 0.0), "glass": (0.04, 0.0),
+    "dark_room": (0.9, 0.0),
 })
 
 M = {"concrete": ((1, 1, 1), "tex_concrete.jpg"), "floor": ((1, 1, 1), "tex_floor.jpg"), "panel": ((1, 1, 1), "tex_panel.jpg"),
      "hazard": ((1, 1, 1), "tex_hazard.jpg"), "grate": ((1, 1, 1), "tex_grate.jpg"), "gunmetal": ((0.42, 0.44, 0.48), "tex_gunmetal.jpg"),
      "blue": ((0.25, 0.42, 0.62), "tex_container.jpg"), "red": ((0.62, 0.22, 0.18), "tex_container.jpg"), "green": ((0.26, 0.42, 0.3), "tex_container.jpg"),
      "steel": ((0.7, 0.72, 0.76), "tex_gunmetal.jpg"), "black": ((0.03, 0.03, 0.035), None), "rubber": ((0.08, 0.08, 0.09), None),
-     "lamp": ((1.0, 0.9, 0.7), None), "eye": ((1.0, 0.25, 0.1), None), "cyan": ((0.3, 0.9, 1.0), None), "white": ((0.9, 0.9, 0.9), None),
+     "lamp": ((1.0, 0.9, 0.7), None, (7.0, 5.2, 3.2)), "eye": ((1.0, 0.25, 0.1), None, (4.0, 0.6, 0.15)),
+     "cyan": ((0.3, 0.9, 1.0), None, (0.5, 2.2, 3.0)), "glass": ((0.55, 0.65, 0.7), None, None, 0.32), "dark_room": ((0.02, 0.025, 0.03), None), "white": ((0.9, 0.9, 0.9), None),
      "gun_dark": ((0.05, 0.05, 0.06), None), "gun_mid": ((0.13, 0.135, 0.15), None), "gun_tan": ((0.3, 0.26, 0.19), None),
      "glove": ((0.11, 0.1, 0.095), "tex_fabric.jpg"), "sleeve": ((0.27, 0.29, 0.24), "tex_fabric.jpg"),
      "medic": ((0.85, 0.15, 0.15), None), "ammo": ((0.35, 0.4, 0.25), "tex_gunmetal.jpg"), "brass": ((0.85, 0.65, 0.3), None)}
@@ -87,6 +89,13 @@ def wall(length, height=7.0, thick=0.8, mat="concrete"):
         if abs(x) <= length / 2:
             for z in (-thick / 2 - 0.08, thick / 2 + 0.08):
                 m.box("gunmetal", (x, height / 2, z), (0.3, height, 0.16))
+    if mat == "concrete" and length >= 12:
+        for x in (-length / 4, length / 4):
+            for side in (-1, 1):
+                z = side * (thick / 2)
+                m.box("dark_room", (x, 3.6, z + side * 0.005), (2.6, 1.3, 0.01))
+                m.box("gunmetal", (x, 3.6, z + side * 0.03), (2.8, 1.5, 0.04))
+                m.box("glass", (x, 3.6, z + side * 0.07), (2.6, 1.3, 0.02))
     for z in (-thick / 2 - 0.2, thick / 2 + 0.2):
         m.tube("steel", [(-length / 2, height - 1.2, z), (length / 2, height - 1.2, z)], 0.09, sides=8)
         m.tube("gunmetal", [(-length / 2, height - 1.5, z), (length / 2, height - 1.5, z)], 0.05, sides=6)
@@ -192,22 +201,44 @@ def rifle():
     m.box("cyan", (0, 0.16, -0.019), (0.03, 0.03, 0.003))                             # the lens, at the back of the sight
     return m
 
+# The hands' skeleton, in the rifle's own coordinates.
+H_ROOT, H_RHAND, H_RINDEX, H_RFINGERS, H_LARM, H_LHAND, H_LFINGERS = range(7)
+HAND_JOINTS = [("Root", None, (0, 0, 0)), ("RightHand", 0, (0.03, -0.05, 0.09)), ("RightIndex", 1, (0.034, 0.0, 0.055)),
+               ("RightFingers", 1, (0.033, -0.05, 0.075)), ("LeftArm", 0, (-0.4, -0.32, 0.05)), ("LeftHand", 4, (-0.01, 0.025, -0.44)),
+               ("LeftFingers", 5, (-0.035, 0.04, -0.48))]
+
 def hands():
-    """The trooper's gloved hands and sleeves, in the rifle's own coordinates (they ride along with it)."""
+    """The trooper's gloved hands and sleeves, rigged: the trigger finger squeezes when firing,
+    the left hand leaves the handguard to change the magazine."""
     m = Mesh()
-    m.box("glove", (0.028, -0.045, 0.065), (0.03, 0.1, 0.085), r=(18, 0, 0))
-    for i, y in enumerate((-0.005, -0.035, -0.065, -0.093)):
-        m.tube("glove", [(0.035, y, 0.08), (0.03, y - 0.01, 0.02), (0.0, y - 0.012, 0.0), (-0.027, y - 0.01, 0.03)], 0.0115, sides=6)
-    m.tube("glove", [(0.03, 0.02, 0.1), (0.0, 0.05, 0.06), (-0.022, 0.064, 0.0)], [0.016, 0.013, 0.011], sides=6)   # thumb
-    m.tube("glove", [(0.03, -0.06, 0.12), (0.06, -0.1, 0.2)], 0.042, sides=10)                                    # cuff
-    m.tube("sleeve", [(0.06, -0.1, 0.2), (0.15, -0.22, 0.42), (0.24, -0.34, 0.66)], [0.047, 0.058, 0.07], sides=12)
-    m.box("glove", (0, 0.022, -0.48), (0.085, 0.03, 0.12))
+    m.box("glove", (0.028, -0.045, 0.065), (0.03, 0.1, 0.085), H_RHAND, r=(18, 0, 0))
+    # trigger finger, resting on the trigger
+    m.tube("glove", [(0.034, 0.0, 0.055), (0.025, -0.003, 0.0), (0.008, -0.008, -0.045), (-0.002, -0.018, -0.06)], [0.012, 0.011, 0.01, 0.009], sides=6, joint=H_RINDEX)
+    for y in (-0.035, -0.065, -0.093):
+        m.tube("glove", [(0.035, y, 0.08), (0.03, y - 0.01, 0.02), (0.0, y - 0.012, 0.0), (-0.027, y - 0.01, 0.03)], 0.0115, sides=6, joint=H_RFINGERS)
+    m.tube("glove", [(0.03, 0.02, 0.1), (0.0, 0.05, 0.06), (-0.022, 0.064, 0.0)], [0.016, 0.013, 0.011], sides=6, joint=H_RHAND)   # thumb
+    m.tube("glove", [(0.03, -0.06, 0.12), (0.06, -0.1, 0.2)], 0.042, sides=10, joint=H_RHAND)                                      # cuff
+    m.tube("sleeve", [(0.06, -0.1, 0.2), (0.15, -0.22, 0.42), (0.24, -0.34, 0.66)], [0.047, 0.058, 0.07], sides=12, joint=H_ROOT)
+    m.box("glove", (0, 0.022, -0.48), (0.085, 0.03, 0.12), H_LHAND)
     for z in (-0.44, -0.47, -0.5, -0.53):
-        m.tube("glove", [(-0.035, 0.035, z), (-0.042, 0.072, z), (-0.02, 0.104, z), (0.018, 0.1, z)], 0.0115, sides=6)
-    m.tube("glove", [(0.03, 0.03, -0.43), (0.042, 0.07, -0.47), (0.03, 0.095, -0.5)], [0.015, 0.012, 0.01], sides=6)  # thumb
-    m.tube("glove", [(-0.01, 0.01, -0.41), (-0.08, -0.04, -0.33)], 0.04, sides=10)
-    m.tube("sleeve", [(-0.08, -0.04, -0.33), (-0.22, -0.16, -0.16), (-0.4, -0.32, 0.05)], [0.046, 0.056, 0.068], sides=12)
+        m.tube("glove", [(-0.035, 0.035, z), (-0.042, 0.072, z), (-0.02, 0.104, z), (0.018, 0.1, z)], 0.0115, sides=6, joint=H_LFINGERS)
+    m.tube("glove", [(0.03, 0.03, -0.43), (0.042, 0.07, -0.47), (0.03, 0.095, -0.5)], [0.015, 0.012, 0.01], sides=6, joint=H_LHAND)   # thumb
+    m.tube("glove", [(-0.01, 0.01, -0.41), (-0.08, -0.04, -0.33)], 0.04, sides=10, joint=H_LHAND)
+    m.tube("sleeve", [(-0.08, -0.04, -0.33), (-0.22, -0.16, -0.16), (-0.4, -0.32, 0.05)], [0.046, 0.056, 0.068], sides=12, joint=H_LARM)
     return m
+
+HAND_CLIPS = {
+    "Idle": (2.0, {H_RFINGERS: [(0, (0, 0, 0)), (1.0, (-3, 0, 0)), (2.0, (0, 0, 0))]}),
+    # a quick squeeze of the trigger
+    "Fire": (0.1, {H_RINDEX: [(0, (0, 0, 0)), (0.03, (-24, 0, 0)), (0.1, (0, 0, 0))]}),
+    # the left hand drops to the magazine, grips it, pulls it out, pushes a new one in, returns
+    "Reload": (1.4, {
+        ("move", H_LARM): [(0, (0, 0, 0)), (0.35, (0.14, -0.2, 0.26)), (0.6, (0.16, -0.32, 0.27)), (0.85, (0.15, -0.2, 0.27)), (1.15, (0.05, -0.05, 0.08)), (1.4, (0, 0, 0))],
+        H_LFINGERS: [(0, (0, 0, 0)), (0.3, (35, 0, 0)), (0.4, (-30, 0, 0)), (0.9, (-30, 0, 0)), (1.2, (0, 0, 0))],
+        H_LHAND: [(0, (0, 0, 0)), (0.35, (0, 0, -40)), (1.05, (0, 0, -40)), (1.4, (0, 0, 0))],
+        H_RFINGERS: [(0, (0, 0, 0)), (0.5, (-8, 0, 0)), (1.4, (0, 0, 0))],
+    }),
+}
 
 def pickup(kind):
     m = Mesh()
@@ -255,9 +286,10 @@ if __name__ == "__main__":
               ("roof_hall", slab("panel", 32, 32, 0.5)), ("roof_core", slab("panel", 28, 28, 0.5)),
               ("container_blue", container("blue")), ("container_red", container("red")), ("container_green", container("green")),
               ("crate", crate()), ("barrel", barrel()), ("lamp", lamp()), ("drone", drone(False)), ("drone_heavy", drone(True)),
-              ("rifle", rifle()), ("hands", hands()), ("medkit", pickup("medkit")), ("ammo", pickup("ammo")), ("core", core()), ("node", node())]
+              ("rifle", rifle()), ("medkit", pickup("medkit")), ("ammo", pickup("ammo")), ("core", core()), ("node", node())]
     for name, mesh in models:
         A.write_obj(name, mesh, M, tile=4.0 if name.startswith(("ground", "roof")) else (0.25 if name == "hands" else (0.5 if name in ("rifle", "drone", "drone_heavy") else 3.0)))
+    A.write_gltf("hands", hands(), M, HAND_JOINTS, HAND_CLIPS)
     files = sorted(os.listdir(OUT))
     rs = "// Generated by tools/make_outpost_assets.py. Do not edit.\npub const FILES: &[(&str, &[u8])] = &[\n"
     rs += "".join(f'    ("{f}", include_bytes!("../template/outpost/{f}")),\n' for f in files) + "];\n"

@@ -6,3 +6,4 @@ Pr 0.88
 Pm 0.0
 newmtl glow
 Kd 0.5 0.85 1.0
+Ke 0.5 1.4 2.2

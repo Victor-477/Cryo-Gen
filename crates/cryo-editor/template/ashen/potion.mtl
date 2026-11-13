@@ -1,5 +1,7 @@
 newmtl glass
 Kd 0.75 0.1 0.12
+Ke 0.35 0.02 0.02
+d 0.6
 Pr 0.08
 Pm 0.0
 newmtl wood

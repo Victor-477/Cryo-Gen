@@ -88,6 +88,8 @@ pub struct State {
     pub show_tutorials: bool,
     /// Running tutorial: (id, step index).
     pub tutorial: Option<(&'static str, usize)>,
+    /// The pause menu of an exported game is open.
+    pub pause_menu: bool,
     /// Where each panel is on screen, so tutorials can point at it.
     pub tab_rects: HashMap<Tab, egui::Rect>,
     pub toolbar_rect: egui::Rect,
@@ -422,6 +424,59 @@ impl State {
     }
 
     /// Tutorial list, the running tutorial's card and the highlight around what it talks about.
+    /// The pause menu of an exported game: resume, graphics quality, full screen, quit.
+    fn pause_ui(&mut self, ctx: &egui::Context) {
+        if !self.pause_menu || !self.game_only {
+            return;
+        }
+        let mut resume = false;
+        egui::Window::new(tr!("Paused", "Pausado"))
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .show(ctx, |ui| {
+                ui.set_min_width(260.0);
+                if ui.add_sized([240.0, 30.0], egui::Button::new(tr!("Resume", "Continuar"))).clicked() {
+                    resume = true;
+                }
+                ui.add_space(8.0);
+                self.graphics_choice(ui);
+                let mut full = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
+                if ui.checkbox(&mut full, tr!("Full screen", "Tela cheia")).changed() {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(full));
+                }
+                ui.add_space(8.0);
+                if ui.add_sized([240.0, 30.0], egui::Button::new(tr!("Quit game", "Sair do jogo"))).clicked() {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            });
+        if resume {
+            self.pause_menu = false;
+            if let Some(p) = &mut self.play {
+                p.paused = false;
+            }
+        }
+    }
+
+    /// Graphics quality, kept in the user's settings.
+    pub fn graphics_choice(&mut self, ui: &mut egui::Ui) {
+        ui.label(tr!("Graphics", "Gráficos"));
+        ui.horizontal(|ui| {
+            for (code, name) in [("low", tr!("Low", "Baixo")), ("medium", tr!("Medium", "Médio")), ("high", tr!("High", "Alto"))] {
+                let on = self.settings.graphics == code || (code == "high" && self.settings.graphics.is_empty());
+                if ui.selectable_label(on, name).clicked() {
+                    self.settings.graphics = code.to_string();
+                    self.settings.save();
+                }
+            }
+        })
+        .response
+        .on_hover_text(tr!(
+            "Low turns off post-processing and the shadows of lamps; Medium turns off reflections. For slower computers.",
+            "Baixo desliga o pós-processamento e as sombras das luzes; Médio desliga os reflexos. Para computadores mais lentos."
+        ));
+    }
+
     fn tutorial_ui(&mut self, ctx: &egui::Context) {
         let tutorials = tutorial::all();
 
@@ -943,7 +998,11 @@ impl State {
         if self.playing() {
             if pressed(Key::Escape) {
                 if self.game_only {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    // an exported game pauses and shows its menu instead of closing at once
+                    self.pause_menu = !self.pause_menu;
+                    if let Some(p) = &mut self.play {
+                        p.paused = self.pause_menu;
+                    }
                 } else {
                     self.stop_play();
                 }
@@ -1052,6 +1111,7 @@ impl App {
             play: None,
             input: InputState::default(),
             mouse_grabbed: false,
+            pause_menu: false,
             logs: vec![],
             undo: vec![],
             redo: vec![],
@@ -1236,6 +1296,8 @@ impl App {
             });
             ui.menu_button(tr!("Object", "Objeto"), |ui| st.create_menu(ui));
             ui.menu_button(tr!("Window", "Janela"), |ui| {
+                st.graphics_choice(ui);
+                ui.separator();
                 if ui.button(tr!("Reset default layout", "Restaurar layout padrão")).clicked() {
                     self.dock = default_layout();
                     ui.close();
@@ -1446,6 +1508,7 @@ impl eframe::App for App {
             self.st.show_tutorials = !self.st.show_tutorials;
         }
         self.st.tutorial_ui(&ctx);
+        self.st.pause_ui(&ctx);
 
         if self.st.show_about {
             egui::Window::new(tr!("About Cryo Engine", "Sobre a Cryo Engine"))

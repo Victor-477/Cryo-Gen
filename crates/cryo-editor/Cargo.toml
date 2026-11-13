@@ -1,6 +1,6 @@
 [package]
 name = "cryo-editor"
-version = "0.11.0-beta"
+version = "0.12.0-beta"
 edition = "2021"
 license = "GPL-3.0-only"
 repository = "https://github.com/Victor-477/Cryo-Gen"

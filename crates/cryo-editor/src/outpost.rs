@@ -84,6 +84,7 @@ pub fn build_scene(dir: &Path) -> Scene {
     s.bloom = 0.7;
     s.ssao = 1.0;
     s.reflections = 1.0;
+    s.indirect = 0.8;
     s.gravity = -24.0;
 
     let mut bounds: HashMap<String, ([f32; 3], [f32; 3])> = HashMap::new();
@@ -331,13 +332,13 @@ pub fn build_scene(dir: &Path) -> Scene {
         m.shininess = 0.7;
     }
     // the hands ride on the rifle: recoil and reloading move them too. Cloth is matte.
-    let hands = model(&mut s, "Hands", "hands.obj", Vec3::ZERO, 0.0);
+    let hands = model(&mut s, "Hands", "hands.gltf", Vec3::ZERO, 0.0);
     {
         let e = s.get_mut(hands).unwrap();
         e.parent = Some(rifle);
         let m = e.mesh.as_mut().unwrap();
         m.cast_shadow = false;
-        m.shininess = 0.05;
+        m.animation = "Idle".into();
     }
     let flash = point(&mut s, "Muzzle Flash", v(0.17, -0.1, -1.2), [1.0, 0.75, 0.4], 4.0, 9.0);
     s.get_mut(flash).unwrap().parent = Some(head);
@@ -425,6 +426,11 @@ mod tests {
             }
         }
         assert!(create(&g.dir).is_err(), "never overwrites a project");
+        let hands = crate::assets::load_model(&g.dir.join("models/hands.gltf")).unwrap();
+        let sk = hands.skeleton.as_ref().expect("the hands are rigged");
+        for clip in ["Idle", "Fire", "Reload"] {
+            assert!(sk.clip_index(clip).is_some(), "hands lack {clip}");
+        }
         assert_eq!(g.bar("Health"), 1.0);
         assert!(g.rt.hud.starts_with("Clear the yard\nAmmo: 30 / 120"), "{}", g.rt.hud);
         assert!(g.rt.crosshair() && g.rt.mouse_locked());

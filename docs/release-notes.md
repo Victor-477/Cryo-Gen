@@ -4,15 +4,27 @@ Cryo Engine is a native 3D game engine with a visual editor, scripted in the Cry
 
 | System | File |
 |---|---|
-| Windows 10/11 (64-bit) | `CryoEngine-v0.11.0-beta-windows-x86_64.zip` |
-| macOS 11+ (Apple Silicon and Intel) | `CryoEngine-v0.11.0-beta-macos-universal.zip` |
-| Linux (x86_64) | `CryoEngine-v0.11.0-beta-linux-x86_64.zip` |
+| Windows 10/11 (64-bit) | `CryoEngine-v0.12.0-beta-windows-x86_64.zip` |
+| macOS 11+ (Apple Silicon and Intel) | `CryoEngine-v0.12.0-beta-macos-universal.zip` |
+| Linux (x86_64) | `CryoEngine-v0.12.0-beta-linux-x86_64.zip` |
 
 Unzip and run. On first launch the editor creates the example game in `~/CryoProjects/FrostpeakIsles` and starts a welcome tour.
 
 **macOS:** the app is not signed. Right-click **Cryo Engine.app** and choose **Open** the first time. If macOS still refuses, run `xattr -dr com.apple.quarantine "Cryo Engine.app"` in a terminal.
 
-## New in 0.11.0-beta
+## New in 0.12.0-beta
+
+- **Glowing and transparent materials**: emissive colour (MTL `Ke`, glTF `emissiveFactor`) feeds the bloom; transparent materials (MTL `d`/`Tr`, glTF alpha Blend) are drawn after solid objects, far to near, and reflect more at grazing angles. Outpost Kestrel's buildings now have glass windows.
+- **Levels of detail**: big models (over 2500 triangles) get two simplified versions automatically; distant objects use them, and tiny far objects are skipped.
+- **Bounced light**: lamps and torches add a soft fill to nearby surfaces (Scene settings, Bounced light). An approximation, not full global illumination.
+- **Pause menu in games**: Esc pauses and opens Resume, Graphics quality (High, Medium, Low), Full screen and Quit. The quality is saved and also chosen in the editor's Window menu.
+- **Animated first-person hands**: the FPS hands are a rigged model with Idle, Fire and Reload clips, driven from the script with `animate`.
+
+## From 0.11.0-beta
+
+PBR materials and normal maps, point-light shadows, particles, path finding, positional sound, saving.
+
+## Details of 0.11.0-beta
 
 - **Physically based materials**: GGX lighting with roughness and metallic per material (MTL `Pr`/`Pm`, glTF metallic-roughness), and **normal maps** (MTL `norm`/`map_Bump`, glTF `normalTexture`), with no tangents needed in the file. Materials without these values keep using the entity's Shininess.
 - **Shadows from point lights**: torches and lamps now cast shadows too (a cube of six views). Together with spotlights they share 16 shadow tiles, given to the lights nearest the camera.

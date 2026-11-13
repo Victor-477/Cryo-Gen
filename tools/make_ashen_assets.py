@@ -205,8 +205,12 @@ def write_obj(name, mesh, materials, tile=2.0):
     open(os.path.join(OUT, name + ".obj"), "w").write("\n".join(lines) + "\n")
     mtl = []
     for mat in mesh.tris:
-        rgb, tex = materials[mat]
+        rgb, tex, *extra = materials[mat]
         mtl += [f"newmtl {mat}", f"Kd {rgb[0]} {rgb[1]} {rgb[2]}"] + ([f"map_Kd {tex}"] if tex else [])
+        if len(extra) > 0 and extra[0]:
+            mtl.append("Ke {} {} {}".format(*extra[0]))
+        if len(extra) > 1 and extra[1] < 1.0:
+            mtl.append(f"d {extra[1]}")
         if normal_for(tex):
             mtl.append(f"norm {normal_for(tex)}")
         if mat in PBR:
@@ -249,15 +253,20 @@ def write_gltf(name, mesh, materials, joints, clips):
             "NORMAL": add(nor, "f", "VEC3", count, 5126), "TEXCOORD_0": add(uvs, "f", "VEC2", count, 5126),
             "JOINTS_0": add(jnt, "H", "VEC4", count, 5123), "WEIGHTS_0": add(wgt, "f", "VEC4", count, 5126)},
             "indices": add(idx, "I", "SCALAR", len(idx), 5125), "material": len(mats)})
-        rgb, tex = materials[mat]
+        rgb, tex, *extra = materials[mat]
         rough, metal = PBR.get(mat, (0.7, 0.0))
-        pbr = {"baseColorFactor": list(rgb) + [1.0], "roughnessFactor": rough, "metallicFactor": metal}
+        opacity = extra[1] if len(extra) > 1 else 1.0
+        pbr = {"baseColorFactor": list(rgb) + [opacity], "roughnessFactor": rough, "metallicFactor": metal}
         def image(uri):
             if {"uri": uri} not in images:
                 images.append({"uri": uri})
                 textures.append({"source": len(images) - 1})
             return images.index({"uri": uri})
         material = {"name": mat, "pbrMetallicRoughness": pbr}
+        if len(extra) > 0 and extra[0]:
+            material["emissiveFactor"] = list(extra[0])
+        if opacity < 1.0:
+            material["alphaMode"] = "BLEND"
         if tex:
             pbr["baseColorTexture"] = {"index": image(tex)}
             if normal_for(tex):
@@ -296,6 +305,20 @@ def write_gltf(name, mesh, materials, joints, clips):
         v = add([root[i] + k[1][i] for k in move for i in range(3)], "f", "VEC3", len(move), 5126)
         samplers.append({"input": t, "output": v, "interpolation": "LINEAR"})
         channels.append({"sampler": len(samplers) - 1, "target": {"node": 1, "path": "translation"}})
+        for key, keys in tracks.items():
+            if isinstance(key, tuple) and key[0] == "move":
+                j = key[1]
+                keys = sorted(keys)
+                if keys[0][0] > 0:
+                    keys.insert(0, (0, (0, 0, 0)))
+                if keys[-1][0] < duration:
+                    keys.append((duration, keys[-1][1]))
+                p, parent = joints[j][2], joints[j][1]
+                base = [p[i] - (joints[parent][2][i] if parent is not None else 0) for i in range(3)]
+                t = add([k[0] for k in keys], "f", "SCALAR", len(keys), 5126, {"min": [0], "max": [duration]})
+                v = add([base[i] + k[1][i] for k in keys for i in range(3)], "f", "VEC3", len(keys), 5126)
+                samplers.append({"input": t, "output": v, "interpolation": "LINEAR"})
+                channels.append({"sampler": len(samplers) - 1, "target": {"node": j + 1, "path": "translation"}})
         animations.append({"name": clip, "samplers": samplers, "channels": channels})
     doc = {"asset": {"version": "2.0", "generator": "Cryo Engine (make_ashen_assets.py)"}, "scene": 0,
            "scenes": [{"nodes": [0, 1]}], "nodes": nodes, "meshes": [{"primitives": prims}], "materials": mats,
@@ -584,7 +607,7 @@ PALETTES = {
                "dark": ((0.2, 0.2, 0.23), None), "black": ((0.02, 0.02, 0.03), None)},
     "boss": {"plate": ((0.26, 0.24, 0.3), METAL), "mail": ((0.16, 0.15, 0.18), MAILT), "trim": ((0.85, 0.36, 0.14), METAL),
              "cloth": ((0.45, 0.05, 0.05), CLOTH), "leather": ((0.16, 0.11, 0.09), LEATHER), "blade": ((0.62, 0.26, 0.2), METAL),
-             "bone": ((0.78, 0.72, 0.6), BONE), "dark": ((0.06, 0.06, 0.08), None), "black": ((1.0, 0.42, 0.1), None)},
+             "bone": ((0.78, 0.72, 0.6), BONE), "dark": ((0.06, 0.06, 0.08), None), "black": ((1.0, 0.42, 0.1), None, (3.0, 1.1, 0.25))},
     "bone": {"bone": ((0.72, 0.68, 0.57), BONE), "rusty": ((0.4, 0.28, 0.21), METAL), "rag": ((0.2, 0.17, 0.16), CLOTH),
              "wood": ((0.75, 0.6, 0.45), WOODT), "leather": ((0.4, 0.27, 0.17), LEATHER), "dark": ((0.2, 0.18, 0.17), None),
              "black": ((0.02, 0.015, 0.015), None)},
@@ -714,7 +737,7 @@ MAT = {"stone": ((1, 1, 1), "tex_stone.jpg"), "cobble": ((1, 1, 1), "tex_cobble.
        "grass": ((1, 1, 1), "tex_grass.jpg"), "wood": ((1, 1, 1), "tex_wood.jpg"), "roof": ((1, 1, 1), "tex_roof.jpg"),
        "iron": ((0.22, 0.22, 0.25), "tex_metal.jpg"), "cloth": ((0.3, 0.07, 0.07), "tex_cloth.jpg"), "gold": ((0.95, 0.74, 0.3), "tex_metal.jpg"),
        "leaf": ((0.09, 0.13, 0.11), None), "leaf2": ((0.12, 0.16, 0.12), None), "bark": ((0.5, 0.36, 0.26), "tex_wood.jpg"),
-       "rock": ((0.4, 0.4, 0.43), None), "glass": ((0.75, 0.1, 0.12), None), "glow": ((0.5, 0.85, 1.0), None),
+       "rock": ((0.4, 0.4, 0.43), None), "glass": ((0.75, 0.1, 0.12), None, (0.35, 0.02, 0.02), 0.6), "glow": ((0.5, 0.85, 1.0), None, (0.5, 1.4, 2.2)),
        "black": ((0.03, 0.03, 0.04), None)}
 
 def wall(length, height=6.0, thick=1.6, crenels=True):

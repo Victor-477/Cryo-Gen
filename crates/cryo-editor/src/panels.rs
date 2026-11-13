@@ -630,6 +630,12 @@ impl State {
                 "Superfícies brilhantes refletem o que está na tela (precisa de Relevo). É o mais pesado dos três."
             ))
         });
+        row(ui, tr!("Bounced light", "Luz rebatida"), |ui| {
+            ui.add(egui::Slider::new(&mut self.scene.indirect, 0.0..=2.0)).on_hover_text(tr!(
+                "Lamps also light their surroundings softly from every side, as if their light bounced off walls and floor.",
+                "As luzes também iluminam suavemente o entorno por todos os lados, como se a luz rebatesse em paredes e chão."
+            ))
+        });
         row(ui, tr!("Fog", "Névoa"), |ui| {
             ui.add(egui::Slider::new(&mut self.scene.fog, 0.0..=0.12)).on_hover_text(tr!(
                 "Distant objects fade into the horizon colour. 0 turns it off.",

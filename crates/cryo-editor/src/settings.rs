@@ -17,6 +17,9 @@ pub struct Settings {
     pub tutorials_done: Vec<String>,
     #[serde(default)]
     pub last_project: Option<String>,
+    /// "high", "medium" or "low": how much of a scene's effects and shadows are drawn.
+    #[serde(default)]
+    pub graphics: String,
 }
 
 fn home() -> Option<PathBuf> {

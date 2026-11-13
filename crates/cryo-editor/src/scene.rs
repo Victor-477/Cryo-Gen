@@ -355,6 +355,9 @@ pub struct Scene {
     pub ssao: f32,
     #[serde(default)]
     pub reflections: f32,
+    /// Light bounced around by lamps (an approximation of global illumination): 0 is off.
+    #[serde(default)]
+    pub indirect: f32,
     /// Animation clips and cutscenes (see `anim.rs`).
     #[serde(default)]
     pub animations: Vec<crate::anim::Clip>,
@@ -377,6 +380,7 @@ impl Scene {
             bloom: 0.0,
             ssao: 0.0,
             reflections: 0.0,
+            indirect: 0.0,
             gravity: default_gravity(),
             animations: vec![],
         }

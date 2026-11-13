@@ -45,7 +45,7 @@ If you get a graphics configuration error, run with `CRYO_MSAA=0`.
 |---|---|
 | **Editor** | Dockable panels (Hierarchy, Scene, Game, Inspector, Content, Console, script editor), move/rotate/scale gizmos, undo/redo, parent/child entities, Play/Pause/Stop. |
 | **Performance** | Skeletal animation runs on the graphics card, objects out of view are skipped, and physics only tests bodies that are near each other. |
-| **Rendering** | Primitives and imported models (`.obj`, `.gltf`, `.glb`), physically based materials (roughness, metallic, normal maps), textures with anisotropic filtering, directional/point/spot lights, shadows from the sun and the nearest point lights and spotlights, sky gradient, distance fog, relief lighting, sky reflections. |
+| **Rendering** | Primitives and imported models (`.obj`, `.gltf`, `.glb`), physically based materials (roughness, metallic, normal maps), textures with anisotropic filtering, directional/point/spot lights, shadows from the sun and the nearest point lights and spotlights, sky gradient, distance fog, relief lighting, sky reflections, glowing and transparent materials, automatic levels of detail, bounced light from lamps. Exported games have a pause menu with graphics quality (High, Medium, Low) and full screen. |
 | **Post-processing** | Bloom, ambient occlusion, screen-space reflections, filmic tone curve, vignette (per scene). |
 | **Physics** | Gravity, box, sphere and triangle-mesh colliders, triggers, contact events with normals, optional rotation (bodies that roll and tip over). |
 | **Scripting** | The Cryo language: typed, with maps, `match`, state machines, global events and live error checking. Script properties are editable in the Inspector. |
@@ -135,7 +135,7 @@ A first-person shooter with one complete level in three sectors: the yard, the w
 
 `WASD` moves, the mouse aims, left click fires, `R` reloads, `Shift` runs, `Space` jumps. Clear each sector of security drones to open the next door, then destroy the three coolant nodes of the reactor.
 
-It shows first-person play in the engine: shots are `scene.raycast(...)` rays, drones check line of sight the same way, and the scene uses relief lighting (textures bump the light without normal maps) with coloured point lights at night. Models and textures come from `tools/make_outpost_assets.py`. It uses the post-processing effects (bloom, ambient occlusion, screen-space reflections), shadows from the yard lamps and 1024 x 1024 textures. It is still short of a commercial shooter: the hands have no animated fingers and lighting has no global illumination.
+It shows first-person play in the engine: shots are `scene.raycast(...)` rays, drones check line of sight the same way, and the scene uses relief lighting (textures bump the light without normal maps) with coloured point lights at night. Models and textures come from `tools/make_outpost_assets.py`. It uses the post-processing effects (bloom, ambient occlusion, screen-space reflections), shadows from the yard lamps and 1024 x 1024 textures. It is still short of a commercial shooter: the hands animate (Idle, Fire, Reload) but their fingers are coarse, and bounced light is an approximation, not full global illumination.
 
 ## Repository layout
 
@@ -168,11 +168,12 @@ tools/             make_ashen_assets.py: builds the Ashen Keep models and textur
 docs/              documentation site (GitHub Pages)
 ```
 
-## Known limits (0.11.0-beta)
+## Known limits (0.12.0-beta)
 
 - Skeletal animation: one clip per model at a time (blended when switching), up to 64 joints on the graphics card (more fall back to the CPU); no morph targets.
 - Modelling: `.obj` models, one material, automatic texture coordinates. No loop cuts, bevels or booleans yet.
-- Models use base colour and base texture; full PBR materials are not read yet.
+- Bounced light is an approximation (a soft fill from nearby lamps), not full global illumination.
+- Levels of detail are made automatically by vertex clustering; animated models do not get them.
 - Shadows: the first directional light, plus 16 shadow tiles for the nearest local lights (a spotlight uses one, a point light six).
 - Lights: 4 directional, and the 16 point/spot lights nearest the camera, per view.
 - Physics: mesh colliders are for static bodies; rotating bodies use a simplified model, so stacks of boxes are not stable.

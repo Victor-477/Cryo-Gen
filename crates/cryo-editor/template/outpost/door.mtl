@@ -21,5 +21,6 @@ Pr 0.7
 Pm 0.0
 newmtl eye
 Kd 1.0 0.25 0.1
+Ke 4.0 0.6 0.15
 Pr 0.3
 Pm 0.0

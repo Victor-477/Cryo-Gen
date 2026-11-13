@@ -13,6 +13,7 @@ script Trooper {
 
     var head: entity = nil
     var gun: entity = nil
+    var hands: entity = nil
     var flash: entity = nil
     var yaw = 0
     var pitch = 0
@@ -34,6 +35,7 @@ script Trooper {
     on start() {
         head = scene.find("Head")
         gun = head.child("Rifle")
+        hands = gun.child("Hands")
         flash = head.child("Muzzle Flash")
         gun_rest = gun.position
         flash.visible = false
@@ -59,6 +61,7 @@ script Trooper {
     fn fire() {
         ammo -= 1
         cooldown = fire_every
+        hands.animate("Fire", 1, false)
         kick = 0.06
         flash_left = 0.05
         flash.visible = true
@@ -84,6 +87,7 @@ script Trooper {
         }
         if key == "r" and reloading <= 0 and ammo < magazine and reserve > 0 and not dead {
             reloading = 1.4
+            hands.animate("Reload", 1, false)
             audio.play("sounds/reload.wav", 0.7)
         }
     }
@@ -203,6 +207,7 @@ script Trooper {
                 ammo += take
                 reserve -= take
                 gun.rotation = vec3(0)
+                hands.animate("Idle", 1, true)
             }
         } else if input.down("mouse_left") and cooldown <= 0 {
             if ammo > 0 {

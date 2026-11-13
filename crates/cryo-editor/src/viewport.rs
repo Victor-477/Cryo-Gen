@@ -299,6 +299,23 @@ impl State {
         best.map(|(_, id)| id)
     }
 
+    /// Lowers the scene's effects to the graphics quality chosen by the user.
+    fn apply_quality(&self, frame: &mut RenderFrame) {
+        match self.settings.graphics.as_str() {
+            "low" => {
+                frame.bloom = 0.0;
+                frame.ssao = 0.0;
+                frame.reflections = 0.0;
+                frame.indirect = 0.0;
+                for l in &mut frame.locals {
+                    l.shadow = false;
+                }
+            }
+            "medium" => frame.reflections = 0.0,
+            _ => {}
+        }
+    }
+
     fn paint_3d(&self, ui: &egui::Ui, rect: Rect, frame: RenderFrame) {
         let Some(renderer) = self.renderer.clone() else {
             ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(20, 20, 22));
@@ -779,6 +796,7 @@ impl State {
 
         // ---------- 3D drawing ----------
         let mut frame = RenderFrame::from_scene(&self.scene, &mut self.assets, view, proj, self.selected);
+        self.apply_quality(&mut frame);
         if let Some(play) = &self.play {
             frame.particles = play.rt.fx.list.iter().map(|p| { let (s, c) = p.look(); (p.pos, s, c, p.glow) }).collect();
         }
@@ -992,6 +1010,7 @@ impl State {
             cam.far.max(cam.near + 1.0),
         );
         let mut frame = RenderFrame::from_scene(&self.scene, &mut self.assets, view, proj, None);
+        self.apply_quality(&mut frame);
         if let Some(play) = &self.play {
             frame.particles = play.rt.fx.list.iter().map(|p| { let (s, c) = p.look(); (p.pos, s, c, p.glow) }).collect();
         }

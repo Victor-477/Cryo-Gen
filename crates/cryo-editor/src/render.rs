@@ -71,6 +71,7 @@ pub struct RenderFrame {
     pub bloom: f32,
     pub ssao: f32,
     pub reflections: f32,
+    pub indirect: f32,
     /// Lines: x, y, z, r, g, b, a per vertex.
     pub lines: Vec<f32>,
     /// Particles to draw: position, size, colour and opacity, and whether they add light.
@@ -177,6 +178,24 @@ impl RenderFrame {
                 None => false,
             };
         }
+        // far away, detailed models switch to their simpler versions; specks are skipped
+        let focal = proj.y_axis.y.abs();
+        for item in &mut items {
+            let size = item.radius * focal / item.center.distance(cam_pos).max(0.01);
+            if size < 0.004 && !item.selected {
+                item.in_view = false;
+                item.in_shadow = false;
+                continue;
+            }
+            if let MeshRef::Model(m) = &item.mesh {
+                if item.joints.is_none() && !m.lods.is_empty() {
+                    let pick = if size < 0.06 { m.lods.len() - 1 } else if size < 0.18 { 0 } else { usize::MAX };
+                    if let Some(lod) = m.lods.get(pick) {
+                        item.mesh = MeshRef::Model(lod.clone());
+                    }
+                }
+            }
+        }
         items.retain(|i| i.in_view || i.in_shadow);
         // more lights than the shader takes: keep the ones that matter most to this view
         if locals.len() > MAX_POINT {
@@ -201,6 +220,7 @@ impl RenderFrame {
             bloom: scene.bloom,
             ssao: scene.ssao,
             reflections: scene.reflections,
+            indirect: scene.indirect,
             lines: vec![],
             particles: vec![],
             shadow,
@@ -292,6 +312,8 @@ struct GpuMesh {
     normal: Option<Arc<TextureData>>,
     rough: f32,
     metal: f32,
+    emissive: [f32; 3],
+    opacity: f32,
     /// Index of the skin whose joints move this mesh on the graphics card.
     skin: Option<usize>,
 }
@@ -420,6 +442,9 @@ uniform sampler2D u_normal_tex;
 uniform int u_has_normal;
 uniform float u_rough;
 uniform float u_metal;
+uniform vec3 u_emissive;
+uniform float u_opacity;
+uniform float u_indirect;
 
 float spot_shadow(int i, vec3 n) {
     int tile = u_pshadow[i];
@@ -560,6 +585,11 @@ void main() {
         }
         if (att > 0.0) att *= spot_shadow(i, n);
         col += shade(n, v, l, u_pcolor[i] * att, base);
+        if (u_indirect > 0.0) {
+            // light bounced off the surroundings: a soft fill around each lamp, from all sides
+            float soft = clamp(1.0 - dist / (u_prange[i] * 1.4), 0.0, 1.0);
+            col += base * (1.0 - g_metal) * u_pcolor[i] * soft * soft * u_indirect * 0.18;
+        }
     }
     // the surroundings mirrored in the surface: sharp on smooth materials, a soft
     // average of the sky on rough ones, strongest at grazing angles (Fresnel)
@@ -571,11 +601,14 @@ void main() {
     vec3 fr = g_f0 + (max(vec3(1.0 - g_rough), g_f0) - g_f0) * pow(1.0 - ndv, 5.0);
     col += env_lin * fr * mix(1.6, 0.5, g_rough);
     float reflectivity = max(fr.r, max(fr.g, fr.b)) * (1.0 - g_rough) * (1.0 - g_rough);
+    col += u_emissive;
+    // see-through materials turn more opaque at grazing angles, like real glass
+    float alpha = u_opacity < 0.999 ? mix(u_opacity, 1.0, pow(1.0 - ndv, 4.0)) : 1.0;
     if (u_post == 1) {
         // post-processing does the tone curve; this pass stays in linear light
         float fd = length(u_cam - v_world) * u_fog;
         col = mix(col, pow(u_fog_color, vec3(2.2)), 1.0 - exp(-fd * fd));
-        frag = vec4(col, reflectivity);
+        frag = vec4(col, u_opacity < 0.999 ? alpha : reflectivity);
         return;
     }
     if (u_relief > 0.0) {
@@ -588,7 +621,7 @@ void main() {
     col = pow(clamp(col, 0.0, 1.0), vec3(1.0 / 2.2));
     float fog_d = length(u_cam - v_world) * u_fog;
     col = mix(col, u_fog_color, 1.0 - exp(-fog_d * fog_d));
-    frag = vec4(col, 1.0);
+    frag = vec4(col, alpha);
 }
 "#;
 
@@ -786,7 +819,7 @@ impl Renderer {
             for shape in Shape::ALL {
                 let (verts, idx) = build_mesh(shape);
                 let (vao, buffers, count) = upload_mesh(gl, &verts, &idx)?;
-                shapes.insert(shape, GpuMesh { vao, buffers, count, color: [1.0; 3], texture: None, skin: None, normal: None, rough: -1.0, metal: 0.0 });
+                shapes.insert(shape, GpuMesh { vao, buffers, count, color: [1.0; 3], texture: None, skin: None, normal: None, rough: -1.0, metal: 0.0, emissive: [0.0; 3], opacity: 1.0 });
             }
 
             let line_vao = gl.create_vertex_array()?;
@@ -987,6 +1020,8 @@ impl Renderer {
                     normal: s.normal.clone(),
                     rough: s.rough,
                     metal: s.metal,
+                    emissive: s.emissive,
+                    opacity: s.opacity,
                 });
             }
         }
@@ -1204,6 +1239,7 @@ impl Renderer {
             gl.uniform_3_f32_slice(loc(p, "u_ambient").as_ref(), &f.ambient);
             gl.uniform_1_f32(loc(p, "u_fog").as_ref(), f.fog.clamp(0.0, 1.0));
             gl.uniform_1_f32(loc(p, "u_relief").as_ref(), f.relief.clamp(0.0, 4.0));
+            gl.uniform_1_f32(loc(p, "u_indirect").as_ref(), f.indirect.clamp(0.0, 3.0));
             gl.uniform_3_f32_slice(loc(p, "u_sky_top").as_ref(), &f.sky_top);
             gl.uniform_1_i32(loc(p, "u_post").as_ref(), post_on as i32);
             for i in 0..MAX_POINT {
@@ -1272,7 +1308,21 @@ impl Renderer {
 
             let u_flag = loc(p, "u_skinned");
             let u_mats = loc(p, "u_joints[0]");
-            for item in f.items.iter().filter(|i| i.in_view) {
+            // opaque parts first; then see-through ones, far to near, blended over them
+            let mut order: Vec<&DrawItem> = f.items.iter().filter(|i| i.in_view).collect();
+            let mut far_first = order.clone();
+            far_first.sort_by(|a, b| b.center.distance(f.cam_pos).total_cmp(&a.center.distance(f.cam_pos)));
+            let u_emissive = loc(p, "u_emissive");
+            let u_opacity = loc(p, "u_opacity");
+            for pass in 0..2 {
+            if pass == 1 {
+                order = far_first.clone();
+                gl.enable(glow::BLEND);
+                gl.blend_func(glow::SRC_ALPHA, glow::ONE_MINUS_SRC_ALPHA);
+                gl.depth_mask(false);
+                gl.color_mask(true, true, true, false);
+            }
+            for item in order.iter().copied() {
                 let parts: &[GpuMesh] = match &item.mesh {
                     MeshRef::Shape(s) => self.shapes.get(s).map(std::slice::from_ref).unwrap_or(&[]),
                     MeshRef::Model(m) => self.models.get(&m.id).map(|v| v.as_slice()).unwrap_or(&[]),
@@ -1285,7 +1335,10 @@ impl Renderer {
                 // imported models do not always have consistently oriented faces
                 let two_sided = matches!(item.mesh, MeshRef::Shape(Shape::Plane) | MeshRef::Model(_));
 
-                if item.selected {
+                if pass == 1 && !parts.iter().any(|m| m.opacity < 0.999) {
+                    continue;
+                }
+                if item.selected && pass == 0 {
                     // orange outline: slightly larger inverted hull
                     gl.enable(glow::CULL_FACE);
                     gl.cull_face(if flipped { glow::BACK } else { glow::FRONT });
@@ -1311,6 +1364,11 @@ impl Renderer {
                 gl.uniform_1_f32(u_outline.as_ref(), 0.0);
                 gl.uniform_1_f32(u_shine.as_ref(), item.shininess.clamp(0.0, 1.0));
                 for m in parts {
+                    if (m.opacity < 0.999) != (pass == 1) {
+                        continue;
+                    }
+                    gl.uniform_3_f32_slice(u_emissive.as_ref(), &m.emissive);
+                    gl.uniform_1_f32(u_opacity.as_ref(), m.opacity);
                     let c = [item.color[0] * m.color[0], item.color[1] * m.color[1], item.color[2] * m.color[2]];
                     gl.uniform_3_f32_slice(u_color.as_ref(), &c);
                     // the texture chosen in the Inspector takes priority over the model's
@@ -1333,6 +1391,12 @@ impl Renderer {
                     gl.draw_elements(glow::TRIANGLES, m.count, glow::UNSIGNED_INT, 0);
                 }
             }
+            }
+            gl.disable(glow::BLEND);
+            gl.depth_mask(true);
+            gl.color_mask(true, true, true, true);
+            gl.uniform_1_f32(u_opacity.as_ref(), 1.0);
+            gl.uniform_3_f32(u_emissive.as_ref(), 0.0, 0.0, 0.0);
             gl.disable(glow::CULL_FACE);
 
             // --- particles: soft sprites facing the camera, smoke behind glow ---
