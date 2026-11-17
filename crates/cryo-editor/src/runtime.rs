@@ -111,6 +111,12 @@ struct Queues {
     spawned: Vec<u64>,
     /// `scene.load(...)`: the scene to switch to.
     load_scene: Option<String>,
+    /// `menu.open(id)` / `menu.close()` (empty text): asked of the game's menus.
+    menu_request: Option<String>,
+    /// A menu screen is on (told by the app each frame).
+    menu_open: bool,
+    /// The game's own options (menus.json), as scripts read them with `option(id)`.
+    options: std::collections::BTreeMap<String, Value>,
     messages: Vec<(u64, String, Vec<Value>)>,
     /// `emit(...)`: events for every script in the scene.
     broadcast: Vec<(String, Vec<Value>)>,
@@ -272,7 +278,7 @@ impl Host for EngineHost<'_> {
     fn global(&mut self, name: &str) -> Option<Value> {
         match name {
             "self" => Some(Value::Entity(self.me)),
-            "input" | "scene" | "time" | "audio" | "anim" | "qte" | "global" | "fx" | "save" | "video" => Some(Value::Object(Rc::from(name))),
+            "input" | "scene" | "time" | "audio" | "anim" | "qte" | "global" | "fx" | "save" | "video" | "menu" => Some(Value::Object(Rc::from(name))),
             _ => None,
         }
     }
@@ -322,6 +328,7 @@ impl Host for EngineHost<'_> {
                 ("input", "scroll") => Ok(Value::Num(self.input.scroll as f64)),
                 ("audio", "volume") => Ok(Value::Num(self.audio.volume as f64)),
                 ("video", "playing") => Ok(Value::Bool(self.queues.video_active)),
+                ("menu", "is_open") => Ok(Value::Bool(self.queues.menu_open)),
                 _ => Err(format!("`{o}` has no member `{name}`")),
             },
             other => Err(format!("`{}` has no member `{name}`", other.type_name())),
@@ -439,6 +446,16 @@ impl Host for EngineHost<'_> {
                         Ok(Value::Nil)
                     }
                     _ => Err("`crosshair` expects (true or false)".into()),
+                },
+                // option("difficulty"): a setting of the game the player chose in Options
+                // option("difficulty", "Normal"): the second value is used when the option is not set
+                "option" => match args {
+                    [Value::Text(id)] => match self.queues.options.get(&**id) {
+                        Some(v) => Ok(v.clone()),
+                        None => Err(format!("there is no game option `{id}` (File > Game menus > Options)")),
+                    },
+                    [Value::Text(id), fallback] => Ok(self.queues.options.get(&**id).cloned().unwrap_or_else(|| fallback.clone())),
+                    _ => Err("`option` expects (id) or (id, value if not set)".into()),
                 },
                 // subtitle("text", seconds): a line of dialogue at the bottom of the screen
                 "subtitle" => match args {
@@ -782,6 +799,15 @@ impl Host for EngineHost<'_> {
                     self.queues.load_scene = Some(file.to_string());
                     Ok(Value::Nil)
                 }
+                // menu.open("pause" | "main" | "options" | "credits" | a screen of the game)
+                ("menu", "open", [Value::Text(id)]) => {
+                    self.queues.menu_request = Some(id.to_string());
+                    Ok(Value::Nil)
+                }
+                ("menu", "close", []) => {
+                    self.queues.menu_request = Some(String::new());
+                    Ok(Value::Nil)
+                }
                 ("scene", "destroy", [Value::Entity(id)]) => {
                     self.queues.destroy.push(*id);
                     Ok(Value::Nil)
@@ -865,13 +891,23 @@ pub struct Film {
 impl Runtime {
     /// Compiles the scene's scripts, creates the instances and fires `start`.
     pub fn start(scene: &mut Scene, project_dir: &Path, logs: &mut Vec<LogLine>) -> Runtime {
+        Self::start_with(scene, project_dir, Default::default(), logs)
+    }
+
+    /// Starts the scripts with the player's options already set, so `on start()` sees them.
+    pub fn start_with(
+        scene: &mut Scene,
+        project_dir: &Path,
+        options: std::collections::BTreeMap<String, Value>,
+        logs: &mut Vec<LogLine>,
+    ) -> Runtime {
         crate::physics::fill_missing_colliders(scene, project_dir);
         let mut rt = Runtime {
             instances: HashMap::new(),
             time: 0.0,
             hud: String::new(),
             audio: Audio::new(project_dir.to_path_buf()),
-            queues: Queues { time_scale: 1.0, ..Default::default() },
+            queues: Queues { time_scale: 1.0, options, ..Default::default() },
             playing: vec![],
             active_camera: None,
             qte: None,
@@ -901,6 +937,25 @@ impl Runtime {
         }
         rt.flush(scene, &input, 0.0, logs);
         rt
+    }
+
+    /// Sends an event to every script (menu buttons use it), delivered on the next update.
+    pub fn emit(&mut self, event: &str, args: Vec<Value>) {
+        self.queues.broadcast.push((event.to_string(), args));
+    }
+
+    /// What a script asked of the menus: a screen to open, or "" to close them.
+    pub fn take_menu_request(&mut self) -> Option<String> {
+        self.queues.menu_request.take()
+    }
+
+    pub fn set_menu_open(&mut self, open: bool) {
+        self.queues.menu_open = open;
+    }
+
+    /// The game's options as the player set them.
+    pub fn set_options(&mut self, options: std::collections::BTreeMap<String, Value>) {
+        self.queues.options = options;
     }
 
     /// The scene a script asked to switch to with `scene.load(...)`, once.
@@ -2185,6 +2240,41 @@ mod tests {
         rt.update(&mut scene, &idle, 0.02, &mut logs);
         assert_eq!(rt.take_scene_request().as_deref(), Some("scenes/Two.cryoscene"));
         assert_eq!(rt.take_scene_request(), None);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn scripts_open_menus_and_read_the_players_options() {
+        let dir = std::env::temp_dir().join(format!("cryo_menuopt_{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("scripts")).unwrap();
+        std::fs::write(
+            dir.join("scripts/Boss.cryo"),
+            "script Boss {\n on start() {\n self.position = vec3(option(\"hp\", 5), 0, 0)\n if option(\"hard\", false) { self.name = \"Hard\" } else { self.name = \"Soft\" }\n }\n on died() {\n menu.open(\"gameover\")\n }\n on hide() {\n if menu.is_open { menu.close() }\n }\n on option_changed(id, v) {\n self.rotation = vec3(v, 0, 0)\n }\n}",
+        )
+        .unwrap();
+        let mut scene = Scene::empty();
+        let boss = scene.add_empty("Boss");
+        scene.get_mut(boss).unwrap().script = Some(ScriptRef { path: "scripts/Boss.cryo".into(), ..Default::default() });
+        let mut logs = vec![];
+        let mut opts = std::collections::BTreeMap::new();
+        opts.insert("hard".to_string(), Value::Bool(true));
+        let mut rt = Runtime::start_with(&mut scene, &dir, opts, &mut logs);
+        let idle = InputState::default();
+        rt.update(&mut scene, &idle, 0.02, &mut logs);
+        let errors: Vec<&str> = logs.iter().filter(|l| l.level == LogLevel::Error).map(|l| l.text.as_str()).collect();
+        assert!(errors.is_empty(), "{errors:?}");
+        let e = scene.get(boss).unwrap();
+        // an option nobody set gives the fallback; one the player set gives theirs
+        assert_eq!(e.position.x, 5.0);
+        assert_eq!(e.name, "Hard");
+        rt.send_for_test(boss, "died", vec![]);
+        rt.update(&mut scene, &idle, 0.02, &mut logs);
+        assert_eq!(rt.take_menu_request().as_deref(), Some("gameover"));
+        assert_eq!(rt.take_menu_request(), None);
+        rt.set_menu_open(true);
+        rt.send_for_test(boss, "hide", vec![]);
+        rt.update(&mut scene, &idle, 0.02, &mut logs);
+        assert_eq!(rt.take_menu_request().as_deref(), Some(""));
         std::fs::remove_dir_all(dir).ok();
     }
 

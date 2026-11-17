@@ -102,6 +102,33 @@ pub struct State {
     pub tutorial: Option<(&'static str, usize)>,
     /// The pause menu of an exported game is open.
     pub pause_menu: bool,
+    /// The game's menus (menus.json) and which screen is open (None: playing).
+    pub menus: crate::menus::Menus,
+    menus_for: PathBuf,
+    pub menu_screen: Option<crate::menus::Screen>,
+    /// Where Back goes from Options and Credits.
+    menu_back: crate::menus::Screen,
+    menu_focus: usize,
+    /// The highlighted button when "Are you sure?" opened, to return to on "No".
+    menu_confirm_from: usize,
+    menu_focus_memory: Vec<(crate::menus::Screen, usize)>,
+    /// Logo and background pictures of the menus: (path, picture) each.
+    menu_tex: [(String, Option<egui::TextureHandle>); 3],
+    /// When the current menu screen opened (fade-in, camera drift).
+    pub menu_opened: std::time::Instant,
+    /// A button waiting for "Are you sure?".
+    menu_confirm: Option<crate::menus::MenuButton>,
+    /// Fonts added for the menus: (files asked for, which loaded, frame they were added).
+    menu_fonts: ((String, String), (bool, bool), u64),
+    /// Frames since the program started.
+    pub frame_count: u64,
+    /// A level loading behind the loading screen: (scene still to load, since when, tip).
+    loading: Option<(Option<String>, std::time::Instant, String)>,
+    loading_frames: u32,
+    /// The scene the game started with, and the one running now.
+    first_scene: String,
+    running_scene: String,
+    pub show_menus_editor: bool,
     /// Where each panel is on screen, so tutorials can point at it.
     pub tab_rects: HashMap<Tab, egui::Rect>,
     pub toolbar_rect: egui::Rect,
@@ -525,46 +552,449 @@ impl State {
     }
 
     /// Tutorial list, the running tutorial's card and the highlight around what it talks about.
-    /// The pause menu of an exported game: resume, graphics quality, full screen, quit.
-    fn pause_ui(&mut self, ctx: &egui::Context) {
-        if !self.pause_menu || !self.game_only {
+    /// Files of the project with these extensions, for the pickers of the Menus window.
+    fn project_files(&self, exts: &[&str]) -> Vec<String> {
+        let mut out: Vec<String> = exts.iter().flat_map(|e| crate::project::list_files(&self.project_dir, e)).filter(|f| !f.starts_with("export")).collect();
+        out.sort();
+        out
+    }
+
+    /// Game > Menus: the main menu, pause menu, screens, options, loading screen and look of
+    /// the game's menus, with a preview.
+    pub fn menus_editor_ui(&mut self, ctx: &egui::Context) {
+        if !self.show_menus_editor {
             return;
         }
-        let mut resume = false;
-        egui::Window::new(tr!("Paused", "Pausado"))
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        if self.menus_for != self.project_dir {
+            self.menus = crate::menus::Menus::load(&self.project_dir);
+            self.menus_for = self.project_dir.clone();
+        }
+        let before = self.menus.clone();
+        let images = self.project_files(crate::assets::IMAGE_EXTS);
+        let sounds = self.project_files(crate::assets::SOUND_EXTS);
+        let fonts = self.project_files(&["ttf", "otf"]);
+        let scenes = crate::project::list_files(&self.project_dir, crate::project::SCENE_EXT);
+        let cameras: Vec<String> = self.scene.entities.iter().filter(|e| e.camera.is_some()).map(|e| e.name.clone()).collect();
+        let actions = crate::menus::actions();
+        let mut open = true;
+        let mut tab = ctx.data(|d| d.get_temp::<u8>(egui::Id::new("menus_tab"))).unwrap_or_else(|| std::env::var("CRYO_MENUS_TAB").ok().and_then(|t| t.parse().ok()).unwrap_or(0));
+        let mut screen_sel = ctx.data(|d| d.get_temp::<usize>(egui::Id::new("menus_screen")).unwrap_or(0));
+        let logo = self.menu_texture(ctx, 0);
+        let bg = self.menu_texture(ctx, 1);
+        let loading_pic = self.menu_texture(ctx, 2);
+        let look = self.menu_look(ctx);
+        let mut test_play = false;
+        egui::Window::new(tr!("Game menus", "Menus do jogo"))
+            .open(&mut open)
+            .default_width(900.0)
+            .resizable(true)
             .show(ctx, |ui| {
-                ui.set_min_width(260.0);
-                if ui.add_sized([240.0, 30.0], egui::Button::new(tr!("Resume", "Continuar"))).clicked() {
-                    resume = true;
-                }
-                ui.add_space(8.0);
-                self.graphics_choice(ui);
-                ui.add_space(6.0);
-                self.fps_choice(ui);
-                ui.add_space(6.0);
-                self.volume_choice(ui);
-                ui.add_space(6.0);
-                if ui.add_sized([240.0, 26.0], egui::Button::new(tr!("Controls…", "Controles…"))).clicked() {
-                    self.show_controls = true;
-                }
-                let mut full = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
-                if ui.checkbox(&mut full, tr!("Full screen", "Tela cheia")).changed() {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(full));
-                }
-                ui.add_space(8.0);
-                if ui.add_sized([240.0, 30.0], egui::Button::new(tr!("Quit game", "Sair do jogo"))).clicked() {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                }
+                let m = &mut self.menus;
+                ui.horizontal_wrapped(|ui| {
+                    for (i, name) in [
+                        tr!("General", "Geral"),
+                        tr!("Main menu", "Menu inicial"),
+                        tr!("Pause menu", "Menu de pausa"),
+                        tr!("Screens", "Telas"),
+                        tr!("Options", "Opções"),
+                        tr!("Loading", "Carregamento"),
+                        tr!("Look", "Aparência"),
+                    ]
+                    .into_iter()
+                    .enumerate()
+                    {
+                        if ui.selectable_label(tab == i as u8, name).clicked() {
+                            tab = i as u8;
+                        }
+                    }
+                    ui.separator();
+                    if ui.button(tr!("▶ Test from the main menu", "▶ Testar pelo menu inicial")).on_hover_text(tr!("Plays the game in the Game tab, starting on the main menu.", "Roda o jogo na aba Jogo, começando pelo menu inicial.")).clicked() {
+                        test_play = true;
+                    }
+                });
+                ui.separator();
+                let pick = |ui: &mut egui::Ui, id: &str, value: &mut String, list: &[String]| {
+                    egui::ComboBox::from_id_salt(id.to_string())
+                        .width(220.0)
+                        .selected_text(if value.is_empty() { tr!("(none)", "(nenhum)") } else { value.clone() })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(value, String::new(), tr!("(none)", "(nenhum)"));
+                            for f in list {
+                                ui.selectable_value(value, f.clone(), f);
+                            }
+                        });
+                };
+                // the buttons of a menu or screen: label, action, its argument, confirm, hint
+                let screen_ids: Vec<String> = m.screens.iter().map(|s| s.id.clone()).collect();
+                let edit_buttons = |ui: &mut egui::Ui, salt: &str, list: &mut Vec<crate::menus::MenuButton>| {
+                    let mut remove = None;
+                    let mut swap = None;
+                    let n = list.len();
+                    for (i, b) in list.iter_mut().enumerate() {
+                        egui::Frame::group(ui.style()).inner_margin(6.0).show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.add(egui::TextEdit::singleline(&mut b.label).desired_width(120.0));
+                                let current = actions.iter().find(|a| a.0 == b.action).map(|a| a.1.clone()).unwrap_or(b.action.clone());
+                                egui::ComboBox::from_id_salt((salt, "act", i)).width(170.0).selected_text(current).show_ui(ui, |ui| {
+                                    for (code, name) in &actions {
+                                        ui.selectable_value(&mut b.action, code.to_string(), name);
+                                    }
+                                });
+                                if i > 0 && ui.small_button("⬆").clicked() {
+                                    swap = Some((i, i - 1));
+                                }
+                                if i + 1 < n && ui.small_button("⬇").clicked() {
+                                    swap = Some((i, i + 1));
+                                }
+                                if ui.small_button("🗑").clicked() {
+                                    remove = Some(i);
+                                }
+                            });
+                            ui.horizontal(|ui| {
+                                match b.action.as_str() {
+                                    "scene" | "start" => {
+                                        ui.label(RichText::new(tr!("scene:", "cena:")).small());
+                                        pick(ui, &format!("{salt}_scene_{i}"), &mut b.arg, &scenes);
+                                    }
+                                    "screen" => {
+                                        ui.label(RichText::new(tr!("screen:", "tela:")).small());
+                                        pick(ui, &format!("{salt}_screen_{i}"), &mut b.arg, &screen_ids);
+                                    }
+                                    "event" => {
+                                        ui.label(RichText::new(tr!("on menu(…) gets:", "on menu(…) recebe:")).small());
+                                        ui.add(egui::TextEdit::singleline(&mut b.arg).desired_width(120.0));
+                                    }
+                                    _ => {}
+                                }
+                                ui.checkbox(&mut b.confirm, RichText::new(tr!("ask \"Are you sure?\"", "perguntar \"Tem certeza?\"")).small());
+                            });
+                            ui.add(egui::TextEdit::singleline(&mut b.hint).hint_text(tr!("hint shown while highlighted (optional)", "dica mostrada quando destacado (opcional)")).desired_width(f32::INFINITY));
+                        });
+                    }
+                    if let Some(i) = remove {
+                        list.remove(i);
+                    }
+                    if let Some((a, b)) = swap {
+                        list.swap(a, b);
+                    }
+                    if ui.button(tr!("+ Button", "+ Botão")).clicked() {
+                        list.push(crate::menus::button(&tr!("New button", "Novo botão"), "event", "new"));
+                    }
+                };
+                ui.columns(2, |cols| {
+                    let ui = &mut cols[0];
+                    egui::ScrollArea::vertical().id_salt("menus_form").max_height(520.0).show(ui, |ui| match tab {
+                        0 => {
+                            ui.checkbox(&mut m.main_enabled, tr!("Open the game on the main menu", "Abrir o jogo no menu inicial"));
+                            ui.checkbox(&mut m.preview_in_editor, tr!("Also when pressing Play in the editor", "Também ao apertar Play no editor"));
+                            egui::Grid::new("menus_general").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+                                ui.label(tr!("Title", "Título"));
+                                ui.text_edit_singleline(&mut m.title);
+                                ui.end_row();
+                                ui.label(tr!("Subtitle", "Subtítulo"));
+                                ui.text_edit_singleline(&mut m.subtitle);
+                                ui.end_row();
+                                ui.label(tr!("Corner text", "Texto do canto"));
+                                ui.text_edit_singleline(&mut m.footer);
+                                ui.end_row();
+                                ui.label(tr!("Logo", "Logo"));
+                                pick(ui, "menus_logo", &mut m.logo, &images);
+                                ui.end_row();
+                                ui.label(tr!("Background", "Fundo"));
+                                pick(ui, "menus_bg", &mut m.background, &images);
+                                ui.end_row();
+                                ui.label(tr!("Camera behind", "Câmera ao fundo"));
+                                pick(ui, "menus_camera", &mut m.camera, &cameras);
+                                ui.end_row();
+                                ui.label(tr!("Music", "Música"));
+                                pick(ui, "menus_music", &mut m.music, &sounds);
+                                ui.end_row();
+                            });
+                            ui.label(RichText::new(tr!("Without a background picture, the first scene of the game shows behind the menu, through the chosen camera.", "Sem imagem de fundo, a primeira cena do jogo aparece atrás do menu, pela câmera escolhida.")).small().weak());
+                            ui.add_space(6.0);
+                            ui.label(tr!("Credits", "Créditos"));
+                            ui.add(egui::TextEdit::multiline(&mut m.credits).desired_rows(4).desired_width(f32::INFINITY));
+                        }
+                        1 => {
+                            edit_buttons(ui, "main", &mut m.main);
+                            ui.label(RichText::new(tr!("\"Continue\" only shows when the game saved a checkpoint: save.set(\"checkpoint\", \"scenes/Level2.cryoscene\").", "\"Continuar\" só aparece quando o jogo salvou um ponto: save.set(\"checkpoint\", \"scenes/Fase2.cryoscene\").")).small().weak());
+                        }
+                        2 => {
+                            edit_buttons(ui, "pause", &mut m.pause);
+                            ui.label(RichText::new(tr!("Esc or the gamepad's Start opens this menu during the game; scripts can too: menu.open(\"pause\").", "Esc ou o Start do controle abrem este menu durante o jogo; scripts também: menu.open(\"pause\").")).small().weak());
+                        }
+                        3 => {
+                            ui.label(RichText::new(tr!("Screens of your own: level select, difficulty, game over, a codex... Open one with a button whose action is \"Open a screen\", or from a script with menu.open(\"id\").", "Telas suas: escolha de fase, dificuldade, fim de jogo, um diário... Abra com um botão de ação \"Abrir uma tela\" ou num script com menu.open(\"id\").")).small());
+                            ui.horizontal(|ui| {
+                                for (i, sc) in m.screens.iter().enumerate() {
+                                    if ui.selectable_label(screen_sel == i, if sc.id.is_empty() { "?" } else { &sc.id }).clicked() {
+                                        screen_sel = i;
+                                    }
+                                }
+                                if ui.button(tr!("+ Screen", "+ Tela")).clicked() {
+                                    let n = m.screens.len() + 1;
+                                    m.screens.push(crate::menus::CustomScreen {
+                                        id: format!("screen{n}"),
+                                        title: tr!("New screen", "Nova tela"),
+                                        text: String::new(),
+                                        buttons: vec![crate::menus::button(&tr!("Back", "Voltar"), "back", "")],
+                                        pauses: true,
+                                    });
+                                    screen_sel = m.screens.len() - 1;
+                                }
+                            });
+                            let mut delete = false;
+                            if let Some(sc) = m.screens.get_mut(screen_sel) {
+                                egui::Grid::new("screen_fields").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+                                    ui.label("id");
+                                    ui.text_edit_singleline(&mut sc.id);
+                                    ui.end_row();
+                                    ui.label(tr!("Title", "Título"));
+                                    ui.text_edit_singleline(&mut sc.title);
+                                    ui.end_row();
+                                    ui.label(tr!("Text", "Texto"));
+                                    ui.add(egui::TextEdit::multiline(&mut sc.text).desired_rows(3));
+                                    ui.end_row();
+                                    ui.label(tr!("Pauses the game", "Pausa o jogo"));
+                                    ui.checkbox(&mut sc.pauses, "");
+                                    ui.end_row();
+                                });
+                                edit_buttons(ui, &format!("screen{screen_sel}"), &mut sc.buttons);
+                                if ui.button(tr!("Delete this screen", "Excluir esta tela")).clicked() {
+                                    delete = true;
+                                }
+                            }
+                            if delete {
+                                m.screens.remove(screen_sel);
+                                screen_sel = screen_sel.saturating_sub(1);
+                            }
+                        }
+                        4 => {
+                            ui.label(tr!("Built-in parts of the Options screen", "Partes prontas da tela de Opções"));
+                            let os = &mut m.options_screen;
+                            ui.horizontal_wrapped(|ui| {
+                                ui.checkbox(&mut os.graphics, tr!("Graphics", "Gráficos"));
+                                ui.checkbox(&mut os.frame_rate, tr!("Frame rate", "FPS"));
+                                ui.checkbox(&mut os.volume, tr!("Volume", "Volume"));
+                                ui.checkbox(&mut os.fullscreen, tr!("Full screen", "Tela cheia"));
+                                ui.checkbox(&mut os.controls, tr!("Controls", "Controles"));
+                            });
+                            ui.separator();
+                            ui.label(tr!("Options of your game", "Opções do seu jogo"));
+                            ui.label(RichText::new(tr!("Scripts read them with option(\"id\", value_if_not_set) and hear on option_changed(id, value).", "Scripts leem com option(\"id\", valor_se_não_houver) e recebem on option_changed(id, valor).")).small().weak());
+                            let mut remove = None;
+                            for (i, o) in m.options.iter_mut().enumerate() {
+                                egui::Frame::group(ui.style()).inner_margin(6.0).show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.add(egui::TextEdit::singleline(&mut o.id).desired_width(90.0).hint_text("id"));
+                                        ui.add(egui::TextEdit::singleline(&mut o.label).desired_width(140.0).hint_text(tr!("label", "nome")));
+                                        egui::ComboBox::from_id_salt(("opt_kind", i)).width(110.0).selected_text(match o.kind.as_str() {
+                                            "slider" => tr!("Slider", "Controle deslizante"),
+                                            "choice" => tr!("Choice", "Escolha"),
+                                            _ => tr!("On/off", "Liga/desliga"),
+                                        }).show_ui(ui, |ui| {
+                                            ui.selectable_value(&mut o.kind, "toggle".to_string(), tr!("On/off", "Liga/desliga"));
+                                            ui.selectable_value(&mut o.kind, "slider".to_string(), tr!("Slider", "Controle deslizante"));
+                                            ui.selectable_value(&mut o.kind, "choice".to_string(), tr!("Choice", "Escolha"));
+                                        });
+                                        if ui.small_button("🗑").clicked() {
+                                            remove = Some(i);
+                                        }
+                                    });
+                                    ui.horizontal(|ui| match o.kind.as_str() {
+                                        "slider" => {
+                                            ui.label(RichText::new(tr!("from", "de")).small());
+                                            ui.add(egui::DragValue::new(&mut o.min).speed(0.1));
+                                            ui.label(RichText::new(tr!("to", "até")).small());
+                                            ui.add(egui::DragValue::new(&mut o.max).speed(0.1));
+                                            ui.label(RichText::new(tr!("step", "passo")).small());
+                                            ui.add(egui::DragValue::new(&mut o.step).speed(0.01).range(0.0..=100.0));
+                                            ui.label(RichText::new(tr!("start", "início")).small());
+                                            ui.add(egui::DragValue::new(&mut o.default).speed(0.1));
+                                        }
+                                        "choice" => {
+                                            let mut text = o.choices.join(", ");
+                                            ui.label(RichText::new(tr!("choices:", "escolhas:")).small());
+                                            if ui.add(egui::TextEdit::singleline(&mut text).desired_width(200.0).hint_text("Easy, Normal, Hard")).changed() {
+                                                o.choices = text.split(',').map(|c| c.trim().to_string()).filter(|c| !c.is_empty()).collect();
+                                            }
+                                            let mut d = o.default.max(0.0) as usize;
+                                            egui::ComboBox::from_id_salt(("opt_def", i)).width(90.0).selected_text(o.choices.get(d).cloned().unwrap_or_default()).show_ui(ui, |ui| {
+                                                for (n, c) in o.choices.iter().enumerate() {
+                                                    ui.selectable_value(&mut d, n, c);
+                                                }
+                                            });
+                                            o.default = d as f64;
+                                        }
+                                        _ => {
+                                            let mut on = o.default >= 0.5;
+                                            ui.checkbox(&mut on, tr!("on at the start", "ligado no início"));
+                                            o.default = on as i32 as f64;
+                                        }
+                                    });
+                                });
+                            }
+                            if let Some(i) = remove {
+                                m.options.remove(i);
+                            }
+                            if ui.button(tr!("+ Option", "+ Opção")).clicked() {
+                                m.options.push(crate::menus::GameOption { id: format!("option{}", m.options.len() + 1), label: tr!("New option", "Nova opção"), ..Default::default() });
+                            }
+                        }
+                        5 => {
+                            let l = &mut m.loading;
+                            ui.checkbox(&mut l.enabled, tr!("Show a loading screen between levels", "Mostrar tela de carregamento entre fases"));
+                            egui::Grid::new("loading_fields").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+                                ui.label(tr!("Text", "Texto"));
+                                ui.text_edit_singleline(&mut l.text);
+                                ui.end_row();
+                                ui.label(tr!("Picture", "Imagem"));
+                                pick(ui, "loading_pic", &mut l.picture, &images);
+                                ui.end_row();
+                                ui.label(tr!("At least (s)", "No mínimo (s)"));
+                                ui.add(egui::Slider::new(&mut l.min_seconds, 0.0..=8.0));
+                                ui.end_row();
+                            });
+                            ui.label(tr!("Tips (one per line, one shown at random)", "Dicas (uma por linha, uma aparece por vez)"));
+                            let mut text = l.tips.join("\n");
+                            if ui.add(egui::TextEdit::multiline(&mut text).desired_rows(5).desired_width(f32::INFINITY)).changed() {
+                                l.tips = text.lines().map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
+                            }
+                        }
+                        _ => {
+                            let st = &mut m.style;
+                            egui::Grid::new("menus_look").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+                                ui.label(tr!("Position", "Posição"));
+                                ui.horizontal(|ui| {
+                                    for (code, name) in [("left", tr!("Left", "Esquerda")), ("center", tr!("Center", "Centro")), ("right", tr!("Right", "Direita"))] {
+                                        ui.selectable_value(&mut st.align, code.to_string(), name);
+                                    }
+                                });
+                                ui.end_row();
+                                ui.label(tr!("Title font", "Fonte do título"));
+                                pick(ui, "font_title", &mut st.title_font, &fonts);
+                                ui.end_row();
+                                ui.label(tr!("Text font", "Fonte dos textos"));
+                                pick(ui, "font_text", &mut st.text_font, &fonts);
+                                ui.end_row();
+                                for (name, c) in [
+                                    (tr!("Accent (title, highlight)", "Destaque (título, seleção)"), &mut st.accent),
+                                    (tr!("Text", "Texto"), &mut st.text),
+                                    (tr!("Button", "Botão"), &mut st.button),
+                                    (tr!("Button highlighted", "Botão em destaque"), &mut st.button_hover),
+                                    (tr!("Panels (options, credits)", "Painéis (opções, créditos)"), &mut st.panel),
+                                    (tr!("Darkening over the game", "Escurecer o jogo"), &mut st.backdrop),
+                                ] {
+                                    ui.label(name);
+                                    let mut col = crate::menus::color(*c);
+                                    if ui.color_edit_button_srgba(&mut col).changed() {
+                                        let [r, g, b, a] = col.to_srgba_unmultiplied();
+                                        *c = [r, g, b, a];
+                                    }
+                                    ui.end_row();
+                                }
+                                for (name, v, range) in [
+                                    (tr!("Title size", "Tamanho do título"), &mut st.title_size, 20.0..=140.0),
+                                    (tr!("Button text", "Texto dos botões"), &mut st.button_size, 10.0..=48.0),
+                                    (tr!("Button width", "Largura dos botões"), &mut st.button_width, 120.0..=600.0),
+                                    (tr!("Button height", "Altura dos botões"), &mut st.button_height, 24.0..=100.0),
+                                    (tr!("Space between", "Espaço entre"), &mut st.spacing, 0.0..=40.0),
+                                    (tr!("Rounded corners", "Cantos arredondados"), &mut st.rounding, 0.0..=30.0),
+                                    (tr!("Highlight slide", "Deslize do destaque"), &mut st.hover_slide, 0.0..=40.0),
+                                ] {
+                                    ui.label(name);
+                                    ui.add(egui::Slider::new(v, range).fixed_decimals(0));
+                                    ui.end_row();
+                                }
+                                ui.label(tr!("Fade in (s)", "Surgir (s)"));
+                                ui.add(egui::Slider::new(&mut st.fade_in, 0.0..=3.0));
+                                ui.end_row();
+                                ui.label(tr!("Camera pan (°/s)", "Giro da câmera (°/s)"));
+                                ui.add(egui::Slider::new(&mut st.camera_drift, -10.0..=10.0));
+                                ui.end_row();
+                                ui.label(tr!("Sound: move", "Som: mover"));
+                                pick(ui, "snd_move", &mut st.sound_move, &sounds);
+                                ui.end_row();
+                                ui.label(tr!("Sound: choose", "Som: escolher"));
+                                pick(ui, "snd_choose", &mut st.sound_choose, &sounds);
+                                ui.end_row();
+                                ui.label(tr!("Text", "Texto"));
+                                ui.horizontal(|ui| {
+                                    ui.checkbox(&mut st.title_spacing, tr!("spaced title", "título espaçado"));
+                                    ui.checkbox(&mut st.uppercase, tr!("CAPITALS", "MAIÚSCULAS"));
+                                    ui.checkbox(&mut st.shadow, tr!("shadow", "sombra"));
+                                });
+                                ui.end_row();
+                            });
+                            if ui.button(tr!("Restore the default look", "Restaurar a aparência padrão")).clicked() {
+                                *st = crate::menus::Style::default();
+                            }
+                        }
+                    });
+                    // the preview, drawn like the game will
+                    let ui = &mut cols[1];
+                    ui.label(RichText::new(tr!("Preview", "Prévia")).strong());
+                    let w = ui.available_width().max(200.0);
+                    let (rect, _) = ui.allocate_exact_size(egui::vec2(w, w * 9.0 / 16.0), egui::Sense::hover());
+                    ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(40, 46, 56));
+                    // the menus are designed for a 900-point-high screen: preview at that size, scaled
+                    let mut small = m.clone();
+                    let k = rect.height() / 900.0 / crate::menus::scale(rect);
+                    let s = &mut small.style;
+                    for v in [&mut s.title_size, &mut s.button_size, &mut s.button_width, &mut s.button_height, &mut s.spacing, &mut s.hover_slide] {
+                        *v *= k;
+                    }
+                    let mut focus = 0usize;
+                    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+                    child.set_clip_rect(rect);
+                    let still = crate::menus::Look { t: 10.0, ..look.clone() };
+                    match tab {
+                        2 => {
+                            crate::menus::draw(&mut child, rect, &small, &small.pause.clone(), crate::menus::Header::None, (&logo, &bg), &mut focus, crate::menus::Nav::None, &still);
+                        }
+                        3 => {
+                            if let Some(sc) = small.screens.get(screen_sel).cloned() {
+                                crate::menus::draw(&mut child, rect, &small, &sc.buttons, crate::menus::Header::Text(&sc.title, &sc.text), (&None, &None), &mut focus, crate::menus::Nav::None, &still);
+                            } else {
+                                child.painter().text(rect.center(), egui::Align2::CENTER_CENTER, tr!("No screens yet: press \"+ Screen\".", "Nenhuma tela ainda: aperte \"+ Tela\"."), egui::FontId::proportional(13.0), Color32::from_gray(170));
+                            }
+                        }
+                        5 => {
+                            let tip = small.loading.tips.first().cloned().unwrap_or_default();
+                            crate::menus::loading_screen(&mut child, rect, &small, &still, &loading_pic, &tip, (ctx.input(|i| i.time) as f32) % 10.0);
+                            ctx.request_repaint();
+                        }
+                        _ => {
+                            crate::menus::draw(&mut child, rect, &small, &small.main.clone(), crate::menus::Header::Title, (&logo, &bg), &mut focus, crate::menus::Nav::None, &still);
+                        }
+                    }
+                    if m.background.is_empty() && tab != 5 {
+                        ui.painter().text(rect.center_bottom() - egui::vec2(0.0, 8.0), egui::Align2::CENTER_BOTTOM, tr!("(the game behind)", "(o jogo ao fundo)"), egui::FontId::proportional(11.0), Color32::from_gray(150));
+                    }
+                    ui.add_space(6.0);
+                    ui.label(RichText::new(tr!("Saved in menus.json. Exported games open on the main menu; Esc pauses. Fonts are .ttf/.otf files in the project.", "Salvo em menus.json. Jogos exportados abrem no menu inicial; Esc pausa. Fontes são arquivos .ttf/.otf do projeto.")).small().weak());
+                });
             });
-        self.controls_ui(ctx);
-        if resume {
-            self.pause_menu = false;
-            if let Some(p) = &mut self.play {
-                p.paused = false;
+        ctx.data_mut(|d| {
+            d.insert_temp(egui::Id::new("menus_tab"), tab);
+            d.insert_temp(egui::Id::new("menus_screen"), screen_sel);
+        });
+        if self.menus != before {
+            if let Err(e) = self.menus.save(&self.project_dir) {
+                self.error(tr!("Could not save the menus: {e}", "Não foi possível salvar os menus: {e}"));
             }
+        }
+        if test_play && !self.playing() {
+            // play once from the main menu, whatever "Also when pressing Play" says
+            let keep = self.menus.preview_in_editor;
+            let _ = crate::menus::Menus { preview_in_editor: true, ..self.menus.clone() }.save(&self.project_dir);
+            self.start_play();
+            self.menus.preview_in_editor = keep;
+            let _ = self.menus.save(&self.project_dir);
+            self.focus_tab = Some(Tab::Game);
+        }
+        if !open {
+            self.show_menus_editor = false;
         }
     }
 
@@ -634,6 +1064,7 @@ impl State {
         let mut reset = false;
         egui::Window::new(tr!("Controls", "Controles"))
             .open(&mut open)
+            .order(egui::Order::Tooltip)
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
@@ -905,7 +1336,10 @@ impl State {
         let backup = self.scene.clone();
         self.fill_mesh_colliders();
         self.info(tr!("▶ Game started", "▶ Jogo iniciado"));
-        let rt = Runtime::start(&mut self.scene, &self.project_dir, &mut self.logs);
+        self.menus = crate::menus::Menus::load(&self.project_dir);
+        self.menus_for = self.project_dir.clone();
+        let values = self.option_values();
+        let rt = Runtime::start_with(&mut self.scene, &self.project_dir, values, &mut self.logs);
         if self.logs.iter().rev().take(20).any(|l| l.level == LogLevel::Error) {
             self.focus_tab = Some(Tab::Console);
         } else {
@@ -913,11 +1347,533 @@ impl State {
         }
         self.play = Some(Play { backup, backup_selected: self.selected, rt, paused: false });
         self.drag = None;
+        self.first_scene = self.scene_path.clone();
+        self.running_scene = self.scene_path.clone();
+        self.menu_screen = None;
+        self.menu_confirm = None;
+        self.loading = None;
+        if self.menus.main_enabled && (self.game_only || self.menus.preview_in_editor) {
+            self.open_main_menu();
+        }
+    }
+
+    /// Shows the main menu over the paused game, with its music.
+    fn open_main_menu(&mut self) {
+        self.set_screen(Some(crate::menus::Screen::Main));
+        let music = self.menus.music.clone();
+        if let Some(p) = &mut self.play {
+            p.paused = true;
+            if !music.is_empty() {
+                let _ = p.rt.audio.music(&music, 0.8);
+            }
+        }
+    }
+
+    /// Changes the menu screen (None: back to the game view), restarting its fade-in.
+    fn set_screen(&mut self, screen: Option<crate::menus::Screen>) {
+        if self.menu_screen != screen {
+            self.menu_opened = std::time::Instant::now();
+            // each screen keeps its highlighted button: going back lands on the one that opened
+            // the screen we leave
+            if let Some(old) = self.menu_screen {
+                self.menu_focus_memory.retain(|(s, _)| *s != old);
+                self.menu_focus_memory.push((old, self.menu_focus));
+            }
+            self.menu_focus = match screen {
+                Some(new) => self.menu_focus_memory.iter().find(|(s, _)| *s == new).map(|(_, f)| *f).unwrap_or(0),
+                None => {
+                    self.menu_focus_memory.clear();
+                    0
+                }
+            };
+        }
+        self.menu_screen = screen;
+    }
+
+    /// Leaves the menus and lets the game run.
+    pub fn close_menus(&mut self) {
+        let had_music = !self.menus.music.is_empty() && self.menu_screen == Some(crate::menus::Screen::Main);
+        self.set_screen(None);
+        self.menu_confirm = None;
+        self.pause_menu = false;
+        if let Some(p) = &mut self.play {
+            p.paused = false;
+            if had_music {
+                p.rt.audio.stop_music();
+            }
+        }
+    }
+
+    /// The buttons of the main menu that make sense now ("Continue" only with a checkpoint).
+    fn main_buttons(&self) -> Vec<crate::menus::MenuButton> {
+        let saved = self.play.as_ref().map(|p| p.rt.saves.data.contains_key("checkpoint")).unwrap_or(false);
+        self.menus.main.iter().filter(|b| b.action != "continue" || saved).cloned().collect()
+    }
+
+    /// Opens a menu screen by name: "main", "pause", "options", "credits" or a custom screen.
+    pub fn open_menu(&mut self, id: &str) -> bool {
+        use crate::menus::Screen;
+        let screen = match id {
+            "main" => {
+                self.open_main_menu();
+                return true;
+            }
+            "pause" => Screen::Pause,
+            "options" => Screen::Options,
+            "credits" => Screen::Credits,
+            other => match self.menus.screen_index(other) {
+                Some(i) => Screen::Custom(i),
+                None => {
+                    self.error(tr!("menu.open: there is no screen `{other}` (File > Game menus > Screens)", "menu.open: não existe a tela `{other}` (Arquivo > Menus do jogo > Telas)"));
+                    return false;
+                }
+            },
+        };
+        self.menu_back = self.menu_screen.unwrap_or(Screen::Pause);
+        let pauses = match screen {
+            Screen::Custom(i) => self.menus.screens[i].pauses,
+            _ => true,
+        };
+        self.set_screen(Some(screen));
+        if let Some(p) = &mut self.play {
+            p.paused = pauses;
+        }
+        true
+    }
+
+    /// Plays one of the menus' sounds (moving, choosing), if the game set one.
+    fn menu_sound(&mut self, which: u8) {
+        let file = if which == 0 { self.menus.style.sound_move.clone() } else { self.menus.style.sound_choose.clone() };
+        if let (false, Some(p)) = (file.is_empty(), &mut self.play) {
+            let _ = p.rt.audio.play(&file, 0.7);
+        }
+    }
+
+    /// Does what a menu button says (after "Are you sure?" when the button asks for it).
+    pub fn menu_action(&mut self, b: &crate::menus::MenuButton, ctx: &egui::Context) {
+        use crate::menus::Screen;
+        if b.confirm && self.menu_confirm.is_none() {
+            self.menu_confirm = Some(b.clone());
+            self.menu_confirm_from = self.menu_focus;
+            self.menu_focus = 1; // "No" first: the safe answer
+            return;
+        }
+        self.menu_confirm = None;
+        let from = self.menu_screen.unwrap_or(Screen::Pause);
+        match b.action.as_str() {
+            "start" => {
+                if !b.arg.is_empty() && b.arg != self.running_scene {
+                    self.switch_scene(&b.arg.clone());
+                }
+                self.close_menus();
+            }
+            "continue" => {
+                let at = self.play.as_ref().and_then(|p| p.rt.saves.data.get("checkpoint")).and_then(|v| v.as_str()).map(|s| s.to_string());
+                if let Some(scene) = at {
+                    self.switch_scene(&scene);
+                }
+                self.close_menus();
+            }
+            "scene" => {
+                if !b.arg.is_empty() {
+                    self.switch_scene(&b.arg.clone());
+                }
+                self.close_menus();
+            }
+            "resume" => self.close_menus(),
+            "restart" => {
+                let scene = self.running_scene.clone();
+                self.switch_scene(&scene);
+                self.close_menus();
+            }
+            "main_menu" => {
+                let scene = self.first_scene.clone();
+                self.switch_scene(&scene);
+                self.open_main_menu();
+            }
+            "options" => {
+                self.menu_back = from;
+                self.set_screen(Some(Screen::Options));
+            }
+            "credits" => {
+                self.menu_back = from;
+                self.set_screen(Some(Screen::Credits));
+            }
+            "screen" => {
+                if let Some(i) = self.menus.screen_index(&b.arg) {
+                    self.menu_back = from;
+                    self.set_screen(Some(Screen::Custom(i)));
+                }
+            }
+            "back" => self.menu_go_back(),
+            "controls" => self.show_controls = true,
+            "event" => {
+                if let Some(p) = &mut self.play {
+                    p.rt.emit("menu", vec![cryo_lang::Value::text(&b.arg)]);
+                }
+                // a custom screen that does not pause usually closes after its choice
+                if let Some(Screen::Custom(i)) = self.menu_screen {
+                    if !self.menus.screens.get(i).map(|s| s.pauses).unwrap_or(true) {
+                        self.close_menus();
+                    }
+                }
+            }
+            "quit" => {
+                if self.game_only {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                } else {
+                    self.stop_play();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Back from a screen: options and credits return where they came from; the pause menu
+    /// and custom screens opened over the game return to it.
+    /// The main menu, or a screen opened from it (options, credits...): the game has not begun,
+    /// so the title camera stays behind.
+    pub fn on_title(&self) -> bool {
+        use crate::menus::Screen;
+        match self.menu_screen {
+            Some(Screen::Main) => true,
+            Some(Screen::Pause) | None => false,
+            Some(_) => self.menu_back == Screen::Main,
+        }
+    }
+
+    fn menu_go_back(&mut self) {
+        use crate::menus::Screen;
+        match self.menu_screen {
+            Some(Screen::Options) | Some(Screen::Credits) | Some(Screen::Custom(_)) if self.menu_back != Screen::Pause || self.menu_screen != Some(self.menu_back) => {
+                let back = self.menu_back;
+                if matches!(self.menu_screen, Some(Screen::Custom(_))) && back == Screen::Pause && !self.play.as_ref().map(|p| p.paused).unwrap_or(false) {
+                    self.close_menus();
+                } else {
+                    self.set_screen(Some(back));
+                }
+            }
+            Some(Screen::Pause) => self.close_menus(),
+            _ => {}
+        }
+    }
+
+    /// Esc or the gamepad's Start/B in a game: open the pause menu, go back, or resume.
+    fn menu_escape(&mut self) {
+        use crate::menus::Screen;
+        if self.menu_confirm.take().is_some() {
+            // back on the button that asked
+            self.menu_focus = self.menu_confirm_from;
+            return;
+        }
+        match self.menu_screen {
+            None => {
+                self.set_screen(Some(Screen::Pause));
+                if let Some(p) = &mut self.play {
+                    p.paused = true;
+                }
+            }
+            Some(Screen::Main) => {}
+            _ => self.menu_go_back(),
+        }
+    }
+
+    fn menu_texture(&mut self, ctx: &egui::Context, which: usize) -> Option<egui::TextureHandle> {
+        let rel = match which {
+            0 => self.menus.logo.clone(),
+            1 => self.menus.background.clone(),
+            _ => self.menus.loading.picture.clone(),
+        };
+        if self.menu_tex[which].0 != rel {
+            let tex = (!rel.is_empty())
+                .then(|| crate::assets::load_texture(&self.project_dir.join(&rel)).ok())
+                .flatten()
+                .map(|t| ctx.load_texture(format!("menu{which}"), egui::ColorImage::from_rgba_unmultiplied([t.width as usize, t.height as usize], &t.rgba), egui::TextureOptions::LINEAR));
+            self.menu_tex[which] = (rel, tex);
+        }
+        self.menu_tex[which].1.clone()
+    }
+
+    /// The fonts the menus ask for (project .ttf/.otf files). A font becomes usable the frame
+    /// after it is added, so until then the menus use the normal one.
+    fn menu_look(&mut self, ctx: &egui::Context) -> crate::menus::Look {
+        use egui::FontFamily;
+        let want = (self.menus.style.title_font.clone(), self.menus.style.text_font.clone());
+        if want != self.menu_fonts.0 {
+            let mut defs = egui::FontDefinitions::default();
+            let mut ok = (false, false);
+            for (i, (file, family)) in [(&want.0, "menu_title"), (&want.1, "menu_text")].into_iter().enumerate() {
+                if file.is_empty() {
+                    continue;
+                }
+                match std::fs::read(self.project_dir.join(file.as_str())) {
+                    Ok(bytes) => {
+                        defs.font_data.insert(family.to_string(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
+                        let mut list = vec![family.to_string()];
+                        list.extend(defs.families.get(&FontFamily::Proportional).cloned().unwrap_or_default());
+                        defs.families.insert(FontFamily::Name(family.into()), list);
+                        if i == 0 { ok.0 = true } else { ok.1 = true }
+                    }
+                    Err(e) => self.error(format!("{file}: {e}")),
+                }
+            }
+            ctx.set_fonts(defs);
+            self.menu_fonts = (want, ok, self.frame_count);
+        }
+        // the frame after set_fonts, the new families exist
+        let ready = self.frame_count > self.menu_fonts.2;
+        let (ok_title, ok_text) = self.menu_fonts.1;
+        crate::menus::Look {
+            title_font: if ready && ok_title { FontFamily::Name("menu_title".into()) } else { FontFamily::Proportional },
+            text_font: if ready && ok_text { FontFamily::Name("menu_text".into()) } else { FontFamily::Proportional },
+            t: self.menu_opened.elapsed().as_secs_f32(),
+        }
+    }
+
+    /// Values of the game's own options for scripts, from the player's settings.
+    fn option_values(&self) -> std::collections::BTreeMap<String, cryo_lang::Value> {
+        let stored = self.settings.game_options.get(&self.controls_key());
+        self.menus.options.iter().map(|o| (o.id.clone(), self.menus.option_value(o, stored.and_then(|m| m.get(&o.id)).copied()))).collect()
+    }
+
+    /// The game's own options in the Options screen; changes go to the settings and scripts.
+    fn game_options_ui(&mut self, ui: &mut egui::Ui) {
+        if self.menus.options.is_empty() {
+            return;
+        }
+        let key = self.controls_key();
+        let mut changed = vec![];
+        egui::Grid::new("game_options").num_columns(2).spacing([14.0, 8.0]).show(ui, |ui| {
+            for o in self.menus.options.clone() {
+                let stored = self.settings.game_options.get(&key).and_then(|m| m.get(&o.id)).copied();
+                let mut v = stored.unwrap_or(o.default);
+                ui.label(&o.label);
+                let resp = match o.kind.as_str() {
+                    "toggle" => {
+                        let mut on = v >= 0.5;
+                        let r = ui.checkbox(&mut on, "");
+                        v = on as i32 as f64;
+                        r.changed()
+                    }
+                    "choice" => {
+                        let mut i = v.max(0.0) as usize;
+                        let r = ui.horizontal(|ui| {
+                            let mut c = false;
+                            for (n, name) in o.choices.iter().enumerate() {
+                                c |= ui.selectable_value(&mut i, n, name).changed();
+                            }
+                            c
+                        });
+                        v = i as f64;
+                        r.inner
+                    }
+                    _ => {
+                        let mut s = egui::Slider::new(&mut v, o.min.min(o.max)..=o.max.max(o.min));
+                        if o.step > 0.0 {
+                            s = s.step_by(o.step);
+                        }
+                        ui.add(s).changed()
+                    }
+                };
+                if resp {
+                    changed.push((o.id.clone(), v));
+                }
+                ui.end_row();
+            }
+        });
+        if !changed.is_empty() {
+            for (id, v) in changed {
+                self.settings.game_options.entry(key.clone()).or_default().insert(id.clone(), v);
+                let value = self.option_values().get(&id).cloned().unwrap_or(cryo_lang::Value::Nil);
+                if let Some(p) = &mut self.play {
+                    p.rt.emit("option_changed", vec![cryo_lang::Value::text(&id), value]);
+                }
+            }
+            self.settings.save();
+            let values = self.option_values();
+            if let Some(p) = &mut self.play {
+                p.rt.set_options(values);
+            }
+        }
+    }
+
+    /// Draws the open menu screen over the game, and answers keyboard and gamepad.
+    pub fn menus_ui(&mut self, ui: &mut egui::Ui, rect: egui::Rect) {
+        use crate::menus::{Header, Nav, Screen};
+        let ctx = ui.ctx().clone();
+        // a level loading covers everything
+        if self.loading.is_some() {
+            let look = self.menu_look(&ctx);
+            let pic = self.menu_texture(&ctx, 2);
+            let (_, started, tip) = self.loading.clone().unwrap();
+            let menus = self.menus.clone();
+            let mut ui = ui.new_child(egui::UiBuilder::new().max_rect(rect).layer_id(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("game_loading"))));
+            crate::menus::loading_screen(&mut ui, rect, &menus, &look, &pic, &tip, started.elapsed().as_secs_f32());
+            return;
+        }
+        let Some(screen) = self.menu_screen else { return };
+        // every key press counts, even several in one slow frame
+        let (ups, downs) = ui.ctx().input(|i| {
+            i.events.iter().fold((0usize, 0usize), |(u, d), e| match e {
+                egui::Event::Key { key: egui::Key::ArrowUp | egui::Key::W, pressed: true, .. } => (u + 1, d),
+                egui::Event::Key { key: egui::Key::ArrowDown | egui::Key::S, pressed: true, .. } => (u, d + 1),
+                _ => (u, d),
+            })
+        });
+        let p = &self.raw_pressed;
+        let ups = ups + p.contains("pad_up") as usize;
+        let downs = downs + p.contains("pad_down") as usize;
+        if ups + downs > 1 {
+            // all but one step here; the last one goes through `nav`
+            let n = self.menu_focus as i64 + downs as i64 - ups as i64;
+            let step = if downs >= ups { 1 } else { -1 };
+            self.menu_focus = (n - step).max(0) as usize;
+        }
+        // the Controls window is on top: the menus behind it wait
+        let (ups, downs) = if self.show_controls { (0, 0) } else { (ups, downs) };
+        let nav = if self.show_controls {
+            Nav::None
+        } else if ups > downs {
+            Nav::Up
+        } else if downs > ups {
+            Nav::Down
+        } else if ["enter", "space", "pad_a"].iter().any(|k| p.contains(*k)) {
+            Nav::Choose
+        } else if p.contains("pad_b") {
+            Nav::Back
+        } else {
+            Nav::None
+        };
+        let look = self.menu_look(&ctx);
+        let logo = self.menu_texture(&ctx, 0);
+        let bg = self.menu_texture(&ctx, 1);
+        let menus = self.menus.clone();
+        let mut ui = ui.new_child(egui::UiBuilder::new().max_rect(rect).layer_id(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("game_menus"))));
+        // "Are you sure?" over any screen
+        if let Some(asked) = self.menu_confirm.clone() {
+            let yes = crate::menus::button(&tr!("Yes", "Sim"), "confirm_yes", "");
+            let no = crate::menus::button(&tr!("No", "Não"), "confirm_no", "");
+            let mut focus = self.menu_focus;
+            let out = crate::menus::draw(&mut ui, rect, &menus, &[yes, no], Header::Text(&tr!("Are you sure?", "Tem certeza?"), &asked.label), (&None, &None), &mut focus, nav, &look);
+            self.menu_focus = focus;
+            if out.moved {
+                self.menu_sound(0);
+            }
+            match out.chosen.map(|b| b.action) {
+                Some(a) if a == "confirm_yes" => {
+                    self.menu_sound(1);
+                    self.menu_action(&asked, &ctx);
+                    self.menu_confirm = None;
+                }
+                Some(_) => {
+                    self.menu_confirm = None;
+                    self.menu_focus = self.menu_confirm_from;
+                }
+                None if nav == Nav::Back => {
+                    self.menu_confirm = None;
+                    self.menu_focus = self.menu_confirm_from;
+                }
+                None => {}
+            }
+            return;
+        }
+        match screen {
+            Screen::Main | Screen::Pause | Screen::Custom(_) => {
+                let (buttons, header) = match screen {
+                    Screen::Main => (self.main_buttons(), Header::Title),
+                    Screen::Pause => (menus.pause.clone(), Header::None),
+                    Screen::Custom(i) => {
+                        let c = &menus.screens[i.min(menus.screens.len().saturating_sub(1))];
+                        (c.buttons.clone(), Header::Text(&c.title, &c.text))
+                    }
+                    _ => unreachable!(),
+                };
+                let mut focus = self.menu_focus;
+                let out = crate::menus::draw(&mut ui, rect, &menus, &buttons, header, (&logo, &bg), &mut focus, nav, &look);
+                self.menu_focus = focus;
+                if out.moved {
+                    self.menu_sound(0);
+                }
+                if let Some(b) = out.chosen {
+                    self.menu_sound(1);
+                    self.menu_action(&b, &ctx);
+                } else if nav == Nav::Back && screen != Screen::Main {
+                    self.menu_go_back();
+                }
+            }
+            Screen::Options => {
+                let os = menus.options_screen.clone();
+                let back = crate::menus::panel(&mut ui, rect, &menus, &look, &tr!("Options", "Opções"), 520.0, |ui| {
+                    if os.graphics {
+                        self.graphics_choice(ui);
+                        ui.add_space(6.0);
+                    }
+                    if os.frame_rate {
+                        self.fps_choice(ui);
+                        ui.add_space(6.0);
+                    }
+                    if os.volume {
+                        self.volume_choice(ui);
+                        ui.add_space(6.0);
+                    }
+                    self.game_options_ui(ui);
+                    if os.fullscreen {
+                        let mut full = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
+                        if ui.checkbox(&mut full, tr!("Full screen", "Tela cheia")).changed() {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(full));
+                        }
+                        ui.add_space(6.0);
+                    }
+                    if os.controls && ui.button(tr!("Controls and gamepad…", "Controles e gamepad…")).clicked() {
+                        self.show_controls = true;
+                    }
+                });
+                if back || nav == Nav::Back {
+                    self.menu_sound(1);
+                    self.menu_go_back();
+                }
+            }
+            Screen::Credits => {
+                if crate::menus::credits_panel(&mut ui, rect, &menus, &look) || nav == Nav::Back || nav == Nav::Choose {
+                    self.menu_go_back();
+                }
+            }
+        }
+        self.controls_ui(&ctx);
+    }
+
+    /// Loads a level: with the loading screen (when the menus have one) the switch happens
+    /// on the next frame, so the screen shows while the level is read.
+    pub fn switch_scene(&mut self, rel: &str) {
+        if self.menus.loading.enabled && self.play.is_some() && (self.game_only || self.menus.preview_in_editor) {
+            let tips = &self.menus.loading.tips;
+            let tip = if tips.is_empty() { String::new() } else { tips[(self.frame_count as usize).wrapping_mul(7919) % tips.len()].clone() };
+            self.loading = Some((Some(rel.to_string()), std::time::Instant::now(), tip));
+            self.loading_frames = 0;
+        } else {
+            self.switch_scene_now(rel);
+        }
+    }
+
+    /// Runs the loading screen: the switch on its second frame, the end after its minimum time.
+    pub fn update_loading(&mut self) {
+        let Some((pending, started, _)) = self.loading.clone() else { return };
+        self.loading_frames += 1;
+        if let Some(rel) = pending {
+            if self.loading_frames >= 2 {
+                self.switch_scene_now(&rel);
+                if let Some(l) = &mut self.loading {
+                    l.0 = None;
+                }
+            }
+        } else if started.elapsed().as_secs_f32() >= self.menus.loading.min_seconds {
+            self.loading = None;
+        }
     }
 
     /// While playing: replaces the scene with another one of the project and starts it.
     /// Stop still brings back the scene the game started from.
-    pub fn switch_scene(&mut self, rel: &str) {
+    pub fn switch_scene_now(&mut self, rel: &str) {
         let scene = match std::fs::read_to_string(self.project_dir.join(rel)).map_err(|e| e.to_string()).and_then(|s| Scene::from_json(&s)) {
             Ok(s) => s,
             Err(e) => {
@@ -927,11 +1883,16 @@ impl State {
         };
         self.scene = scene;
         self.selected = None;
+        self.running_scene = rel.to_string();
         if self.game_only {
             self.scene_path = rel.to_string();
         }
         self.fill_mesh_colliders();
-        let rt = Runtime::start(&mut self.scene, &self.project_dir, &mut self.logs);
+        let values = self.option_values();
+        let mut rt = Runtime::start_with(&mut self.scene, &self.project_dir, values, &mut self.logs);
+        if self.menu_screen == Some(crate::menus::Screen::Main) && !self.menus.music.is_empty() {
+            let _ = rt.audio.music(&self.menus.music, 0.8);
+        }
         if let Some(p) = &mut self.play {
             p.rt = rt;
         }
@@ -980,6 +1941,8 @@ impl State {
     }
 
     pub fn stop_play(&mut self) {
+        self.menu_screen = None;
+        self.pause_menu = false;
         if let Some(p) = self.play.take() {
             self.scene = p.backup;
             self.selected = p.backup_selected;
@@ -1305,6 +2268,7 @@ impl State {
     }
 
     fn collect_input(&mut self, ctx: &egui::Context) {
+        self.frame_count += 1;
         if self.bindings_for != self.project_dir {
             self.reload_bindings();
         }
@@ -1338,19 +2302,35 @@ impl State {
                     }
                 }
             }
+            let mouse_name = |b: &egui::PointerButton| match b {
+                egui::PointerButton::Primary => Some("mouse_left"),
+                egui::PointerButton::Secondary => Some("mouse_right"),
+                egui::PointerButton::Middle => Some("mouse_middle"),
+                _ => None,
+            };
+            // clicks come from the events, so a quick click is never lost in a slow frame
+            for ev in &i.events {
+                if let egui::Event::PointerButton { button, pressed, .. } = ev {
+                    if let Some(name) = mouse_name(button) {
+                        if *pressed {
+                            raw_pressed.insert(name.into());
+                            held.insert(name.into());
+                        } else {
+                            raw_released.insert(name.into());
+                            held.remove(name);
+                        }
+                    }
+                }
+            }
             for (name, button) in [
                 ("mouse_left", egui::PointerButton::Primary),
                 ("mouse_right", egui::PointerButton::Secondary),
                 ("mouse_middle", egui::PointerButton::Middle),
             ] {
-                let was = held.contains(name);
-                let now = i.pointer.button_down(button);
-                if now && !was {
-                    raw_pressed.insert(name.into());
-                    held.insert(name.into());
-                } else if !now && was {
-                    raw_released.insert(name.into());
+                // a release outside the window still lets go of the button
+                if held.contains(name) && !i.pointer.button_down(button) && !raw_pressed.contains(name) {
                     held.remove(name);
+                    raw_released.insert(name.into());
                 }
             }
             let mut d = i.pointer.delta();
@@ -1392,7 +2372,10 @@ impl State {
         }
         let p = &self.pad;
         self.input.pad = [p.lx, p.ly, p.rx, p.ry, p.lt, p.rt];
-        let (down, pressed, released) = self.resolver.resolve(&held, &raw_pressed, &raw_released, &self.bindings);
+        // a key or click pressed and let go within one frame still counts as down for that frame
+        let mut down_now = held.clone();
+        down_now.extend(raw_pressed.iter().cloned());
+        let (down, pressed, released) = self.resolver.resolve(&down_now, &raw_pressed, &raw_released, &self.bindings);
         self.input.down = down;
         self.input.pressed = pressed;
         self.input.released = released;
@@ -1421,12 +2404,14 @@ impl State {
             }
         }
         if self.playing() {
-            if pressed(Key::Escape) || (self.game_only && self.input.pressed.contains("pad_start")) {
-                if self.game_only {
-                    // an exported game pauses and shows its menu instead of closing at once
-                    self.pause_menu = !self.pause_menu;
-                    if let Some(p) = &mut self.play {
-                        p.paused = self.pause_menu;
+            let menus_on = self.game_only || (self.menus.preview_in_editor && self.menus_for == self.project_dir);
+            if pressed(Key::Escape) || (menus_on && self.raw_pressed.contains("pad_start")) {
+                if menus_on {
+                    // a game pauses and shows its menu instead of closing at once
+                    if self.show_controls {
+                        self.show_controls = false;
+                    } else {
+                        self.menu_escape();
                     }
                 } else {
                     self.stop_play();
@@ -1621,6 +2606,23 @@ impl App {
             rebinding: None,
             mouse_grabbed: false,
             pause_menu: false,
+            menus: crate::menus::Menus::default(),
+            menus_for: PathBuf::new(),
+            menu_screen: None,
+            menu_back: crate::menus::Screen::Main,
+            menu_focus: 0,
+            menu_confirm_from: 0,
+            menu_focus_memory: vec![],
+            menu_tex: Default::default(),
+            menu_opened: std::time::Instant::now(),
+            menu_confirm: None,
+            menu_fonts: Default::default(),
+            frame_count: 0,
+            loading: None,
+            loading_frames: 0,
+            first_scene: String::new(),
+            running_scene: String::new(),
+            show_menus_editor: false,
             logs: vec![],
             undo: vec![],
             redo: vec![],
@@ -1703,6 +2705,10 @@ impl App {
         if !game_only {
             st.settings.last_project = Some(st.project_dir.to_string_lossy().to_string());
             st.settings.save();
+        }
+        // CRYO_DEMO=menus opens the Game menus window (for screenshots)
+        if std::env::var("CRYO_DEMO").as_deref() == Ok("menus") {
+            st.show_menus_editor = true;
         }
         if autoplay || game_only {
             st.start_play();
@@ -1795,6 +2801,10 @@ impl App {
                     if let Some(dir) = rfd::FileDialog::new().set_title(tr!("Folder of video frames", "Pasta com os quadros do vídeo")).pick_folder() {
                         st.import_video(&dir);
                     }
+                }
+                if ui.button(tr!("Game menus…", "Menus do jogo…")).on_hover_text(tr!("The main menu, pause menu and options of your game: buttons, title, logo, background, music, colours.", "Menu inicial, menu de pausa e opções do seu jogo: botões, título, logo, fundo, música, cores.")).clicked() {
+                    ui.close();
+                    st.show_menus_editor = true;
                 }
                 if ui.button(tr!("Export game…", "Exportar jogo…")).on_hover_text(tr!("Creates a folder with the game ready to run without the editor", "Gera uma pasta com o jogo pronto para rodar sem o editor")).clicked() {
                     ui.close();
@@ -2018,7 +3028,10 @@ impl eframe::App for App {
         self.st.shortcuts(&ctx);
         self.st.apply_mouse_lock(&ctx);
         let mut next_scene = None;
+        let mut menu_request = None;
+        let menu_open = self.st.menu_screen.is_some();
         if let Some(play) = &mut self.st.play {
+            play.rt.set_menu_open(menu_open);
             if !play.paused {
                 let dt = ctx.input(|i| i.stable_dt).min(0.1);
                 // CRYO_DEMO=fight skips the opening and walks the hero forward (for screenshots)
@@ -2036,6 +3049,7 @@ impl eframe::App for App {
                 play.rt.update(&mut self.st.scene, &self.st.input, dt, &mut self.st.logs);
                 // scene.load(...) from a script: the next level replaces this one
                 next_scene = play.rt.take_scene_request();
+                menu_request = play.rt.take_menu_request();
                 // CRYO_DEMO=qte shows a quick time event shortly after Play (for screenshots)
                 if play.rt.qte.is_none() && play.rt.real_time > 1.0 && play.rt.qte_result.is_none() {
                     if std::env::var("CRYO_DEMO").as_deref() == Ok("qte") {
@@ -2055,12 +3069,26 @@ impl eframe::App for App {
         if let Some(next) = next_scene {
             self.st.switch_scene(&next);
         }
+        // menu.open(...) / menu.close() from scripts
+        match menu_request.as_deref() {
+            Some("") => self.st.close_menus(),
+            Some(id) => {
+                let id = id.to_string();
+                self.st.open_menu(&id);
+            }
+            None => {}
+        }
+        self.st.update_loading();
 
         // --- exported game: only the game screen ---
         if self.st.game_only {
             egui::CentralPanel::no_frame().show(ui, |ui| self.st.game_view(ui));
-            // the pause menu (Esc or the gamepad's Start) and its Controls window
-            self.st.pause_ui(&ctx);
+            // the menus: main, pause, options, credits (Esc or the gamepad's Start)
+            let rect = ctx.content_rect();
+            egui::Area::new(egui::Id::new("menus_area")).order(egui::Order::Foreground).fixed_pos(rect.min).show(&ctx, |ui| {
+                ui.set_min_size(rect.size());
+                self.st.menus_ui(ui, rect);
+            });
             if ctx.input(|i| i.key_pressed(Key::F3)) {
                 self.show_fps = !self.show_fps;
             }
@@ -2106,7 +3134,7 @@ impl eframe::App for App {
             self.st.show_tutorials = !self.st.show_tutorials;
         }
         self.st.tutorial_ui(&ctx);
-        self.st.pause_ui(&ctx);
+        self.st.menus_editor_ui(&ctx);
         if !self.st.game_only {
             self.st.controls_ui(&ctx);
         }

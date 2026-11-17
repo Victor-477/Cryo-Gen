@@ -34,6 +34,9 @@ pub struct Settings {
     /// The player's control changes, per project (folder name), name -> inputs.
     #[serde(default)]
     pub bindings: std::collections::HashMap<String, std::collections::HashMap<String, Vec<String>>>,
+    /// The game's own options (menus.json), per project: id -> value.
+    #[serde(default)]
+    pub game_options: std::collections::HashMap<String, std::collections::HashMap<String, f64>>,
 }
 
 fn home() -> Option<PathBuf> {

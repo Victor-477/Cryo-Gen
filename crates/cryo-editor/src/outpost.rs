@@ -41,7 +41,65 @@ pub fn create(dir: &Path) -> Result<String, String> {
         std::fs::write(dir.join(format!("sounds/{name}.wav")), wav).map_err(err)?;
     }
     std::fs::write(dir.join(SCENE), build_scene(dir).to_json()).map_err(err)?;
+    menus().save(dir)?;
     Ok(SCENE.to_string())
+}
+
+/// The game's menus: a tactical look, cyan on dark steel, at the lower left.
+fn menus() -> crate::menus::Menus {
+    use crate::menus::{GameOption, Loading, MenuButton, Menus, Style};
+    let b = |label: &str, action: &str| crate::menus::button(label, action, "");
+    let sure = |label: &str, action: &str| MenuButton { confirm: true, ..crate::menus::button(label, action, "") };
+    let hint = |m: MenuButton, h: &str| MenuButton { hint: h.into(), ..m };
+    let style_panel = [8u8, 14, 20];
+    Menus {
+        title: "OUTPOST KESTREL".into(),
+        subtitle: "Retake the outpost. Shut down the reactor.".into(),
+        footer: "A Cryo Engine example".into(),
+        credits: "OUTPOST KESTREL\n\nLevel, weapon, hands, drones, textures and sounds made from code\nwith Cryo Engine and its asset tools.\n\nThanks for playing.".into(),
+        main: vec![hint(b("Deploy", "start"), "Clear the yard, the warehouse and the reactor. WASD moves, the mouse aims."), b("Options", "options"), b("Controls", "controls"), b("Credits", "credits"), sure("Quit", "quit")],
+        pause: vec![b("Resume", "resume"), b("Options", "options"), b("Controls", "controls"), sure("Restart mission", "restart"), sure("Main menu", "main_menu"), sure("Quit", "quit")],
+        style: Style {
+            align: "left".into(),
+            accent: [90, 220, 255, 255],
+            text: [210, 222, 230, 255],
+            button: [10, 16, 22, 190],
+            button_hover: [18, 60, 78, 225],
+            backdrop: [4, 8, 12, 150],
+            title_size: 66.0,
+            button_size: 20.0,
+            button_width: 320.0,
+            button_height: 42.0,
+            spacing: 6.0,
+            rounding: 2.0,
+            title_spacing: true,
+            uppercase: true,
+            shadow: true,
+            fade_in: 0.6,
+            hover_slide: 10.0,
+            sound_move: String::new(),
+            sound_choose: "sounds/pickup.wav".into(),
+            camera_drift: 0.0,
+            panel: [style_panel[0], style_panel[1], style_panel[2], 235],
+            title_font: String::new(),
+            text_font: String::new(),
+        },
+        options: vec![
+            GameOption { id: "sensitivity".into(), label: "Mouse sensitivity".into(), kind: "slider".into(), default: 1.0, min: 0.3, max: 2.5, step: 0.05, ..GameOption::default() },
+            GameOption { id: "invert_y".into(), label: "Invert look".into(), kind: "toggle".into(), default: 0.0, ..GameOption::default() },
+        ],
+        loading: Loading {
+            text: "Deploying…".into(),
+            tips: vec![
+                "Drones lose sight of you behind containers: use cover, then lean out to fire.".into(),
+                "R reloads. Count your magazine on the yellow bar.".into(),
+                "Medkits and ammo crates are marked on the floor near each door.".into(),
+                "Heavy drones take more hits: aim for the glowing eye.".into(),
+            ],
+            ..Loading::default()
+        },
+        ..Menus::default()
+    }
 }
 
 fn sounds() -> Vec<(&'static str, Vec<u8>)> {

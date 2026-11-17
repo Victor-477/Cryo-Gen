@@ -4,15 +4,44 @@ Cryo Engine is a native 3D game engine with a visual editor, scripted in the Cry
 
 | System | File |
 |---|---|
-| Windows 10/11 (64-bit) | `CryoEngine-v0.16.0-beta-windows-x86_64.zip` |
-| macOS 11+ (Apple Silicon and Intel) | `CryoEngine-v0.16.0-beta-macos-universal.zip` |
-| Linux (x86_64) | `CryoEngine-v0.16.0-beta-linux-x86_64.zip` |
+| Windows 10/11 (64-bit) | `CryoEngine-v0.18.0-beta-windows-x86_64.zip` |
+| macOS 11+ (Apple Silicon and Intel) | `CryoEngine-v0.18.0-beta-macos-universal.zip` |
+| Linux (x86_64) | `CryoEngine-v0.18.0-beta-linux-x86_64.zip` |
 
 Unzip and run. On first launch the editor creates the example game in `~/CryoProjects/FrostpeakIsles` and starts a welcome tour.
 
 **macOS:** the app is not signed. Right-click **Cryo Engine.app** and choose **Open** the first time. If macOS still refuses, run `xattr -dr com.apple.quarantine "Cryo Engine.app"` in a terminal.
 
-## New in 0.16.0-beta
+## New in 0.18.0-beta
+
+- **Screens of your own** (Game menus > Screens): level select, difficulty, game over, a codex... each with a title, text, buttons and whether it pauses. Open one with a button ("Open a screen") or from a script: `menu.open("gameover")`, `menu.close()`, `menu.is_open`.
+- **Options of your game** (Game menus > Options): on/off, sliders and choices that appear on the in-game Options screen, kept per player. Scripts read them with `option("difficulty", "Normal")` (already set when `on start()` runs) and hear changes with `on option_changed(id, value)`. You can also choose which built-in parts (graphics, frame rate, volume, full screen, controls) the Options screen shows.
+- **Loading screen** between levels (Game menus > Loading): text, picture, a random tip, a minimum time and a progress bar.
+- **"Are you sure?"** on any button (Quit, Restart and Main menu ask by default); No is highlighted first, and Esc, B or No return to the button that asked.
+- **Hints**: a line of text shown while a button is highlighted.
+- **More look options**: the project's own .ttf/.otf fonts for the title and texts, capitals, text shadow, fade-in, a slide on the highlighted button, panel colour, sounds for moving and choosing, and a slow turn of the camera behind the main menu.
+- **Test from the main menu** button in the Game menus window, and a preview of every tab (main, pause, the selected screen, loading).
+- The examples use all of it: Ashen Keep has a Difficulty option (enemies hit harder and have more health on Hard) and loading tips; Outpost Kestrel has mouse sensitivity and invert-look options.
+- Usability fixes found by playing the exported games: going back from Options, Credits or a confirmation now lands on the button you came from (it used to jump to the first or last); the Controls window stays above the menus, which wait while it is open; the camera behind the main menu also stays behind Options and Credits opened from it; check boxes are outlined so they show on dark panels.
+
+## From 0.17.0-beta
+
+Main menu and pause menu for games, customisable in File > Game menus…, with an Options screen.
+
+## Details of 0.17.0-beta
+
+- **Main menu for games**: exported games open on a title screen (title, subtitle, logo, background picture or a camera of the level behind, music, corner text) with buttons to start, continue a saved checkpoint, open options, controls and credits, and quit.
+- **Customisable menus**: **File > Game menus…** edits the main and pause menus (buttons, their order and actions: start, continue, options, controls, credits, resume, restart, main menu, load a scene, send an event to scripts, quit) and their look (position, colours, sizes, spacing, rounded corners), with a live preview. Saved in `menus.json`.
+- **Options screen** inside games: graphics quality, frame-rate limit, volumes, full screen, controls.
+- Menus work with the mouse, the keyboard (arrows/WS, Enter, Esc) and the gamepad (d-pad, A, B, Start).
+- Both examples have their own menus (Ashen Keep: gold on black over the castle; Outpost Kestrel: cyan, tactical).
+- Usability fixes found by playing the exported games: a click or key shorter than one frame was lost (the rifle did not fire on quick clicks when the game ran slowly); several presses in one frame now all count in menus; the HUD, banner and crosshair no longer show through menus.
+
+## From 0.16.0-beta
+
+Gamepads, remappable controls, volume sliders, prefabs and `scene.load`.
+
+## Details of 0.16.0-beta
 
 - **Gamepads**: Xbox, PlayStation, Switch Pro and most other controllers work in every game with no changes. The left stick moves (`input.axis`), the right stick looks like the mouse, buttons are `pad_a`, `pad_b`... and Start opens the pause menu.
 - **Remappable controls**: bindings make one name stand for several inputs (by default `space` is also the A button, `mouse_left` the right trigger...). Players change them in **Controls** (pause menu, or Window > Controls and gamepad), kept per game; a project can list its own in `input.json`.

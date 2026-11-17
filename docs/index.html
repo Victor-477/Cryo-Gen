@@ -77,7 +77,7 @@ footer { margin-top: 70px; color: var(--muted); font-size: .86rem; border-top: 1
 <div class="layout">
 <nav>
   <a class="brand" href="#top">❄ Cryo Engine</a>
-  <div class="version">Documentation · 0.16.0-beta</div>
+  <div class="version">Documentation · 0.18.0-beta</div>
   <h4>Start</h4>
   <a class="item" href="#top">Overview</a>
   <a class="item" href="#install">Download and install</a>
@@ -101,6 +101,7 @@ footer { margin-top: 70px; color: var(--muted); font-size: .86rem; border-top: 1
   <a class="item" href="#skeletal">Animated models</a>
   <a class="item" href="#controls">Gamepads and controls</a>
   <a class="item" href="#prefabs">Prefabs and levels</a>
+  <a class="item" href="#menus">Game menus</a>
   <a class="item" href="#physics">Physics</a>
   <a class="item" href="#terrain">Terrain</a>
   <a class="item" href="#performance">Performance</a>
@@ -587,6 +588,30 @@ fade(<span class="n">1</span>, <span class="n">0.5</span>)   <span class="c">// 
   <li><code>scene.spawn_prefab("prefabs/Enemy.cryoprefab", vec3(0, 0, 10))</code> places a copy while the game runs and returns its root entity; its scripts start on the next frame.</li>
   <li><code>scene.load("scenes/Level2.cryoscene")</code> switches to another scene at the end of the frame. In the editor, Stop still brings back the scene the game started from.</li>
 </ul>
+
+<h2 id="menus">Game menus</h2>
+<p><b>File &gt; Game menus…</b> designs the menus of your game, with a live preview. Everything is saved in <code>menus.json</code> in the project.</p>
+<ul>
+  <li><b>General</b>: open the game on a <b>main menu</b> (exported games; tick "Also when pressing Play" to see it in the editor), title, subtitle, corner text, logo and background pictures, music, the camera to look through behind the menu (without a background picture the first scene shows behind it), and the credits text.</li>
+  <li><b>Main menu</b> and <b>Pause menu</b>: the buttons, in order, each with a label and an action: start the game (or a chosen scene), continue from a saved checkpoint, options, controls, credits, resume, restart the level, back to the main menu, load a scene, send an event to scripts, quit.</li>
+  <li><b>Screens</b>: screens of your own (level select, difficulty, game over...) with a title, text and buttons; choose whether each pauses the game. A button with the action "Open a screen", or <code>menu.open("id")</code> in a script, shows one; "Back" returns.</li>
+  <li><b>Options</b>: which built-in parts the Options screen shows, and <b>options of your game</b>: on/off, sliders (from, to, step) and choices, kept for each player.</li>
+  <li><b>Loading</b>: a loading screen between levels with text, a picture, tips (one at random) and a minimum time.</li>
+  <li><b>Look</b>: position (left, centre, right), fonts (any .ttf/.otf in the project), colours of the title, text, buttons, panels and the darkening over the game, sizes, spacing, rounded corners, capitals, shadow, fade-in, the slide of the highlighted button, sounds for moving and choosing, and how fast the camera behind the main menu turns.</li>
+</ul>
+<p>Every button can ask <b>"Are you sure?"</b> first and show a <b>hint</b> while highlighted. <b>▶ Test from the main menu</b> plays the game from its title screen.</p>
+<p>In the game, <kbd>Esc</kbd> or the gamepad's Start opens the pause menu; the arrows, <kbd>W</kbd>/<kbd>S</kbd> or the d-pad move between buttons, <kbd>Enter</kbd>, <kbd>Space</kbd> or A choose, B goes back. <b>Options</b> holds graphics quality, frame-rate limit, volumes, full screen and controls.</p>
+<pre><code><span class="c">// a button with the action "event" and the argument "hard" sends:</span>
+<span class="k">on</span> menu(choice) {
+    <span class="k">if</span> choice == <span class="s">"hard"</span> { global.difficulty = <span class="n">2</span> }
+}
+<span class="c">// "Continue" appears once the game saved a checkpoint:</span>
+save.set(<span class="s">"checkpoint"</span>, <span class="s">"scenes/Level2.cryoscene"</span>)
+<span class="c">// options of the game, as the player set them (already set in start)</span>
+<span class="k">var</span> hard = option(<span class="s">"difficulty"</span>, <span class="s">"Normal"</span>) == <span class="s">"Hard"</span>
+<span class="k">on</span> option_changed(id, value) { <span class="k">if</span> id == <span class="s">"sensitivity"</span> { speed = value } }
+<span class="c">// a screen of your own, from a script</span>
+<span class="k">on</span> died() { menu.open(<span class="s">"gameover"</span>) }</code></pre>
 
 <h2 id="physics">Physics</h2>
 <ul>

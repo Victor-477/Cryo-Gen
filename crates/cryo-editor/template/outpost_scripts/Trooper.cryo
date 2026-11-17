@@ -161,8 +161,14 @@ script Trooper {
         safe = max(0, safe - dt)
 
         if not dead and input.mouse_locked {
-            yaw -= input.mouse_dx * sensitivity
-            pitch = clamp(pitch - input.mouse_dy * sensitivity, -85, 85)
+            // Options > Mouse sensitivity and Invert look (File > Game menus > Options)
+            let sens = sensitivity * option("sensitivity", 1)
+            let flip = 1
+            if option("invert_y", false) {
+                flip = -1
+            }
+            yaw -= input.mouse_dx * sens
+            pitch = clamp(pitch - input.mouse_dy * sens * flip, -85, 85)
         }
         head.position = eye()
         head.rotation = vec3(pitch, yaw, 0)

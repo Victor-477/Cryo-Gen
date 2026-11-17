@@ -50,7 +50,70 @@ pub fn create(dir: &Path) -> Result<String, String> {
     }
     let scene = build_scene(dir);
     std::fs::write(dir.join(SCENE), scene.to_json()).map_err(err)?;
+    menus().save(dir)?;
     Ok(SCENE.to_string())
+}
+
+/// The game's menus: a gothic title on the left over the castle, gold on near black.
+fn menus() -> crate::menus::Menus {
+    use crate::menus::{GameOption, Loading, MenuButton, Menus, Style};
+    let b = |label: &str, action: &str| crate::menus::button(label, action, "");
+    let sure = |label: &str, action: &str| MenuButton { confirm: true, ..crate::menus::button(label, action, "") };
+    let hint = |m: MenuButton, h: &str| MenuButton { hint: h.into(), ..m };
+    let style_panel = [12u8, 12, 14];
+    Menus {
+        title: "ASHEN KEEP".into(),
+        subtitle: "Reclaim the keep from the restless dead".into(),
+        footer: "A Cryo Engine example".into(),
+        camera: "Intro Camera".into(),
+        credits: "ASHEN KEEP\n\nLevel, models, textures, sounds and music made from code\nwith Cryo Engine and its asset tools.\n\nThanks for playing.".into(),
+        main: vec![hint(b("Begin", "start"), "Enter the bailey. Clear each area to open the next gate."), b("Options", "options"), b("Controls", "controls"), b("Credits", "credits"), sure("Quit", "quit")],
+        pause: vec![b("Resume", "resume"), b("Options", "options"), b("Controls", "controls"), sure("Restart", "restart"), sure("Main menu", "main_menu"), sure("Quit", "quit")],
+        style: Style {
+            align: "left".into(),
+            accent: [222, 186, 110, 255],
+            text: [214, 206, 192, 255],
+            button: [12, 10, 9, 170],
+            button_hover: [60, 42, 22, 220],
+            backdrop: [6, 5, 5, 140],
+            title_size: 78.0,
+            button_size: 22.0,
+            button_width: 300.0,
+            button_height: 44.0,
+            spacing: 8.0,
+            rounding: 0.0,
+            title_spacing: true,
+            uppercase: true,
+            shadow: true,
+            fade_in: 0.6,
+            hover_slide: 10.0,
+            sound_move: String::new(),
+            sound_choose: "sounds/block.wav".into(),
+            camera_drift: 1.2,
+            panel: [style_panel[0], style_panel[1], style_panel[2], 235],
+            title_font: String::new(),
+            text_font: String::new(),
+        },
+        options: vec![GameOption {
+            id: "difficulty".into(),
+            label: "Difficulty".into(),
+            kind: "choice".into(),
+            choices: vec!["Easy".into(), "Normal".into(), "Hard".into()],
+            default: 1.0,
+            ..GameOption::default()
+        }],
+        loading: Loading {
+            text: "The gates groan open…".into(),
+            tips: vec![
+                "Hold Shift to raise your shield: blocking costs stamina instead of health.".into(),
+                "Space rolls through an attack. Skeletons are slow to recover after a missed blow.".into(),
+                "Shrines refill your potions. Drink with Q, away from enemies.".into(),
+                "Archers keep their distance: close in fast, or roll between their arrows.".into(),
+            ],
+            ..Loading::default()
+        },
+        ..Menus::default()
+    }
 }
 
 fn sounds() -> Vec<(&'static str, Vec<u8>)> {

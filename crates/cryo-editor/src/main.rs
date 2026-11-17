@@ -30,6 +30,7 @@ mod settings;
 mod skel;
 mod timeline;
 mod input;
+mod menus;
 mod terrain;
 mod tutorial;
 mod video;

@@ -26,6 +26,15 @@ script Enemy {
         model = self.child("Model")
         hero = scene.find("Hero")
         home = self.position
+        // Options > Difficulty (File > Game menus > Options)
+        let level = option("difficulty", "Normal")
+        if level == "Easy" {
+            damage = damage * 0.6
+            max_health = max_health * 0.75
+        } else if level == "Hard" {
+            damage = damage * 1.5
+            max_health = max_health * 1.3
+        }
         health = max_health
         emit("enemy_spawned", area)
     }

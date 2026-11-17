@@ -989,6 +989,15 @@ impl State {
 
     pub fn game_view(&mut self, ui: &mut egui::Ui) {
         let rect = ui.available_rect_before_wrap();
+        self.game_view_inner(ui);
+        // in the editor (with "Also when pressing Play"), the menus show in the Game tab
+        if !self.game_only && self.menu_screen.is_some() {
+            self.menus_ui(ui, rect);
+        }
+    }
+
+    fn game_view_inner(&mut self, ui: &mut egui::Ui) {
+        let rect = ui.available_rect_before_wrap();
         if rect.width() < 4.0 || rect.height() < 4.0 {
             return;
         }
@@ -1001,7 +1010,12 @@ impl State {
             .as_ref()
             .and_then(|p| p.rt.active_camera)
             .filter(|id| self.scene.get(*id).map(|e| e.camera.is_some()).unwrap_or(false));
-        let Some(cam_id) = chosen.or(self.scene.main_camera()) else {
+        // behind the main menu, the camera the menus ask for
+        let title_cam = (self.on_title() && !self.menus.camera.is_empty())
+            .then(|| self.scene.find_by_name(&self.menus.camera))
+            .flatten()
+            .filter(|id| self.scene.get(*id).map(|e| e.camera.is_some()).unwrap_or(false));
+        let Some(cam_id) = title_cam.or(chosen).or(self.scene.main_camera()) else {
             painter.rect_filled(rect, 0.0, Color32::from_rgb(12, 12, 14));
             painter.text(
                 rect.center(),
@@ -1013,7 +1027,13 @@ impl State {
             return;
         };
         let cam = self.scene.get(cam_id).and_then(|e| e.camera.clone()).unwrap();
-        let (_, rot, pos) = self.scene.world_matrix(cam_id).to_scale_rotation_translation();
+        let (_, mut rot, pos) = self.scene.world_matrix(cam_id).to_scale_rotation_translation();
+        // the camera behind the main menu turns slowly, if the menus ask for it
+        if self.on_title() && self.menus.style.camera_drift != 0.0 {
+            let t = self.menu_opened.elapsed().as_secs_f32();
+            rot = glam::Quat::from_rotation_y((self.menus.style.camera_drift * t).to_radians()) * rot;
+            ui.ctx().request_repaint();
+        }
         let view = Mat4::from_rotation_translation(rot, pos).inverse();
         let aspect = rect.width() / rect.height();
         let proj = perspective(
@@ -1063,7 +1083,12 @@ impl State {
         self.film_tex = None;
         self.paint_3d(ui, rect, frame);
 
-        match &self.play {
+        // a menu covers the game: no HUD, banner or crosshair behind it
+        let in_menu = self.menu_screen.is_some();
+        if in_menu && self.play.is_some() {
+            return;
+        }
+        match self.play.as_ref() {
             Some(play) => {
                 if !play.rt.hud.is_empty() && !play.rt.in_cutscene(&self.scene) {
                     let pos = rect.left_top() + egui::vec2(16.0, 14.0);
@@ -1157,7 +1182,7 @@ impl State {
                     );
                     }
                 }
-                if play.paused {
+                if play.paused && self.menu_screen.is_none() {
                     painter.text(
                         rect.center_top() + egui::vec2(0.0, 14.0),
                         Align2::CENTER_TOP,
