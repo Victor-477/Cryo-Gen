@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
 # Packages the release build of the editor into dist/CryoEngine-<tag>-<platform>.zip.
 #
-#   bash scripts/package.sh v0.12.0-beta macos-universal
+#   bash scripts/package.sh v0.16.0-beta macos-universal
 #
-# Expects `cargo build --release` to have been run already. On macOS the result is an .app bundle.
+# Expects `cargo build --profile dist` (or `--release`) to have been run already. On macOS the result is an .app bundle.
 set -euo pipefail
 
 TAG="${1:?usage: package.sh <tag> <platform-name>}"
 NAME="${2:?usage: package.sh <tag> <platform-name>}"
 VERSION="${TAG#v}"
 cd "$(dirname "$0")/.."
+# the shipping build (profile "dist": thin LTO) when there is one, else the release build
+BIN=target/release
+if [ -e target/dist/cryo ] || [ -e target/dist/cryo.exe ]; then BIN=target/dist; fi
 
 OUT="dist/CryoEngine-$TAG-$NAME"
 rm -rf "$OUT" "$OUT.zip"
@@ -35,7 +38,7 @@ case "$NAME" in
   macos-*)
     APP="$OUT/Cryo Engine.app/Contents"
     mkdir -p "$APP/MacOS"
-    cp target/release/cryo "$APP/MacOS/cryo"
+    cp "$BIN/cryo" "$APP/MacOS/cryo"
     chmod +x "$APP/MacOS/cryo"
     cat > "$APP/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -57,11 +60,11 @@ EOF
     (cd dist && ditto -c -k --keepParent "$(basename "$OUT")" "$(basename "$OUT").zip")
     ;;
   windows-*)
-    cp target/release/cryo.exe "$OUT/cryo.exe"
+    cp "$BIN/cryo.exe" "$OUT/cryo.exe"
     (cd dist && 7z a -tzip "$(basename "$OUT").zip" "$(basename "$OUT")" > /dev/null)
     ;;
   *)
-    cp target/release/cryo "$OUT/cryo"
+    cp "$BIN/cryo" "$OUT/cryo"
     chmod +x "$OUT/cryo"
     (cd dist && zip -qr "$(basename "$OUT").zip" "$(basename "$OUT")")
     ;;

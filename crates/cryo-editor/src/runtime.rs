@@ -40,14 +40,20 @@ pub struct InputState {
     pub mouse_dx: f32,
     pub mouse_dy: f32,
     pub scroll: f32,
+    /// Gamepad: left stick x/y, right stick x/y (y up), left and right triggers.
+    pub pad: [f32; 6],
 }
 
 impl InputState {
     fn axis(&self, name: &str) -> Option<f64> {
         let key = |k: &str| self.down.contains(k) as i32 as f64;
         Some(match name {
-            "horizontal" => (key("d") + key("right")).min(1.0) - (key("a") + key("left")).min(1.0),
-            "vertical" => (key("w") + key("up")).min(1.0) - (key("s") + key("down")).min(1.0),
+            "horizontal" => ((key("d") + key("right")).min(1.0) - (key("a") + key("left")).min(1.0) + self.pad[0] as f64).clamp(-1.0, 1.0),
+            "vertical" => ((key("w") + key("up")).min(1.0) - (key("s") + key("down")).min(1.0) + self.pad[1] as f64).clamp(-1.0, 1.0),
+            "look_x" => self.pad[2] as f64,
+            "look_y" => self.pad[3] as f64,
+            "pad_lt" => self.pad[4] as f64,
+            "pad_rt" => self.pad[5] as f64,
             _ => return None,
         })
     }
@@ -101,6 +107,10 @@ enum AnimCmd {
 #[derive(Default)]
 struct Queues {
     destroy: Vec<u64>,
+    /// Entities placed from prefabs this frame: their scripts start at the end of the frame.
+    spawned: Vec<u64>,
+    /// `scene.load(...)`: the scene to switch to.
+    load_scene: Option<String>,
     messages: Vec<(u64, String, Vec<Value>)>,
     /// `emit(...)`: events for every script in the scene.
     broadcast: Vec<(String, Vec<Value>)>,
@@ -125,6 +135,14 @@ struct Queues {
     time_scale: f64,
     /// `input.lock_mouse(true)`: the game keeps the mouse (first-person cameras).
     mouse_lock: bool,
+    /// `video.play(file)` or a Timeline event: a video waiting to start, and a request to stop.
+    video: Option<String>,
+    video_stop: bool,
+    video_active: bool,
+    /// `subtitle("text", seconds)`: a line at the bottom of the screen, and when it leaves.
+    subtitle: (String, f64),
+    /// `fade(to, seconds)`: a fade asked this frame.
+    fade: Option<(f32, f32)>,
 }
 
 fn qte_from_args(method: &str, args: &[Value], me: u64) -> Result<Qte, String> {
@@ -241,6 +259,7 @@ struct EngineHost<'a> {
     audio: &'a mut Audio,
     playing: &'a [Playing],
     script_name: &'a str,
+    project_dir: &'a std::path::Path,
 }
 
 impl EngineHost<'_> {
@@ -253,7 +272,7 @@ impl Host for EngineHost<'_> {
     fn global(&mut self, name: &str) -> Option<Value> {
         match name {
             "self" => Some(Value::Entity(self.me)),
-            "input" | "scene" | "time" | "audio" | "anim" | "qte" | "global" | "fx" | "save" => Some(Value::Object(Rc::from(name))),
+            "input" | "scene" | "time" | "audio" | "anim" | "qte" | "global" | "fx" | "save" | "video" => Some(Value::Object(Rc::from(name))),
             _ => None,
         }
     }
@@ -302,6 +321,7 @@ impl Host for EngineHost<'_> {
                 ("input", "mouse_dy") => Ok(Value::Num(self.input.mouse_dy as f64)),
                 ("input", "scroll") => Ok(Value::Num(self.input.scroll as f64)),
                 ("audio", "volume") => Ok(Value::Num(self.audio.volume as f64)),
+                ("video", "playing") => Ok(Value::Bool(self.queues.video_active)),
                 _ => Err(format!("`{o}` has no member `{name}`")),
             },
             other => Err(format!("`{}` has no member `{name}`", other.type_name())),
@@ -419,6 +439,22 @@ impl Host for EngineHost<'_> {
                         Ok(Value::Nil)
                     }
                     _ => Err("`crosshair` expects (true or false)".into()),
+                },
+                // subtitle("text", seconds): a line of dialogue at the bottom of the screen
+                "subtitle" => match args {
+                    [Value::Text(text), Value::Num(seconds)] => {
+                        self.queues.subtitle = (text.to_string(), self.queues.real_time + seconds.max(0.0));
+                        Ok(Value::Nil)
+                    }
+                    _ => Err("`subtitle` expects (text, seconds)".into()),
+                },
+                // fade(1, 0.5) goes to black in half a second; fade(0, 1) comes back
+                "fade" => match args {
+                    [Value::Num(to), Value::Num(seconds)] => {
+                        self.queues.fade = Some((to.clamp(0.0, 1.0) as f32, seconds.max(0.0) as f32));
+                        Ok(Value::Nil)
+                    }
+                    _ => Err("`fade` expects (amount from 0 to 1, seconds)".into()),
                 },
                 "banner" => match args {
                     [Value::Text(text), Value::Num(seconds)] => {
@@ -650,6 +686,15 @@ impl Host for EngineHost<'_> {
                     self.fx.burst(p, preset, count, tint, toward)?;
                     Ok(Value::Nil)
                 }
+                // video.play("videos/intro.cryovid"): the game waits while the film is on screen
+                ("video", "play", [Value::Text(file)]) => {
+                    self.queues.video = Some(file.to_string());
+                    Ok(Value::Nil)
+                }
+                ("video", "stop", []) => {
+                    self.queues.video_stop = true;
+                    Ok(Value::Nil)
+                }
                 ("fx", "clear", []) => {
                     self.fx.list.clear();
                     Ok(Value::Nil)
@@ -711,6 +756,31 @@ impl Host for EngineHost<'_> {
                     let id = self.scene.add_mesh(shape);
                     self.scene.get_mut(id).unwrap().position = p;
                     Ok(Value::Entity(id))
+                }
+                // scene.spawn_prefab("prefabs/Enemy.cryoprefab", position): a copy of a prefab,
+                // with its scripts running from the next frame
+                ("scene", "spawn_prefab", [Value::Text(file), rest @ ..]) => {
+                    let pos = match rest {
+                        [] => None,
+                        [p] => Some(from_v(p, "spawn_prefab")?),
+                        _ => return Err("`spawn_prefab` expects (file, position)".into()),
+                    };
+                    if self.scene.entities.len() > 5000 {
+                        return Err("reached the limit of 5000 entities in the scene".into());
+                    }
+                    let json = std::fs::read_to_string(self.project_dir.join(&**file))
+                        .map_err(|e| format!("could not read prefab `{file}` ({e})"))?;
+                    let ids = self.scene.instantiate(&json, None, pos)?;
+                    self.queues.spawned.extend(ids.iter().copied());
+                    Ok(Value::Entity(ids[0]))
+                }
+                // scene.load("scenes/Level2.cryoscene"): switches level at the end of the frame
+                ("scene", "load", [Value::Text(file)]) => {
+                    if !self.project_dir.join(&**file).is_file() {
+                        return Err(format!("there is no scene `{file}`"));
+                    }
+                    self.queues.load_scene = Some(file.to_string());
+                    Ok(Value::Nil)
                 }
                 ("scene", "destroy", [Value::Entity(id)]) => {
                     self.queues.destroy.push(*id);
@@ -774,11 +844,28 @@ pub struct Runtime {
     pub real_time: f64,
     /// Pairs of entities touching in the last physics step.
     contacts: HashSet<(u64, u64)>,
+    project_dir: std::path::PathBuf,
+    /// Scripts already read and parsed, by path.
+    scripts: HashMap<String, Option<Rc<cryo_lang::Script>>>,
+    /// The video cutscene on screen.
+    pub film: Option<Film>,
+    /// Black over the picture, 0 to 1, and the fade under way: (from, to, start, seconds).
+    pub fade: f32,
+    fading: Option<(f32, f32, f64, f32)>,
+}
+
+/// A video cutscene being played.
+pub struct Film {
+    pub file: String,
+    pub video: std::sync::Arc<crate::video::Video>,
+    /// Real time when it started.
+    pub started: f64,
 }
 
 impl Runtime {
     /// Compiles the scene's scripts, creates the instances and fires `start`.
     pub fn start(scene: &mut Scene, project_dir: &Path, logs: &mut Vec<LogLine>) -> Runtime {
+        crate::physics::fill_missing_colliders(scene, project_dir);
         let mut rt = Runtime {
             instances: HashMap::new(),
             time: 0.0,
@@ -793,20 +880,49 @@ impl Runtime {
             contacts: HashSet::new(),
             fx: crate::fx::Particles::default(),
             saves: Saves::open(crate::settings::save_file(project_dir)),
+            project_dir: project_dir.to_path_buf(),
+            scripts: HashMap::new(),
+            film: None,
+            fade: 0.0,
+            fading: None,
         };
         let input = InputState::default();
-        let mut cache: HashMap<String, Option<Rc<cryo_lang::Script>>> = HashMap::new();
-        let with_scripts: Vec<(u64, crate::scene::ScriptRef)> = scene
-            .entities
+        let with_scripts: Vec<u64> = scene.entities.iter().filter(|e| e.script.as_ref().map(|s| !s.path.is_empty()).unwrap_or(false)).map(|e| e.id).collect();
+        rt.create_instances(scene, &with_scripts, logs);
+
+        for (i, clip) in scene.animations.iter().enumerate() {
+            if clip.autoplay {
+                rt.playing.push(Playing { clip: i, t: 0.0, fresh: true });
+            }
+        }
+        let ids: Vec<u64> = rt.instances.keys().copied().collect();
+        for id in ids {
+            rt.dispatch(scene, &input, 0.0, logs, id, "start", &[]);
+        }
+        rt.flush(scene, &input, 0.0, logs);
+        rt
+    }
+
+    /// The scene a script asked to switch to with `scene.load(...)`, once.
+    pub fn take_scene_request(&mut self) -> Option<String> {
+        self.queues.load_scene.take()
+    }
+
+    /// Creates the script instances of these entities (scripts are read once and kept).
+    fn create_instances(&mut self, scene: &mut Scene, ids: &[u64], logs: &mut Vec<LogLine>) {
+        let rt = self;
+        let input = InputState::default();
+        let project_dir = rt.project_dir.clone();
+        let with_scripts: Vec<(u64, crate::scene::ScriptRef)> = ids
             .iter()
-            .filter_map(|e| e.script.clone().filter(|s| !s.path.is_empty()).map(|s| (e.id, s)))
+            .filter_map(|id| scene.get(*id).and_then(|e| e.script.clone()).filter(|s| !s.path.is_empty()).map(|s| (*id, s)))
             .collect();
 
         for (id, sref) in with_scripts {
-            let script = cache
+            let script = rt.scripts
                 .entry(sref.path.clone())
                 .or_insert_with(|| {
-                    let src = match std::fs::read_to_string(project_dir.join(&sref.path)) {
+                    let src = match std::fs::read_to_string(rt.project_dir.join(&sref.path)) {
                         Ok(s) => s,
                         Err(e) => {
                             log(logs, LogLevel::Error, format!("{}: could not read ({e})", sref.path));
@@ -840,6 +956,7 @@ impl Runtime {
                     audio: &mut rt.audio,
                     playing: &rt.playing,
                     script_name: &name,
+                    project_dir: &project_dir,
                 };
                 Instance::new(script, &mut host)
             };
@@ -856,17 +973,6 @@ impl Runtime {
             }
         }
 
-        for (i, clip) in scene.animations.iter().enumerate() {
-            if clip.autoplay {
-                rt.playing.push(Playing { clip: i, t: 0.0, fresh: true });
-            }
-        }
-        let ids: Vec<u64> = rt.instances.keys().copied().collect();
-        for id in ids {
-            rt.dispatch(scene, &input, 0.0, logs, id, "start", &[]);
-        }
-        rt.flush(scene, &input, 0.0, logs);
-        rt
     }
 
     fn dispatch(
@@ -910,6 +1016,7 @@ impl Runtime {
                 audio: &mut self.audio,
                 playing: &self.playing,
                 script_name: &running.name,
+                project_dir: &self.project_dir,
             };
             running.inst.call_event(event, args, &mut host)
         };
@@ -934,6 +1041,16 @@ impl Runtime {
     /// Delivers messages (`send`) and applies pending destroys.
     fn flush(&mut self, scene: &mut Scene, input: &InputState, dt: f64, logs: &mut Vec<LogLine>) {
         for _ in 0..8 {
+            // entities placed from prefabs: their scripts start now
+            let spawned = std::mem::take(&mut self.queues.spawned);
+            if !spawned.is_empty() {
+                self.create_instances(scene, &spawned, logs);
+                for id in spawned {
+                    if self.instances.contains_key(&id) {
+                        self.queues.messages.push((id, "start".into(), vec![]));
+                    }
+                }
+            }
             if !self.queues.broadcast.is_empty() {
                 let mut ids: Vec<u64> = self.instances.keys().copied().collect();
                 ids.sort_unstable();
@@ -1018,7 +1135,65 @@ impl Runtime {
             }
             Action::Play { clip } => self.queues.anim.push(AnimCmd::Play(clip.clone())),
             Action::TimeScale { scale } => self.queues.time_scale = (*scale as f64).clamp(0.0, 10.0),
+            Action::Video { file } => self.queues.video = Some(file.clone()),
+            Action::Subtitle { text, seconds } => self.queues.subtitle = (text.clone(), self.real_time + seconds.max(0.0) as f64),
+            Action::Fade { to, seconds } => self.queues.fade = Some((to.clamp(0.0, 1.0), seconds.max(0.0))),
         }
+    }
+
+    /// The line of dialogue asked with `subtitle(...)`, while it is still due on screen.
+    pub fn subtitle(&self) -> Option<&str> {
+        (self.real_time < self.queues.subtitle.1 && !self.queues.subtitle.0.is_empty()).then_some(self.queues.subtitle.0.as_str())
+    }
+
+    /// The frame of the video cutscene to show now.
+    pub fn film_frame(&self) -> Option<(&Film, usize)> {
+        self.film.as_ref().map(|f| (f, f.video.frame_at(self.real_time - f.started)))
+    }
+
+    /// Starts and stops video cutscenes asked by scripts or the Timeline, and moves fades.
+    /// Returns true while a video is on screen (the game waits).
+    fn update_film(&mut self, input: &InputState, logs: &mut Vec<LogLine>) -> bool {
+        if let Some((to, seconds)) = self.queues.fade.take() {
+            self.fading = Some((self.fade, to, self.real_time, seconds));
+        }
+        if let Some((from, to, start, seconds)) = self.fading {
+            let k = if seconds <= 0.0 { 1.0 } else { (((self.real_time - start) as f32) / seconds).clamp(0.0, 1.0) };
+            self.fade = from + (to - from) * k;
+            if k >= 1.0 {
+                self.fading = None;
+            }
+        }
+        if let Some(file) = self.queues.video.take() {
+            match crate::video::Video::open(&self.project_dir.join(&file)) {
+                Ok(video) => {
+                    if let Some(wav) = video.audio() {
+                        if let Err(e) = self.audio.play_film(wav) {
+                            log(logs, LogLevel::Warn, e);
+                        }
+                    }
+                    self.film = Some(Film { file, video: std::sync::Arc::new(video), started: self.real_time });
+                }
+                Err(e) => {
+                    log(logs, LogLevel::Error, format!("video `{file}`: {e}"));
+                    // scripts waiting for the end must not wait for ever
+                    self.queues.broadcast.push(("video_end".into(), vec![Value::text(&file)]));
+                }
+            }
+        }
+        let stop = std::mem::take(&mut self.queues.video_stop);
+        if let Some(f) = &self.film {
+            let over = (self.real_time - f.started) as f32 >= f.video.duration();
+            let skipped = ["enter", "escape", "space"].iter().any(|k| input.pressed.contains(*k));
+            if over || skipped || stop {
+                let file = f.file.clone();
+                self.film = None;
+                self.audio.stop_film();
+                self.queues.broadcast.push(("video_end".into(), vec![Value::text(&file)]));
+            }
+        }
+        self.queues.video_active = self.film.is_some();
+        self.film.is_some()
     }
 
     /// Delivers an event to one entity's script, as `entity.send(...)` would.
@@ -1132,6 +1307,10 @@ impl Runtime {
         self.queues.real_time = self.real_time;
         // quick time events read the real keyboard in real time, even in cutscenes and slow motion
         self.update_qte(input, real_dt);
+        // a video cutscene: nothing in the game moves until it ends or is skipped
+        if self.update_film(input, logs) {
+            return;
+        }
         let frozen = self.qte.as_ref().map(|q| q.freeze).unwrap_or(false);
 
         let dt = real_dt * self.queues.time_scale as f32;
@@ -1960,6 +2139,123 @@ mod tests {
         rt.update(&mut scene, &InputState::default(), step, &mut logs);
         assert!(!rt.mouse_locked());
         no_errors(&logs);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn prefabs_spawn_with_running_scripts_and_scenes_switch() {
+        let dir = std::env::temp_dir().join(format!("cryo_prefab_{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("scripts")).unwrap();
+        std::fs::create_dir_all(dir.join("prefabs")).unwrap();
+        std::fs::create_dir_all(dir.join("scenes")).unwrap();
+        // the prefab: a "Coin" with a child, whose script counts its own updates
+        std::fs::write(dir.join("scripts/Coin.cryo"), "script Coin {\n var n = 0\n on start() {\n self.name = \"Live Coin\"\n }\n on update(dt) {\n n += 1\n self.rotation = vec3(0, n, 0)\n }\n}").unwrap();
+        let mut src = Scene::empty();
+        let coin = src.add_mesh(Shape::Cylinder);
+        src.get_mut(coin).unwrap().name = "Coin".into();
+        src.get_mut(coin).unwrap().script = Some(ScriptRef { path: "scripts/Coin.cryo".into(), ..Default::default() });
+        let glint = src.add_empty("Glint");
+        src.get_mut(glint).unwrap().parent = Some(coin);
+        std::fs::write(dir.join("prefabs/Coin.cryoprefab"), src.prefab_json(coin).unwrap()).unwrap();
+        std::fs::write(dir.join("scenes/Two.cryoscene"), Scene::empty().to_json()).unwrap();
+        std::fs::write(
+            dir.join("scripts/Spawner.cryo"),
+            "script Spawner {\n var c = nil\n on start() {\n c = scene.spawn_prefab(\"prefabs/Coin.cryoprefab\", vec3(3, 1, 0))\n }\n on next() {\n scene.load(\"scenes/Two.cryoscene\")\n }\n}",
+        )
+        .unwrap();
+        let mut scene = Scene::empty();
+        let spawner = scene.add_empty("Spawner");
+        scene.get_mut(spawner).unwrap().script = Some(ScriptRef { path: "scripts/Spawner.cryo".into(), ..Default::default() });
+        let mut logs = vec![];
+        let mut rt = Runtime::start(&mut scene, &dir, &mut logs);
+        let idle = InputState::default();
+        for _ in 0..3 {
+            rt.update(&mut scene, &idle, 0.02, &mut logs);
+        }
+        let errors: Vec<&str> = logs.iter().filter(|l| l.level == LogLevel::Error).map(|l| l.text.as_str()).collect();
+        assert!(errors.is_empty(), "{errors:?}");
+        // the copy is in the scene with its child, where it was asked, and its script runs
+        let live = scene.find_by_name("Live Coin").expect("the prefab's script started");
+        let e = scene.get(live).unwrap();
+        assert_eq!(e.position, Vec3::new(3.0, 1.0, 0.0));
+        assert!(e.rotation.y >= 1.0, "update ran");
+        assert!(scene.entities.iter().any(|g| g.name == "Glint" && g.parent == Some(live)));
+        // a level change is asked for, once
+        rt.send_for_test(spawner, "next", vec![]);
+        rt.update(&mut scene, &idle, 0.02, &mut logs);
+        assert_eq!(rt.take_scene_request().as_deref(), Some("scenes/Two.cryoscene"));
+        assert_eq!(rt.take_scene_request(), None);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn video_cutscenes_pause_the_game_and_subtitles_and_fades_show() {
+        let dir = std::env::temp_dir().join(format!("cryo_film_{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("scripts")).unwrap();
+        let frame = |c: [u8; 3]| {
+            let mut out = std::io::Cursor::new(vec![]);
+            image::RgbImage::from_pixel(16, 8, image::Rgb(c)).write_to(&mut out, image::ImageFormat::Jpeg).unwrap();
+            out.into_inner()
+        };
+        // half a second of film: 5 frames at 10 a second
+        let frames: Vec<Vec<u8>> = (0..5).map(|i| frame([i * 50, 0, 0])).collect();
+        crate::video::write(&dir.join("videos/intro.cryovid"), 10.0, 16, 8, &frames, None).unwrap();
+        std::fs::write(
+            dir.join("scripts/T.cryo"),
+            "script T {\n var n = 0\n var ended = \"\"\n on start() {\n video.play(\"videos/intro.cryovid\")\n subtitle(\"Long ago...\", 5)\n fade(1, 0)\n }\n\
+             on update(dt) {\n n += 1\n hud(n + \" \" + ended + \" \" + video.playing)\n }\n\
+             on video_end(file) {\n ended = file\n fade(0, 0.2)\n }\n\
+             on again() {\n video.play(\"videos/intro.cryovid\")\n }\n on missing() {\n video.play(\"videos/none.cryovid\")\n }\n}",
+        )
+        .unwrap();
+        let mut scene = Scene::default_scene();
+        let cube = scene.find_by_name("Cube").unwrap();
+        scene.get_mut(cube).unwrap().script = Some(ScriptRef { path: "scripts/T.cryo".into(), ..Default::default() });
+        let mut logs = vec![];
+        let mut rt = Runtime::start(&mut scene, &dir, &mut logs);
+        let idle = InputState::default();
+        let y0 = scene.get(cube).unwrap().position;
+        // while the film plays, scripts and physics wait and the frames advance in real time
+        for _ in 0..12 {
+            rt.update(&mut scene, &idle, 0.02, &mut logs);
+        }
+        let (film, index) = rt.film_frame().expect("the film is on screen");
+        assert_eq!((film.file.as_str(), index), ("videos/intro.cryovid", 2));
+        assert_eq!(rt.hud, "", "no update ran yet");
+        assert_eq!(scene.get(cube).unwrap().position, y0);
+        assert_eq!(rt.subtitle(), Some("Long ago..."));
+        assert_eq!(rt.fade, 1.0);
+        // it ends by itself after half a second; the script hears about it and fades back in
+        for _ in 0..16 {
+            rt.update(&mut scene, &idle, 0.02, &mut logs);
+        }
+        assert!(rt.film.is_none());
+        assert!(rt.hud.ends_with("videos/intro.cryovid false"), "{}", rt.hud);
+        for _ in 0..12 {
+            rt.update(&mut scene, &idle, 0.02, &mut logs);
+        }
+        assert_eq!(rt.fade, 0.0);
+        // played again, Enter skips it at once
+        rt.send_for_test(cube, "again", vec![]);
+        rt.update(&mut scene, &idle, 0.02, &mut logs);
+        rt.update(&mut scene, &idle, 0.02, &mut logs);
+        assert!(rt.film.is_some());
+        let mut enter = InputState::default();
+        enter.pressed.insert("enter".into());
+        rt.update(&mut scene, &enter, 0.02, &mut logs);
+        assert!(rt.film.is_none());
+        // a missing file is an error in the console, and the game goes on
+        assert!(logs.iter().all(|l| l.level != LogLevel::Error), "{:?}", logs.iter().map(|l| &l.text).collect::<Vec<_>>());
+        rt.send_for_test(cube, "missing", vec![]);
+        rt.update(&mut scene, &idle, 0.02, &mut logs);
+        rt.update(&mut scene, &idle, 0.02, &mut logs);
+        assert!(rt.film.is_none());
+        assert!(logs.iter().any(|l| l.level == LogLevel::Error && l.text.contains("none.cryovid")));
+        // the same from the Timeline
+        rt.run_action(&Action::Video { file: "videos/intro.cryovid".into() }, &mut logs);
+        rt.run_action(&Action::Subtitle { text: "Now".into(), seconds: 1.0 }, &mut logs);
+        rt.update(&mut scene, &idle, 0.02, &mut logs);
+        assert!(rt.film.is_some() && rt.subtitle() == Some("Now"));
         std::fs::remove_dir_all(dir).ok();
     }
 

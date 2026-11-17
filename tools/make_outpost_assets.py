@@ -59,14 +59,45 @@ def textures():
     # woven fabric for sleeves and gloves
     weave = (np.sin(x * math.tau * 48) * 0.5 + 0.5) * (np.sin(y * math.tau * 48) * 0.5 + 0.5)
     A.save_texture("tex_fabric.jpg", grey((0.7 + weave * 0.25 + (grain - 0.5) * 0.3 - stain * 0.1) * relief(weave, 0.6)))
+    hand_textures()
     A.save_texture("tex_grate.jpg", grey((0.12 + g * 0.5 + (fine - 0.5) * 0.1) * relief(g, 1.6)))
+
+def hand_textures():
+    """2048 x 2048 maps for the first-person hands, which fill a large part of the screen."""
+    S = 2048
+    y, x = np.mgrid[0:S, 0:S] / S
+    fine, grain = fbm(S, 301, (64, 128, 256, 512)), fbm(S, 303, (8, 16, 32, 64))
+    # glove: stretch fabric with a diagonal twill, panel seams with stitches, worn lighter spots
+    twill = np.sin((x * 3 + y) * math.tau * 70) * 0.5 + 0.5
+    seam_line = np.minimum(np.abs((x * 3) % 1 - 0.5), np.abs((y * 2 + x * 0.3) % 1 - 0.5))
+    seam = np.clip(1 - seam_line / 0.006, 0, 1)
+    stitch = np.clip(1 - np.abs(seam_line - 0.012) / 0.0025, 0, 1) * (np.sin((x + y) * math.tau * 260) > 0.2)
+    wear = np.clip((fbm(S, 305, (3, 6, 12)) - 0.6) * 3, 0, 1)
+    v = 0.62 + twill * 0.18 + (fine - 0.5) * 0.25 + wear * 0.25 - seam * 0.35 + stitch * 0.3
+    A.save_texture("tex_glove.jpg", grey(v * relief(twill * 0.35 + fine * 0.4 - seam * 1.2 + stitch * 0.5, 0.9)))
+    # skin: pores, fine wrinkles, uneven warm colour with redder knuckle tones
+    pores = np.clip((fbm(S, 307, (256, 512)) - 0.62) * 6, 0, 1)
+    wrinkle = np.clip(1 - np.abs(fbm(S, 309, (6, 12, 24))[:, (np.arange(S) // 9) % S] - 0.5) * 40, 0, 1)
+    blotch = fbm(S, 311, (4, 8, 16))
+    base = np.array([0.78, 0.56, 0.45])
+    col = base * (0.9 + (grain[..., None] - 0.5) * 0.12) + np.array([0.06, -0.03, -0.03]) * (blotch[..., None] - 0.5) * 2
+    col = col * (1 - pores[..., None] * 0.12 - wrinkle[..., None] * 0.08)
+    A.save_texture("tex_skin.jpg", col * relief(-pores * 0.6 - wrinkle * 0.5 + fine * 0.15, 0.7)[..., None])
+    # knuckle guard: moulded rubber with a hexagon grip pattern
+    S = 1024
+    y, x = np.mgrid[0:S, 0:S] / S
+    fine = fbm(S, 313, (64, 128, 256))
+    q = x * 40 / 0.866; r = y * 40 - (np.floor(q) % 2) * 0.5
+    hexd = np.maximum(np.abs((q % 1) - 0.5) * 0.866 * 2, np.abs((r % 1) - 0.5) * 2)
+    hexm = np.clip((hexd - 0.82) * 12, 0, 1)
+    A.save_texture("tex_pad.jpg", grey((0.5 + (fine - 0.5) * 0.2 - hexm * 0.3) * relief(-hexm + fine * 0.2, 1.0)))
 
 A.PBR.update({
     "concrete": (0.85, 0.0), "floor": (0.4, 0.0), "panel": (0.45, 0.75), "hazard": (0.6, 0.0), "grate": (0.4, 0.9),
     "gunmetal": (0.4, 0.8), "blue": (0.5, 0.35), "red": (0.5, 0.35), "green": (0.5, 0.35), "steel": (0.3, 1.0),
     "rubber": (0.9, 0.0), "lamp": (0.5, 0.0), "white": (0.5, 0.0), "medic": (0.5, 0.0), "ammo": (0.6, 0.2),
     "brass": (0.3, 1.0), "gun_dark": (0.45, 0.4), "gun_mid": (0.38, 0.6), "gun_tan": (0.7, 0.0),
-    "glove": (0.85, 0.0), "sleeve": (0.92, 0.0), "eye": (0.3, 0.0), "cyan": (0.1, 0.0), "glass": (0.04, 0.0),
+    "glove": (0.82, 0.0), "sleeve": (0.92, 0.0), "skin": (0.52, 0.0), "nail": (0.32, 0.0), "pad": (0.55, 0.0), "eye": (0.3, 0.0), "cyan": (0.1, 0.0), "glass": (0.04, 0.0),
     "dark_room": (0.9, 0.0),
 })
 
@@ -77,7 +108,8 @@ M = {"concrete": ((1, 1, 1), "tex_concrete.jpg"), "floor": ((1, 1, 1), "tex_floo
      "lamp": ((1.0, 0.9, 0.7), None, (7.0, 5.2, 3.2)), "eye": ((1.0, 0.25, 0.1), None, (4.0, 0.6, 0.15)),
      "cyan": ((0.3, 0.9, 1.0), None, (0.5, 2.2, 3.0)), "glass": ((0.55, 0.65, 0.7), None, None, 0.32), "dark_room": ((0.02, 0.025, 0.03), None), "white": ((0.9, 0.9, 0.9), None),
      "gun_dark": ((0.05, 0.05, 0.06), None), "gun_mid": ((0.13, 0.135, 0.15), None), "gun_tan": ((0.3, 0.26, 0.19), None),
-     "glove": ((0.11, 0.1, 0.095), "tex_fabric.jpg"), "sleeve": ((0.27, 0.29, 0.24), "tex_fabric.jpg"),
+     "glove": ((0.46, 0.37, 0.26), "tex_glove.jpg"), "skin": ((1, 1, 1), "tex_skin.jpg"), "nail": ((0.86, 0.68, 0.62), None),
+     "pad": ((0.16, 0.16, 0.17), "tex_pad.jpg"), "sleeve": ((0.27, 0.29, 0.24), "tex_fabric.jpg"),
      "medic": ((0.85, 0.15, 0.15), None), "ammo": ((0.35, 0.4, 0.25), "tex_gunmetal.jpg"), "brass": ((0.85, 0.65, 0.3), None)}
 
 def wall(length, height=7.0, thick=0.8, mat="concrete"):
@@ -191,7 +223,8 @@ def rifle():
     m.tube("gun_mid", z(-0.62, -0.8, 0.068), 0.014, sides=10)                        # barrel
     m.tube("gun_dark", [(0, 0.068, -0.76), (0, 0.068, -0.8), (0, 0.068, -0.86)], [0.02, 0.026, 0.022], sides=10)   # muzzle brake
     m.box("gun_dark", (0, 0.118, -0.14), (0.03, 0.014, 0.46))                         # top rail
-    m.tube("gun_dark", [(0, 0.02, 0.03), (0, -0.05, 0.05), (0, -0.12, 0.085)], [0.024, 0.023, 0.021], sides=10, flatten=1.35)   # grip
+    m.tube("gun_dark", [(0, 0.02, 0.03), (0, -0.05, 0.0555), (0, -0.12, 0.085)], [0.026, 0.026, 0.024], sides=16, flatten=0.62)   # grip: narrow, deep
+    m.tube("gun_dark", [(0, 0.026, -0.043), (0, 0.012, -0.046), (0, 0.0, -0.054)], [0.0035, 0.0035, 0.003], sides=8, flatten=2.0)   # trigger
     m.tube("gun_tan", [(0, 0.02, -0.15), (0, -0.08, -0.165), (0, -0.19, -0.2)], [0.021, 0.021, 0.02], sides=10, flatten=1.9)   # curved magazine
     m.tube("gun_dark", [(0, 0.012, -0.03), (0, -0.012, -0.06), (0, 0.012, -0.1)], 0.006, sides=5)                              # trigger guard
     m.tube("gun_mid", [(0, 0.06, 0.12), (0, 0.055, 0.24), (0, 0.04, 0.36)], [0.022, 0.026, 0.036], sides=10, flatten=1.7)      # stock
@@ -201,44 +234,26 @@ def rifle():
     m.box("cyan", (0, 0.16, -0.019), (0.03, 0.03, 0.003))                             # the lens, at the back of the sight
     return m
 
-# The hands' skeleton, in the rifle's own coordinates.
-H_ROOT, H_RHAND, H_RINDEX, H_RFINGERS, H_LARM, H_LHAND, H_LFINGERS = range(7)
-HAND_JOINTS = [("Root", None, (0, 0, 0)), ("RightHand", 0, (0.03, -0.05, 0.09)), ("RightIndex", 1, (0.034, 0.0, 0.055)),
-               ("RightFingers", 1, (0.033, -0.05, 0.075)), ("LeftArm", 0, (-0.4, -0.32, 0.05)), ("LeftHand", 4, (-0.01, 0.025, -0.44)),
-               ("LeftFingers", 5, (-0.035, 0.04, -0.48))]
+# The hands: high-resolution, fingerless gloves, every finger rigged (see make_hands.py).
+import make_hands as H
+
+GRIP = H.Grip((0, -0.05, 0.0555), (0, -0.14, 0.055), (0, 0.366, 0.93), 0.026, 0.0161)
+GUARD = H.Grip((0, 0.068, -0.49), (0, 0, -1), (1, 0, 0), 0.0365, 0.0365)
+RECEIVER = H.Grip((0, 0.062, -0.1), (0, 0, -1), (0, 1, 0), 0.036, 0.022)
+
+def hand_layout():
+    rr = H.frame(K=(0, 0.93, -0.366), N=(-0.97, 0, 0.24))
+    mcp = np.array([0.03, -0.028, 0.035])                 # middle knuckle: front-right of the grip
+    rt = mcp - rr @ np.array([0.009, 0.096, 0.0])
+    lr = H.frame(K=(0, 0, 1), N=(0.42, 0.9, 0))
+    lmcp = np.array([0.026, 0.024, -0.49])                 # left middle knuckle: under and right of the handguard
+    lt = lmcp - lr @ np.array([-0.009, 0.096, 0.0])
+    right = dict(R=rr, t=rt, grips=[GRIP], trigger=np.array([0.003, 0.012, -0.047]), elbow=(0.22, -0.3, 0.42), shoulder=(0.32, -0.42, 0.8))
+    left = dict(R=lr, t=lt, grips=[GUARD], elbow=(-0.4, -0.32, 0.05), shoulder=(-0.52, -0.4, 0.5))
+    return right, left
 
 def hands():
-    """The trooper's gloved hands and sleeves, rigged: the trigger finger squeezes when firing,
-    the left hand leaves the handguard to change the magazine."""
-    m = Mesh()
-    m.box("glove", (0.028, -0.045, 0.065), (0.03, 0.1, 0.085), H_RHAND, r=(18, 0, 0))
-    # trigger finger, resting on the trigger
-    m.tube("glove", [(0.034, 0.0, 0.055), (0.025, -0.003, 0.0), (0.008, -0.008, -0.045), (-0.002, -0.018, -0.06)], [0.012, 0.011, 0.01, 0.009], sides=6, joint=H_RINDEX)
-    for y in (-0.035, -0.065, -0.093):
-        m.tube("glove", [(0.035, y, 0.08), (0.03, y - 0.01, 0.02), (0.0, y - 0.012, 0.0), (-0.027, y - 0.01, 0.03)], 0.0115, sides=6, joint=H_RFINGERS)
-    m.tube("glove", [(0.03, 0.02, 0.1), (0.0, 0.05, 0.06), (-0.022, 0.064, 0.0)], [0.016, 0.013, 0.011], sides=6, joint=H_RHAND)   # thumb
-    m.tube("glove", [(0.03, -0.06, 0.12), (0.06, -0.1, 0.2)], 0.042, sides=10, joint=H_RHAND)                                      # cuff
-    m.tube("sleeve", [(0.06, -0.1, 0.2), (0.15, -0.22, 0.42), (0.24, -0.34, 0.66)], [0.047, 0.058, 0.07], sides=12, joint=H_ROOT)
-    m.box("glove", (0, 0.022, -0.48), (0.085, 0.03, 0.12), H_LHAND)
-    for z in (-0.44, -0.47, -0.5, -0.53):
-        m.tube("glove", [(-0.035, 0.035, z), (-0.042, 0.072, z), (-0.02, 0.104, z), (0.018, 0.1, z)], 0.0115, sides=6, joint=H_LFINGERS)
-    m.tube("glove", [(0.03, 0.03, -0.43), (0.042, 0.07, -0.47), (0.03, 0.095, -0.5)], [0.015, 0.012, 0.01], sides=6, joint=H_LHAND)   # thumb
-    m.tube("glove", [(-0.01, 0.01, -0.41), (-0.08, -0.04, -0.33)], 0.04, sides=10, joint=H_LHAND)
-    m.tube("sleeve", [(-0.08, -0.04, -0.33), (-0.22, -0.16, -0.16), (-0.4, -0.32, 0.05)], [0.046, 0.056, 0.068], sides=12, joint=H_LARM)
-    return m
-
-HAND_CLIPS = {
-    "Idle": (2.0, {H_RFINGERS: [(0, (0, 0, 0)), (1.0, (-3, 0, 0)), (2.0, (0, 0, 0))]}),
-    # a quick squeeze of the trigger
-    "Fire": (0.1, {H_RINDEX: [(0, (0, 0, 0)), (0.03, (-24, 0, 0)), (0.1, (0, 0, 0))]}),
-    # the left hand drops to the magazine, grips it, pulls it out, pushes a new one in, returns
-    "Reload": (1.4, {
-        ("move", H_LARM): [(0, (0, 0, 0)), (0.35, (0.14, -0.2, 0.26)), (0.6, (0.16, -0.32, 0.27)), (0.85, (0.15, -0.2, 0.27)), (1.15, (0.05, -0.05, 0.08)), (1.4, (0, 0, 0))],
-        H_LFINGERS: [(0, (0, 0, 0)), (0.3, (35, 0, 0)), (0.4, (-30, 0, 0)), (0.9, (-30, 0, 0)), (1.2, (0, 0, 0))],
-        H_LHAND: [(0, (0, 0, 0)), (0.35, (0, 0, -40)), (1.05, (0, 0, -40)), (1.4, (0, 0, 0))],
-        H_RFINGERS: [(0, (0, 0, 0)), (0.5, (-8, 0, 0)), (1.4, (0, 0, 0))],
-    }),
-}
+    return H.build(Mesh, *hand_layout(), voxel=0.0017)
 
 def pickup(kind):
     m = Mesh()
@@ -289,7 +304,10 @@ if __name__ == "__main__":
               ("rifle", rifle()), ("medkit", pickup("medkit")), ("ammo", pickup("ammo")), ("core", core()), ("node", node())]
     for name, mesh in models:
         A.write_obj(name, mesh, M, tile=4.0 if name.startswith(("ground", "roof")) else (0.25 if name == "hands" else (0.5 if name in ("rifle", "drone", "drone_heavy") else 3.0)))
-    A.write_gltf("hands", hands(), M, HAND_JOINTS, HAND_CLIPS)
+    mesh, joints, clips = hands()
+    A.write_gltf("hands", mesh, M, joints, clips, external=True)
+    import make_terrains
+    make_terrains.outpost(OUT)
     files = sorted(os.listdir(OUT))
     rs = "// Generated by tools/make_outpost_assets.py. Do not edit.\npub const FILES: &[(&str, &[u8])] = &[\n"
     rs += "".join(f'    ("{f}", include_bytes!("../template/outpost/{f}")),\n' for f in files) + "];\n"

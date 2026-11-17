@@ -163,6 +163,14 @@ pub fn build_scene(dir: &Path) -> Scene {
 
     // ------------------------------------------------------------ floors, roofs, walls
     let building = s.add_empty("Outpost");
+    // the compound sits in a rocky basin ringed by ridges
+    let land = model(&mut s, "Basin", "basin.terrain", v(0.0, 0.0, -6.0), 0.0);
+    {
+        let e = s.get_mut(land).unwrap();
+        e.physics = Some(Physics::new(BodyKind::Static, ColliderShape::Mesh));
+        e.mesh.as_mut().unwrap().cast_shadow = false;
+    }
+    adopt(&mut s, building, land);
     for (name, file, pos) in [
         ("Yard", "ground_yard.obj", v(0.0, 0.0, 24.0)),
         ("Warehouse Floor", "ground_hall.obj", v(0.0, 0.0, -14.0)),
@@ -322,11 +330,13 @@ pub fn build_scene(dir: &Path) -> Scene {
         c.near = 0.04;
         c.far = 300.0;
     }
-    let rifle = model(&mut s, "Rifle", "rifle.obj", v(0.19, -0.19, -0.36), 0.0);
+    let rifle = model(&mut s, "Rifle", "rifle.obj", v(0.17, -0.2, -0.38), 0.0);
     {
         let e = s.get_mut(rifle).unwrap();
         e.parent = Some(head);
         e.scale = Vec3::splat(0.6);
+        // held a little turned in and rolled, so both hands show
+        e.rotation = v(2.0, 5.0, 14.0);
         let m = e.mesh.as_mut().unwrap();
         m.cast_shadow = false;
         m.shininess = 0.7;

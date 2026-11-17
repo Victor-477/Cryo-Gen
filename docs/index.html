@@ -77,7 +77,7 @@ footer { margin-top: 70px; color: var(--muted); font-size: .86rem; border-top: 1
 <div class="layout">
 <nav>
   <a class="brand" href="#top">❄ Cryo Engine</a>
-  <div class="version">Documentation · 0.12.0-beta</div>
+  <div class="version">Documentation · 0.16.0-beta</div>
   <h4>Start</h4>
   <a class="item" href="#top">Overview</a>
   <a class="item" href="#install">Download and install</a>
@@ -99,7 +99,11 @@ footer { margin-top: 70px; color: var(--muted); font-size: .86rem; border-top: 1
   <a class="item" href="#qte">Quick time events</a>
   <a class="item" href="#first-person">First-person camera</a>
   <a class="item" href="#skeletal">Animated models</a>
+  <a class="item" href="#controls">Gamepads and controls</a>
+  <a class="item" href="#prefabs">Prefabs and levels</a>
   <a class="item" href="#physics">Physics</a>
+  <a class="item" href="#terrain">Terrain</a>
+  <a class="item" href="#performance">Performance</a>
   <h4>Projects</h4>
   <a class="item" href="#example">Example: Frostpeak Isles</a>
   <a class="item" href="#ashen">Example: Ashen Keep</a>
@@ -243,6 +247,9 @@ footer { margin-top: 70px; color: var(--muted); font-size: .86rem; border-top: 1
 <tr><td><b>Loop</b></td><td>Starts again when it reaches the end.</td></tr>
 <tr><td><b>Autoplay</b></td><td>Starts by itself when the game starts.</td></tr>
 <tr><td><b>Cutscene</b></td><td>Blocks the player's input and shows cinema bars while playing. <kbd>Enter</kbd> skips it, still firing its remaining events so the game ends up in the right state.</td></tr>
+<tr><td><b>Play video</b></td><td>Plays a video cutscene over the game screen; the game and the clip wait until it ends. <kbd>Enter</kbd>, <kbd>Space</kbd> or <kbd>Esc</kbd> skips it.</td></tr>
+<tr><td><b>Subtitle</b></td><td>A line of dialogue or narration at the bottom of the screen, for some seconds.</td></tr>
+<tr><td><b>Fade</b></td><td>Fades the picture to black or back, over some seconds.</td></tr>
 </table></div>
 <h3>From scripts</h3>
 <pre><code>anim.play(<span class="s">"Victory"</span>)       <span class="c">// start (or restart) a clip</span>
@@ -256,6 +263,19 @@ anim.stop(<span class="s">"Victory"</span>)
 scene.set_camera(scene.find(<span class="s">"Boss Camera"</span>))   <span class="c">// camera cut from code</span></code></pre>
 <p>Each key chooses how the value travels to the next one: Smooth, Linear, Step, Ease in, Ease out, Overshoot (passes the target and comes back) or Bounce.</p>
 <p>Tracks store local values, so an animated object can also be a physics body: a static body moved by a clip pushes dynamic bodies out of its way.</p>
+
+<h3 id="cutscenes">Making a cutscene</h3>
+<p>Two ways, which can be mixed in the same clip:</p>
+<ul>
+  <li><b>Animated in the engine</b>: <b>Create &gt; Cutscene</b> adds a clip with its own camera starting at the editor's view, a fade from black, a first subtitle and the cut back to the game camera. Move the camera and press the key button on the Timeline to add shots; add cuts, subtitles, fades, sounds and quick time events with <b>+ Event</b>. Start it with <code>anim.play("Cutscene 1")</code> or tick <b>Autoplay</b>.</li>
+  <li><b>A video</b>: <b>File &gt; Import video…</b> converts a film into the project's <code>videos/</code> folder, as a <code>.cryovid</code> that every exported game plays the same way, with no system codec. Animated GIFs convert directly; <code>.mp4</code>, <code>.mov</code>, <code>.webm</code>, <code>.mkv</code> and <code>.avi</code> need <a href="https://ffmpeg.org">ffmpeg</a> on the computer where the game is made (<code>brew install ffmpeg</code> on macOS). Without ffmpeg, export the film from any video editor as numbered PNG or JPEG frames (24 a second) plus an optional <code>sound.wav</code>, and use <b>File &gt; Import video from a folder of pictures…</b>. Videos are kept at up to 1280 x 720.</li>
+</ul>
+<pre><code><span class="c">// from a script</span>
+video.play(<span class="s">"videos/intro.cryovid"</span>)   <span class="c">// the game waits; `on video_end(file)` arrives when it ends or is skipped</span>
+<span class="k">if</span> video.playing { ... }
+video.stop()
+subtitle(<span class="s">"The keep fell a hundred winters ago."</span>, <span class="n">4</span>)
+fade(<span class="n">1</span>, <span class="n">0.5</span>)   <span class="c">// to black in half a second; fade(0, 1) comes back</span></code></pre>
 
 <h2 id="modelling">Modelling</h2>
 <p><b>Edit Mesh</b> mode lets you shape geometry inside the editor. Start it with <b>+ Create &gt; Editable mesh</b>, or select an object and click <b>Edit mesh</b> in its Mesh component. A primitive is first saved as an <code>.obj</code> in <code>models/</code>; imported <code>.obj</code> models can be edited too.</p>
@@ -547,11 +567,32 @@ scene.set_camera(scene.find(<span class="s">"Boss Camera"</span>))   <span class
 }</code></pre>
 <p>This is separate from the <a href="#animation">Timeline</a>, which moves whole objects: use the Timeline to move a character along a path, and its clips to move its limbs.</p>
 
+<h2 id="controls">Gamepads and controls</h2>
+<p>Plug in a gamepad (Xbox, PlayStation, Switch Pro and most others) and games answer to it with no changes:</p>
+<ul>
+  <li>The left stick adds to <code>input.axis("horizontal")</code> and <code>input.axis("vertical")</code>; the right stick moves like the mouse (<code>input.mouse_dx</code>, <code>mouse_dy</code>) and is also <code>input.axis("look_x")</code>, <code>"look_y"</code>; the triggers are <code>input.axis("pad_lt")</code>, <code>"pad_rt"</code>.</li>
+  <li>Buttons can be read by name: <code>pad_a</code>, <code>pad_b</code>, <code>pad_x</code>, <code>pad_y</code>, <code>pad_lb</code>, <code>pad_rb</code>, <code>pad_lt</code>, <code>pad_rt</code>, <code>pad_start</code>, <code>pad_select</code>, <code>pad_up</code>, <code>pad_down</code>, <code>pad_left</code>, <code>pad_right</code>, <code>pad_ls</code>, <code>pad_rs</code>. Start opens the pause menu of an exported game.</li>
+  <li><b>Bindings</b> let one name stand for several inputs. By default <code>space</code> is also the A button, <code>mouse_left</code> the right trigger, <code>shift</code> the left bumper, and so on, so <code>input.pressed("space")</code> jumps with either.</li>
+</ul>
+<p>The player changes them in <b>Controls</b> (pause menu, or <b>Window &gt; Controls and gamepad</b> in the editor): click a key, then press the new key or button. The changes are kept per game in the user's settings. A project can bring its own list in <code>input.json</code>:</p>
+<pre><code>{ "bindings": [
+  { "name": "jump", "label": "Jump", "inputs": ["space", "pad_a"] },
+  { "name": "fire", "label": "Fire", "inputs": ["mouse_left", "pad_rt"] }
+] }</code></pre>
+<p>Then scripts read <code>input.pressed("jump")</code>. The pause menu also has volume sliders for everything, music and effects.</p>
+
+<h2 id="prefabs">Prefabs and levels</h2>
+<ul>
+  <li>Right-click an entity in the Hierarchy and choose <b>Save as prefab</b>: it and everything under it are written to <code>prefabs/</code>. Double-click the prefab in Content to place a copy.</li>
+  <li><code>scene.spawn_prefab("prefabs/Enemy.cryoprefab", vec3(0, 0, 10))</code> places a copy while the game runs and returns its root entity; its scripts start on the next frame.</li>
+  <li><code>scene.load("scenes/Level2.cryoscene")</code> switches to another scene at the end of the frame. In the editor, Stop still brings back the scene the game started from.</li>
+</ul>
+
 <h2 id="physics">Physics</h2>
 <ul>
   <li><b>Static</b> bodies never move on their own; move them from a script to make platforms and doors. <b>Dynamic</b> bodies fall and are pushed out of whatever they overlap.</li>
   <li>Colliders are a <b>box</b> (which follows the entity's rotation, so ramps work) or a <b>sphere</b>, sized from the entity's scale or the model's bounds.</li>
-  <li>The <b>Mesh</b> collider uses the triangles of an imported model, so a level or terrain is solid in its real shape. It is for static bodies; boxes and spheres collide with it.</li>
+  <li>The <b>Mesh</b> collider uses the triangles of an imported model, so a level is solid in its real shape. It is for static bodies; boxes and spheres collide with it. On a <a href="#terrain">terrain</a> it uses the height field instead: fast at any size.</li>
   <li><b>Can rotate</b> lets a dynamic body spin, roll and tip over when it hits something. Leave it off for characters.</li>
   <li>A <b>trigger</b> reports contact without blocking: use it for pickups, checkpoints and zones.</li>
   <li>Drive characters by setting <code>self.velocity</code> and checking <code>self.grounded</code>.</li>
@@ -563,6 +604,30 @@ scene.set_camera(scene.find(<span class="s">"Boss Camera"</span>))   <span class
         other.translate(delta)
     }
 }</code></pre>
+
+<h2 id="terrain">Terrain</h2>
+<p><b>Create &gt; Terrain</b> adds ground with hills around a flat middle. It is made from a <b>height map</b>: a grayscale image where white is high. Paint it in any image editor (16-bit PNG gives the smoothest slopes) and the terrain changes when you save. Its settings are a small text file next to it, <code>models/terrain.terrain</code>:</p>
+<pre><code>heightmap = terrain_height.png
+size = 160 160            <span class="c"># metres along X and Z, centred on the entity</span>
+height = 24               <span class="c"># metres between black and white</span>
+base = 0                  <span class="c"># height of black</span>
+texture = tex_grass.jpg   <span class="c"># repeated every `tile` metres; tex_grass_n.jpg is used as its normal map</span>
+tile = 6
+steep_texture = tex_cliff.jpg   <span class="c"># on slopes steeper than `steep` (1 = flat, 0.7 is about 45 degrees)</span>
+steep = 0.8
+color = 1 1 1</code></pre>
+<p>Give the entity a static <b>Mesh</b> collider and characters walk up and down its slopes; <code>scene.raycast</code> hits it too. Both example games stand on terrains: mounds in Ashen Keep's bailey and hills around the castle, and the ridges around Outpost Kestrel.</p>
+
+<h2 id="performance">Performance</h2>
+<ul>
+  <li><b>Window &gt; Graphics quality</b> (and the pause menu in exported games): <b>High</b> uses every effect, <b>Medium</b> drops screen-space reflections, <b>Low</b> drops post-processing and the shadows of local lights.</li>
+  <li>Models over 2500 triangles get two simpler versions automatically, used when they are far away; animated models keep their skeleton in them. Tiny far objects are skipped.</li>
+  <li>Lamps only light the objects they can reach, the shadows of lamps that stay still are redrawn every other frame, and the renderer asks the graphics driver for each shader setting once instead of every frame.</li>
+  <li><b>Window &gt; Frame rate limit</b> (and the pause menu): 30, 60, 120 or no limit; 60 by default. A lower limit keeps the computer cooler and quieter. "No limit" also turns off the screen's own sync the next time the program starts.</li>
+  <li>On very dense screens (Retina, 4K) the 3D picture is drawn up to 1260 lines high on High, 1080 on Medium and 900 on Low, then stretched to the window; the interface stays sharp. <code>CRYO_RENDER_SCALE=1</code> forces full size.</li>
+  <li><kbd>F3</kbd> in a running game shows the frame rate and frame time.</li>
+  <li><code>cryo MyGame --bench</code> runs the game for 20 seconds (or <code>--bench=60</code>), with vsync off, and writes <code>bench-report.txt</code> in the project: graphics card, resolution, average frame rate, median, 95% and 99% frame times, and the 1% low. On macOS, <code>scripts/check-mac.command</code> in the source builds the engine, runs the tests and benchmarks both examples into <code>mac-report.txt</code>.</li>
+</ul>
 
 <h2 id="example">Example: Frostpeak Isles</h2>
 <p>The default project is a small 3D platformer: five Frost Shards hidden across a chain of floating islands, each stretch teaching one move.</p>
@@ -625,7 +690,8 @@ scene.set_camera(scene.find(<span class="s">"Boss Camera"</span>))   <span class
 <div class="table-wrap"><table>
 <tr><td><code>scene.raycast(origin, direction, distance, ignore)</code></td><td>The first solid thing along a ray, as a map with <code>entity</code>, <code>point</code>, <code>normal</code> and <code>distance</code>, or <code>nil</code>. Shots and line-of-sight checks use it.</td></tr>
 <tr><td><code>crosshair(true)</code></td><td>Draws an aiming mark in the middle of the screen.</td></tr>
-<tr><td><b>Scene settings &gt; Bloom, Ambient occlusion, Reflections</b></td><td>Post-processing: glow around lights, shading in creases and corners, and glossy surfaces reflecting what is on screen. Reflections need Relief.</td></tr>
+<tr><td><b>Scene settings &gt; Bloom, Ambient occlusion, Reflections, Bounced light</b></td><td>Post-processing: glow around lights, shading in creases and corners, glossy surfaces reflecting what is on screen, and light bouncing off lit surfaces onto their surroundings (screen-space global illumination). Reflections need Relief.</td></tr>
+<tr><td><b>Hands</b></td><td>About 118,000 triangles, made by <code>tools/make_hands.py</code>: fingerless gloves, knuckle guard, fingernails, three joints per finger. The fingers are curled automatically to wrap the grip and the handguard; the Idle, Fire and Reload clips bend each joint.</td></tr>
 <tr><td><b>Scene settings &gt; Relief</b></td><td>Textures also bump the lighting, so joints, rivets and scratches catch the light without normal maps.</td></tr>
 </table></div>
 
@@ -638,20 +704,24 @@ scene.set_camera(scene.find(<span class="s">"Boss Camera"</span>))   <span class
 <p>To ship for another system without leaving yours, choose <b>File &gt; Export for another system</b> and pick the <code>cryo</code> program from the Cryo Engine download for that system (<code>cryo.exe</code> for Windows, <code>cryo</code> inside the Linux or macOS download). The game is laid out for that system.</p>
 
 <h2 id="source">Building from source</h2>
-<p>Requires <a href="https://rustup.rs">Rust</a>. On Linux also install <code>libasound2-dev</code>.</p>
+<p>Requires <a href="https://rustup.rs">Rust</a>. On Linux also install <code>libasound2-dev</code> and <code>libudev-dev</code>.</p>
 <pre><code>git clone https://github.com/Victor-477/Cryo-Gen.git
 cd Cryo-Gen
 cargo run --release                      <span class="c"># the editor</span>
 cargo run --release -- path/to/MyGame    <span class="c"># open or create a project there</span>
 cargo run --release -- MyGame --game     <span class="c"># run only the game</span>
-cargo test                               <span class="c"># all tests</span></code></pre>
+cargo test                               <span class="c"># all tests</span>
+cargo build --profile dist               <span class="c"># the shipped build (thin LTO, stripped): slower to build</span></code></pre>
+<p><code>--release</code> builds are incremental: after the first build, changing a file of the engine rebuilds in a few seconds. Development builds (<code>cargo build</code>) optimise the dependencies fully and keep only line numbers as debug information.</p>
 <p>The workspace has two crates: <code>cryo-lang</code> (the language, with no dependencies) and <code>cryo-editor</code> (engine and editor). The <a href="https://github.com/Victor-477/Cryo-Gen#repository-layout">README</a> maps the source files.</p>
 
 <h2 id="limits">Known limits</h2>
 <ul>
   <li>Skeletal animation plays one clip at a time per model (with a blend when switching). Models with up to 64 joints are posed on the graphics card; larger skeletons fall back to the processor. There are no morph targets.</li>
   <li>Modelling works on <code>.obj</code> models, one material per model, with automatic texture coordinates. There are no loop cuts, bevels or boolean operations yet.</li>
-  <li>Materials: base colour and texture, roughness, metallic and normal map. Emissive, occlusion and transparency maps are not read yet.</li>
+  <li>Materials: base colour and texture, roughness, metallic, normal map, emissive colour and transparency. Occlusion maps and per-pixel emissive or roughness maps are not read yet.</li>
+  <li>Bounced light is computed from what is on screen: light from things outside the view, or hidden behind others, does not bounce.</li>
+  <li>Terrains blend two textures by slope (gentle ground and steep rock); there is no painting of texture layers yet.</li>
   <li>Shadows come from the first directional light and from the local lights nearest the camera (16 shadow tiles: a spotlight uses one, a point light six).</li>
   <li>Up to 4 directional lights, and the 16 point/spot lights closest to the camera, are used in each view.</li>
   <li>Mesh colliders are for static bodies. Bodies that can rotate use a simplified model: stacks of boxes are not stable.</li>

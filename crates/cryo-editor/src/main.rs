@@ -29,7 +29,10 @@ mod scene;
 mod settings;
 mod skel;
 mod timeline;
+mod input;
+mod terrain;
 mod tutorial;
+mod video;
 mod viewport;
 
 use eframe::egui;
@@ -47,8 +50,14 @@ fn main() -> eframe::Result {
             "--game" => game_flag = true,
             "--ashen" => ashen_flag = true,
             "--outpost" => outpost_flag = true,
+            b if b == "--bench" || b.starts_with("--bench=") => {
+                // runs the game, measures frame times, writes bench-report.txt and quits
+                let secs = b.strip_prefix("--bench=").and_then(|v| v.parse().ok()).unwrap_or(20.0f32);
+                let _ = app::BENCH_SECONDS.set(secs.clamp(1.0, 600.0));
+                game_flag = true;
+            }
             "-h" | "--help" => {
-                println!("Cryo Engine\n\nUsage: cryo [project_folder] [--play | --game | --ashen]\n\n  --ashen  create the Ashen Keep example game in the folder (if it is empty) and open it\n  --play   open the project already in Play mode\n  --game   run only the game, without the editor");
+                println!("Cryo Engine\n\nUsage: cryo [project_folder] [--play | --game | --ashen]\n\n  --ashen  create the Ashen Keep example game in the folder (if it is empty) and open it\n  --play   open the project already in Play mode\n  --game   run only the game, without the editor\n  --bench[=seconds]  run the game, measure frame times (default 20 s) and write bench-report.txt");
                 return Ok(());
             }
             other => project_dir = Some(PathBuf::from(other)),
@@ -108,6 +117,8 @@ fn main() -> eframe::Result {
             .with_min_inner_size([900.0, 560.0]),
         depth_buffer: 24,
         multisampling: msaa,
+        // the benchmark measures how fast frames can be made, not the screen's refresh rate
+        glow_options: eframe::egui_glow::GlowConfiguration { vsync: app::BENCH_SECONDS.get().is_none() && settings.fps() != 0, ..Default::default() },
         ..Default::default()
     };
     let result = eframe::run_native(

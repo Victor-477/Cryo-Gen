@@ -68,6 +68,18 @@ pub struct State {
     pub drag: Option<GizmoDrag>,
     pub play: Option<Play>,
     pub input: InputState,
+    /// Gamepads, the controls of the project (with the player's changes) and how they resolve.
+    pads: crate::input::Gamepads,
+    pad: crate::input::Pad,
+    resolver: crate::input::Resolver,
+    pub bindings: Vec<crate::input::Binding>,
+    bindings_for: PathBuf,
+    /// What was pressed this frame before bindings (for the Controls menu).
+    raw_pressed: std::collections::HashSet<String>,
+    raw_held: std::collections::HashSet<String>,
+    /// Controls menu: open, and which binding waits for a new key (index, gamepad?).
+    show_controls: bool,
+    rebinding: Option<(usize, bool)>,
     /// The game is holding the mouse pointer (first-person cameras).
     pub mouse_grabbed: bool,
     pub logs: Vec<LogLine>,
@@ -97,7 +109,11 @@ pub struct State {
     pub show_grid: bool,
     pub assets: Assets,
     /// Exported game: no editor, only the game screen.
+    /// The frame of the video cutscene on screen: (file, frame number, picture).
+    pub film_tex: Option<(String, usize, egui::TextureHandle)>,
     pub game_only: bool,
+    /// The program started without the screen's sync (frame-rate limit "none", or a benchmark).
+    pub vsync_off: bool,
 }
 
 impl State {
@@ -213,8 +229,93 @@ impl State {
     }
 
     /// Imports external files into the project (models, textures, sounds).
+    /// Converts a normal video into the project's `videos/` folder (needs ffmpeg).
+    pub fn import_video(&mut self, src: &std::path::Path) -> Option<String> {
+        let stem = src.file_stem().and_then(|s| s.to_str()).unwrap_or("video");
+        let name: String = stem.chars().map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
+        let rel = format!("videos/{name}.{}", crate::video::EXT);
+        match crate::video::import(src, &self.project_dir.join(&rel)) {
+            Ok((frames, seconds)) => {
+                self.info(tr!(
+                    "Video imported: {rel} ({frames} frames, {seconds:.1} s). Play it with a \"Play video\" event on the Timeline or video.play(\"{rel}\") in a script.",
+                    "Vídeo importado: {rel} ({frames} quadros, {seconds:.1} s). Toque com um evento \"Tocar vídeo\" na Timeline ou video.play(\"{rel}\") em um script."
+                ));
+                self.browser_dir = "videos".into();
+                Some(rel)
+            }
+            Err(e) => {
+                self.error(tr!("Video: {e}", "Vídeo: {e}"));
+                self.focus_tab = Some(Tab::Console);
+                None
+            }
+        }
+    }
+
+    pub fn import_video_dialog(&mut self) {
+        let picked = rfd::FileDialog::new()
+            .set_title(tr!("Import a video cutscene", "Importar um vídeo de cutscene"))
+            .add_filter(tr!("Videos", "Vídeos"), crate::video::SOURCE_EXTS)
+            .pick_files();
+        for src in picked.unwrap_or_default() {
+            self.import_video(&src);
+        }
+    }
+
+    /// A new cutscene, ready to edit: a clip that blocks the player, with its own camera
+    /// starting at the editor's view, a fade from black and the cut back to the game camera.
+    pub fn add_cutscene(&mut self) {
+        use crate::anim::{Action, Clip, Ease, Marker, Property};
+        let mut n = 1;
+        while self.scene.animations.iter().any(|c| c.name == format!("Cutscene {n}")) {
+            n += 1;
+        }
+        let game_cam = self.scene.entities.iter().find(|e| e.camera.is_some()).map(|e| e.id);
+        let cam = self.scene.add_camera();
+        let (pos, rot) = (self.cam.pos, glam::Vec3::new(self.cam.pitch.to_degrees(), self.cam.yaw.to_degrees(), 0.0));
+        let ahead = self.cam.forward() * 4.0;
+        if let Some(e) = self.scene.get_mut(cam) {
+            e.name = format!("Cutscene {n} Camera");
+            e.position = pos;
+            e.rotation = rot;
+        }
+        let mut clip = Clip::new(format!("Cutscene {n}"));
+        clip.duration = 6.0;
+        clip.cutscene = true;
+        let t = clip.track_mut(cam, Property::Position);
+        t.set_key(0.0, pos.to_array());
+        t.set_key(6.0, (pos + ahead).to_array());
+        for k in &mut t.keys {
+            k.ease = Ease::Smooth;
+        }
+        let r = clip.track_mut(cam, Property::Rotation);
+        r.set_key(0.0, rot.to_array());
+        r.set_key(6.0, rot.to_array());
+        clip.markers.push(Marker { t: 0.0, action: Action::Camera { entity: cam } });
+        clip.markers.push(Marker { t: 0.0, action: Action::Fade { to: 1.0, seconds: 0.0 } });
+        clip.markers.push(Marker { t: 0.05, action: Action::Fade { to: 0.0, seconds: 1.0 } });
+        clip.markers.push(Marker { t: 1.5, action: Action::Subtitle { text: tr!("Write the first line here.", "Escreva a primeira fala aqui."), seconds: 3.0 } });
+        if let Some(back) = game_cam {
+            clip.markers.push(Marker { t: 5.95, action: Action::Camera { entity: back } });
+        }
+        self.scene.animations.push(clip);
+        self.timeline.clip = self.scene.animations.len() - 1;
+        self.timeline.time = 0.0;
+        self.selected = Some(cam);
+        self.focus_tab = Some(Tab::Timeline);
+        self.info(tr!(
+            "Cutscene {n} created. On the Timeline: move the camera and press the key button to add shots, use + Event for cuts, subtitles, fades, sounds and videos. Start it with anim.play(\"Cutscene {n}\") or tick Autoplay.",
+            "Cutscene {n} criada. Na Timeline: mova a câmera e use o botão de chave para criar tomadas, e + Evento para cortes, legendas, fades, sons e vídeos. Inicie com anim.play(\"Cutscene {n}\") ou marque Autoplay."
+        ));
+    }
+
     pub fn import_paths(&mut self, paths: &[PathBuf]) {
         for src in paths {
+            // videos are converted, not copied
+            let ext = src.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+            if crate::video::SOURCE_EXTS.contains(&ext.as_str()) {
+                self.import_video(src);
+                continue;
+            }
             match project::import_file(&self.project_dir, src) {
                 Ok(rel) => {
                     self.assets.invalidate(&rel);
@@ -441,6 +542,14 @@ impl State {
                 }
                 ui.add_space(8.0);
                 self.graphics_choice(ui);
+                ui.add_space(6.0);
+                self.fps_choice(ui);
+                ui.add_space(6.0);
+                self.volume_choice(ui);
+                ui.add_space(6.0);
+                if ui.add_sized([240.0, 26.0], egui::Button::new(tr!("Controls…", "Controles…"))).clicked() {
+                    self.show_controls = true;
+                }
                 let mut full = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
                 if ui.checkbox(&mut full, tr!("Full screen", "Tela cheia")).changed() {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(full));
@@ -450,11 +559,120 @@ impl State {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             });
+        self.controls_ui(ctx);
         if resume {
             self.pause_menu = false;
             if let Some(p) = &mut self.play {
                 p.paused = false;
             }
+        }
+    }
+
+    /// Volume sliders (all, music, effects), kept in the user's settings.
+    pub fn volume_choice(&mut self, ui: &mut egui::Ui) {
+        ui.label(tr!("Volume", "Volume"));
+        let mut changed = false;
+        egui::Grid::new("volumes").num_columns(2).show(ui, |ui| {
+            for (name, v) in [
+                (tr!("All", "Geral"), &mut self.settings.volume_master),
+                (tr!("Music", "Música"), &mut self.settings.volume_music),
+                (tr!("Effects", "Efeitos"), &mut self.settings.volume_effects),
+            ] {
+                ui.label(name);
+                let mut pct = (v.unwrap_or(1.0) * 100.0).round();
+                if ui.add(egui::Slider::new(&mut pct, 0.0..=100.0).suffix(" %").fixed_decimals(0)).changed() {
+                    *v = Some(pct / 100.0);
+                    changed = true;
+                }
+                ui.end_row();
+            }
+        });
+        if changed {
+            self.settings.save();
+        }
+    }
+
+    /// The Controls window: what each control does and what to press for it; click a key to
+    /// change it, then press the new key or gamepad button.
+    pub fn controls_ui(&mut self, ctx: &egui::Context) {
+        if !self.show_controls {
+            return;
+        }
+        // in the editor nothing reads the keys for the game: read them here
+        if self.rebinding.is_some() && !self.playing() {
+            let mut keys: std::collections::HashSet<String> = ctx.input(|i| {
+                i.events
+                    .iter()
+                    .filter_map(|e| match e {
+                        egui::Event::Key { key, pressed: true, repeat: false, .. } => Some(key.name().to_lowercase()),
+                        egui::Event::PointerButton { button: egui::PointerButton::Secondary, pressed: true, .. } => Some("mouse_right".into()),
+                        _ => None,
+                    })
+                    .collect()
+            });
+            keys.extend(self.pad.buttons.iter().map(|b| b.to_string()));
+            self.raw_pressed = keys;
+        }
+        // waiting for a new key: the first one pressed of the right kind takes the place
+        if let Some((i, pad)) = self.rebinding {
+            let key = self.controls_key();
+            let pick = self.raw_pressed.iter().find(|k| k.starts_with("pad_") == pad && k.as_str() != "escape").cloned();
+            if self.raw_pressed.contains("escape") {
+                self.rebinding = None;
+            } else if let (Some(k), Some(b)) = (pick, self.bindings.get_mut(i)) {
+                match b.inputs.iter().position(|x| x.starts_with("pad_") == pad) {
+                    Some(at) => b.inputs[at] = k,
+                    None => b.inputs.push(k),
+                }
+                let entry = self.settings.bindings.entry(key).or_default();
+                entry.insert(b.name.clone(), b.inputs.clone());
+                self.settings.save();
+                self.rebinding = None;
+            }
+        }
+        let mut open = true;
+        let mut reset = false;
+        egui::Window::new(tr!("Controls", "Controles"))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .show(ctx, |ui| {
+                match &self.pad.name {
+                    Some(n) => ui.label(RichText::new(tr!("Gamepad: {n}", "Controle: {n}")).small()),
+                    None => ui.label(RichText::new(tr!("No gamepad connected.", "Nenhum controle conectado.")).small().weak()),
+                };
+                ui.add_space(4.0);
+                egui::Grid::new("controls").num_columns(3).striped(true).show(ui, |ui| {
+                    for (i, b) in self.bindings.iter().enumerate() {
+                        ui.label(if b.label.is_empty() { b.name.clone() } else { b.label.clone() });
+                        for pad in [false, true] {
+                            let current = b.inputs.iter().find(|x| x.starts_with("pad_") == pad).map(|x| crate::input::label(x)).unwrap_or_else(|| "—".into());
+                            let waiting = self.rebinding == Some((i, pad));
+                            let text = if waiting { tr!("press…", "aperte…") } else { current };
+                            if ui.add_sized([96.0, 22.0], egui::Button::new(text).selected(waiting)).clicked() {
+                                self.rebinding = Some((i, pad));
+                            }
+                        }
+                        ui.end_row();
+                    }
+                });
+                ui.add_space(6.0);
+                ui.label(RichText::new(tr!("Click a key, then press the new key or button (Esc cancels).", "Clique numa tecla e aperte a nova tecla ou botão (Esc cancela).")).small().weak());
+                if ui.button(tr!("Restore defaults", "Restaurar padrão")).clicked() {
+                    reset = true;
+                }
+            });
+        if reset {
+            let key = self.controls_key();
+            self.settings.bindings.remove(&key);
+            self.settings.save();
+            self.reload_bindings();
+            self.rebinding = None;
+        }
+        if !open {
+            self.show_controls = false;
+            self.rebinding = None;
         }
     }
 
@@ -475,6 +693,39 @@ impl State {
             "Low turns off post-processing and the shadows of lamps; Medium turns off reflections. For slower computers.",
             "Baixo desliga o pós-processamento e as sombras das luzes; Médio desliga os reflexos. Para computadores mais lentos."
         ));
+    }
+
+    /// Frame-rate limit of running games: 30, 60, 120 or none.
+    pub fn fps_choice(&mut self, ui: &mut egui::Ui) {
+        ui.label(tr!("Frame rate limit", "Limite de FPS"));
+        ui.horizontal(|ui| {
+            for (value, name) in [(30, "30".to_string()), (60, "60".to_string()), (120, "120".to_string()), (0, tr!("No limit", "Sem limite"))] {
+                if ui.selectable_label(self.settings.fps() == value, name).clicked() {
+                    self.settings.fps_limit = Some(value);
+                    self.settings.save();
+                }
+            }
+        })
+        .response
+        .on_hover_text(tr!(
+            "How many frames per second a running game draws at most. A lower limit keeps the computer cooler and quieter.",
+            "Quantos quadros por segundo um jogo rodando desenha no máximo. Um limite menor deixa o computador mais frio e silencioso."
+        ));
+        // the screen's own sync is chosen when the program starts
+        let free = self.settings.fps() == 0;
+        if free != self.vsync_off {
+            ui.label(
+                RichText::new(if free {
+                    tr!("Restart to remove the screen's own limit too.", "Reinicie para tirar também o limite da própria tela.")
+                } else {
+                    tr!("Restart to sync with the screen again (no tearing).", "Reinicie para voltar a sincronizar com a tela (sem cortes na imagem).")
+                })
+                .small()
+                .weak(),
+            );
+        } else if self.settings.fps() == 120 {
+            ui.label(RichText::new(tr!("A 60 Hz screen still shows 60.", "Uma tela de 60 Hz continua mostrando 60.")).small().weak());
+        }
     }
 
     fn tutorial_ui(&mut self, ctx: &egui::Context) {
@@ -610,7 +861,12 @@ impl State {
             if p.collider != crate::scene::ColliderShape::Mesh {
                 continue;
             }
+            p.terrain = None;
             let Some(model) = m.model.as_ref().and_then(|path| self.assets.model(path)) else { continue };
+            if let Some(field) = &model.terrain {
+                p.terrain = Some(field.clone());
+                continue;
+            }
             let mut tris = vec![];
             for s in &model.subs {
                 let v = |i: u32| {
@@ -657,6 +913,70 @@ impl State {
         }
         self.play = Some(Play { backup, backup_selected: self.selected, rt, paused: false });
         self.drag = None;
+    }
+
+    /// While playing: replaces the scene with another one of the project and starts it.
+    /// Stop still brings back the scene the game started from.
+    pub fn switch_scene(&mut self, rel: &str) {
+        let scene = match std::fs::read_to_string(self.project_dir.join(rel)).map_err(|e| e.to_string()).and_then(|s| Scene::from_json(&s)) {
+            Ok(s) => s,
+            Err(e) => {
+                self.error(tr!("Could not load {rel}: {e}", "Não foi possível carregar {rel}: {e}"));
+                return;
+            }
+        };
+        self.scene = scene;
+        self.selected = None;
+        if self.game_only {
+            self.scene_path = rel.to_string();
+        }
+        self.fill_mesh_colliders();
+        let rt = Runtime::start(&mut self.scene, &self.project_dir, &mut self.logs);
+        if let Some(p) = &mut self.play {
+            p.rt = rt;
+        }
+        self.info(tr!("Scene loaded: {rel}", "Cena carregada: {rel}"));
+    }
+
+    /// Saves the selected entity (and what is under it) as a prefab in `prefabs/`.
+    pub fn save_prefab(&mut self) {
+        let Some(id) = self.selected else { return };
+        let Some(json) = self.scene.prefab_json(id) else { return };
+        let name: String = self.scene.get(id).map(|e| e.name.clone()).unwrap_or_default().chars().map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
+        let rel = format!("prefabs/{}.{}", if name.is_empty() { "Prefab" } else { &name }, crate::scene::PREFAB_EXT);
+        let path = self.project_dir.join(&rel);
+        let result = path.parent().map(std::fs::create_dir_all).unwrap_or(Ok(())).and_then(|_| std::fs::write(&path, json));
+        match result {
+            Ok(()) => {
+                self.browser_dir = "prefabs".into();
+                self.info(tr!(
+                    "Prefab saved: {rel}. Double-click it in Content to place a copy, or use scene.spawn_prefab(\"{rel}\", position) in a script.",
+                    "Prefab salvo: {rel}. Dê dois cliques nele em Conteúdo para colocar uma cópia, ou use scene.spawn_prefab(\"{rel}\", posição) num script."
+                ));
+            }
+            Err(e) => self.error(tr!("Could not save the prefab: {e}", "Não foi possível salvar o prefab: {e}")),
+        }
+    }
+
+    /// Places a copy of a prefab where new things go.
+    pub fn add_prefab_to_scene(&mut self, rel: &str) {
+        let json = match std::fs::read_to_string(self.project_dir.join(rel)) {
+            Ok(j) => j,
+            Err(e) => {
+                self.error(format!("{rel}: {e}"));
+                return;
+            }
+        };
+        match self.scene.instantiate(&json, None, None) {
+            Ok(ids) => {
+                let keep = self.scene.get(ids[0]).map(|e| e.position.y).unwrap_or(0.0);
+                self.place_new(ids[0]);
+                if let Some(e) = self.scene.get_mut(ids[0]) {
+                    e.position.y = keep;
+                }
+            }
+            Err(e) => self.error(format!("{rel}: {e}")),
+        }
     }
 
     pub fn stop_play(&mut self) {
@@ -820,6 +1140,45 @@ impl State {
         );
     }
 
+    /// A terrain with hills around a flat middle, ready to sculpt: its heightmap and settings go
+    /// in `models/`, and it collides as a height field.
+    pub fn add_terrain(&mut self) {
+        let dir = self.project_dir.join("models");
+        let mut name = "terrain".to_string();
+        let mut n = 1;
+        while dir.join(format!("{name}.terrain")).exists() {
+            n += 1;
+            name = format!("terrain{n}");
+        }
+        let file = match crate::terrain::write_default(&dir, &name) {
+            Ok(f) => f,
+            Err(e) => {
+                log(&mut self.logs, LogLevel::Error, format!("terrain: {e}"));
+                return;
+            }
+        };
+        let rel = format!("models/{file}");
+        let Some(model) = self.assets.model(&rel) else { return };
+        let id = self.scene.add_mesh(Shape::Cube);
+        if let Some(e) = self.scene.get_mut(id) {
+            e.name = "Terrain".into();
+            let m = e.mesh.as_mut().unwrap();
+            m.model = Some(rel.clone());
+            m.color = [1.0; 3];
+            m.model_bounds = Some((model.center.to_array(), model.half.to_array()));
+            e.physics = Some(crate::scene::Physics::new(crate::scene::BodyKind::Static, crate::scene::ColliderShape::Mesh));
+        }
+        self.selected = Some(id);
+        log(
+            &mut self.logs,
+            LogLevel::Info,
+            tr!(
+                "Terrain created ({rel}). Paint its heightmap in any image editor (white is high) and change size, height and textures in the .terrain file.",
+                "Terreno criado ({rel}). Pinte o mapa de altura em qualquer editor de imagem (branco é alto) e mude tamanho, altura e texturas no arquivo .terrain."
+            ),
+        );
+    }
+
     pub fn create_menu(&mut self, ui: &mut egui::Ui) {
         if ui.button(tr!("○  Empty", "○  Vazio")).clicked() {
             let id = self.scene.add_empty("Empty");
@@ -890,6 +1249,28 @@ impl State {
             self.add_first_person();
             ui.close();
         }
+        if ui
+            .button(tr!("⛰  Terrain", "⛰  Terreno"))
+            .on_hover_text(tr!(
+                "Ground with hills from a heightmap image, with a collider that follows the slopes.",
+                "Chão com morros a partir de uma imagem de altura, com colisor que segue as encostas."
+            ))
+            .clicked()
+        {
+            self.add_terrain();
+            ui.close();
+        }
+        if ui
+            .button(tr!("🎬  Cutscene", "🎬  Cutscene"))
+            .on_hover_text(tr!(
+                "A new cutscene on the Timeline: its own camera starting at this view, a fade in, a subtitle and the cut back to the game.",
+                "Uma cutscene nova na Timeline: câmera própria começando nesta vista, fade de entrada, legenda e o corte de volta para o jogo."
+            ))
+            .clicked()
+        {
+            self.add_cutscene();
+            ui.close();
+        }
     }
 
     /// Holds or frees the mouse pointer, as the running game asked (`input.lock_mouse`).
@@ -912,26 +1293,48 @@ impl State {
         ctx.send_viewport_cmd(egui::ViewportCommand::CursorVisible(!want));
     }
 
+    /// Key under which the player's control changes for this project are kept.
+    fn controls_key(&self) -> String {
+        self.project_dir.file_name().and_then(|n| n.to_str()).unwrap_or("game").to_string()
+    }
+
+    fn reload_bindings(&mut self) {
+        let key = self.controls_key();
+        self.bindings = crate::input::load(&self.project_dir, self.settings.bindings.get(&key));
+        self.bindings_for = self.project_dir.clone();
+    }
+
     fn collect_input(&mut self, ctx: &egui::Context) {
-        self.input.pressed.clear();
-        self.input.released.clear();
+        if self.bindings_for != self.project_dir {
+            self.reload_bindings();
+        }
+        let prev_pad = std::mem::take(&mut self.pad);
+        self.pad = self.pads.poll();
+        let mut raw_pressed = std::collections::HashSet::new();
+        let mut raw_released = std::collections::HashSet::new();
         self.input.mouse_dx = 0.0;
         self.input.mouse_dy = 0.0;
         self.input.scroll = 0.0;
+        self.input.pad = [0.0; 6];
         if !self.playing() || ctx.egui_wants_keyboard_input() {
             self.input.down.clear();
+            self.input.pressed.clear();
+            self.input.released.clear();
+            self.raw_held.clear();
+            self.raw_pressed.clear();
             return;
         }
+        let mut held = std::mem::take(&mut self.raw_held);
         ctx.input(|i| {
             for ev in &i.events {
                 if let egui::Event::Key { key, pressed, repeat, .. } = ev {
                     let name = key.name().to_lowercase();
                     if *pressed && !*repeat {
-                        self.input.pressed.insert(name.clone());
-                        self.input.down.insert(name);
+                        raw_pressed.insert(name.clone());
+                        held.insert(name);
                     } else if !*pressed {
-                        self.input.released.insert(name.clone());
-                        self.input.down.remove(&name);
+                        raw_released.insert(name.clone());
+                        held.remove(&name);
                     }
                 }
             }
@@ -940,14 +1343,14 @@ impl State {
                 ("mouse_right", egui::PointerButton::Secondary),
                 ("mouse_middle", egui::PointerButton::Middle),
             ] {
-                let was = self.input.down.contains(name);
+                let was = held.contains(name);
                 let now = i.pointer.button_down(button);
                 if now && !was {
-                    self.input.pressed.insert(name.into());
-                    self.input.down.insert(name.into());
+                    raw_pressed.insert(name.into());
+                    held.insert(name.into());
                 } else if !now && was {
-                    self.input.released.insert(name.into());
-                    self.input.down.remove(name);
+                    raw_released.insert(name.into());
+                    held.remove(name);
                 }
             }
             let mut d = i.pointer.delta();
@@ -961,18 +1364,40 @@ impl State {
                     d = raw;
                 }
             }
-            self.input.mouse_dx = d.x;
-            self.input.mouse_dy = d.y;
+            // the right stick looks around like the mouse
+            let dt = i.stable_dt.min(0.1);
+            self.input.mouse_dx = d.x + self.pad.rx * 900.0 * dt;
+            self.input.mouse_dy = d.y - self.pad.ry * 900.0 * dt;
             self.input.scroll = i.smooth_scroll_delta.y;
             if i.modifiers.shift {
-                self.input.down.insert("shift".into());
+                held.insert("shift".into());
             } else {
-                self.input.down.remove("shift");
+                held.remove("shift");
             }
             if !i.focused {
-                self.input.down.clear();
+                held.clear();
             }
         });
+        // gamepad buttons
+        for b in &self.pad.buttons {
+            held.insert(b.to_string());
+            if !prev_pad.buttons.contains(b) {
+                raw_pressed.insert(b.to_string());
+            }
+        }
+        for b in &prev_pad.buttons {
+            if !self.pad.buttons.contains(b) {
+                raw_released.insert(b.to_string());
+            }
+        }
+        let p = &self.pad;
+        self.input.pad = [p.lx, p.ly, p.rx, p.ry, p.lt, p.rt];
+        let (down, pressed, released) = self.resolver.resolve(&held, &raw_pressed, &raw_released, &self.bindings);
+        self.input.down = down;
+        self.input.pressed = pressed;
+        self.input.released = released;
+        self.raw_held = held;
+        self.raw_pressed = raw_pressed;
     }
 
     fn shortcuts(&mut self, ctx: &egui::Context) {
@@ -996,7 +1421,7 @@ impl State {
             }
         }
         if self.playing() {
-            if pressed(Key::Escape) {
+            if pressed(Key::Escape) || (self.game_only && self.input.pressed.contains("pad_start")) {
                 if self.game_only {
                     // an exported game pauses and shows its menu instead of closing at once
                     self.pause_menu = !self.pause_menu;
@@ -1064,6 +1489,79 @@ pub struct App {
     frames: u32,
     fps_at: Instant,
     fps: f32,
+    /// Graphics card and driver, as OpenGL reports them (for the benchmark report).
+    gpu: String,
+    bench: Option<Bench>,
+    /// F3 in a game: frame rate and frame time in the corner.
+    show_fps: bool,
+    /// When the last frame of a running game started (for the frame-rate limit).
+    last_frame: Instant,
+}
+
+/// Seconds the benchmark measures (`cryo <project> --bench[=seconds]`), after 3 s of warm-up.
+pub static BENCH_SECONDS: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+
+/// Measures how long frames take while the game runs, then writes a report and quits.
+struct Bench {
+    started: Instant,
+    last: Option<Instant>,
+    seconds: f32,
+    /// Time between frames (everything: game, drawing, the graphics card), in ms.
+    frames: Vec<f32>,
+    /// Time the main thread spent on the game and on preparing the frame, in ms.
+    cpu: Vec<f32>,
+    pixels: [f32; 2],
+}
+
+impl Bench {
+    const WARMUP: f32 = 3.0;
+
+    fn report(&self, gpu: &str, st: &State) -> String {
+        let mut f = self.frames.clone();
+        f.sort_by(|a, b| a.total_cmp(b));
+        let pct = |p: f32| if f.is_empty() { 0.0 } else { f[((f.len() - 1) as f32 * p).round() as usize] };
+        let mean = f.iter().sum::<f32>() / f.len().max(1) as f32;
+        let cpu = self.cpu.iter().sum::<f32>() / self.cpu.len().max(1) as f32;
+        let tris: usize = st
+            .scene
+            .entities
+            .iter()
+            .filter_map(|e| e.mesh.as_ref().and_then(|m| m.model.as_ref()))
+            .filter_map(|p| st.assets.cached_model(p))
+            .map(|m| m.triangles)
+            .sum();
+        format!(
+            "Cryo Engine {} benchmark\n\
+             project: {}\n\
+             system: {} {}\n\
+             graphics card: {gpu}\n\
+             resolution: {:.0} x {:.0}\n\
+             graphics quality: {}\n\
+             entities: {}, model triangles in the scene: {tris}\n\
+             frames measured: {} over {:.1} s (after {:.0} s warm-up), vsync off\n\
+             average: {:.1} fps ({mean:.2} ms per frame)\n\
+             frame time: median {:.2} ms, 95% {:.2} ms, 99% {:.2} ms, worst {:.2} ms\n\
+             1% low: {:.1} fps\n\
+             main thread (game + preparing the frame): {cpu:.2} ms per frame\n",
+            env!("CARGO_PKG_VERSION"),
+            st.project_dir.display(),
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+            self.pixels[0],
+            self.pixels[1],
+            if st.settings.graphics.is_empty() { "high" } else { &st.settings.graphics },
+            st.scene.entities.len(),
+            f.len(),
+            f.iter().sum::<f32>() / 1000.0,
+            Self::WARMUP,
+            1000.0 / mean.max(1e-3),
+            pct(0.5),
+            pct(0.95),
+            pct(0.99),
+            f.last().copied().unwrap_or(0.0),
+            1000.0 / pct(0.99).max(1e-3),
+        )
+    }
 }
 
 fn default_layout() -> DockState<Tab> {
@@ -1098,7 +1596,9 @@ impl App {
         let game_only = game.is_some();
         let mut st = State {
             assets: Assets::new(project_dir.clone()),
+            film_tex: None,
             game_only,
+            vsync_off: BENCH_SECONDS.get().is_some() || settings.fps() == 0,
             project_dir,
             scene_path: format!("scenes/Principal.{}", project::SCENE_EXT),
             scene: Scene::default_scene(),
@@ -1110,6 +1610,15 @@ impl App {
             drag: None,
             play: None,
             input: InputState::default(),
+            pads: crate::input::Gamepads::new(),
+            pad: crate::input::Pad::default(),
+            resolver: crate::input::Resolver::default(),
+            bindings: vec![],
+            bindings_for: PathBuf::new(),
+            raw_pressed: Default::default(),
+            raw_held: Default::default(),
+            show_controls: false,
+            rebinding: None,
             mouse_grabbed: false,
             pause_menu: false,
             logs: vec![],
@@ -1198,7 +1707,23 @@ impl App {
         if autoplay || game_only {
             st.start_play();
         }
-        App { dock: default_layout(), st, frames: 0, fps_at: Instant::now(), fps: 0.0 }
+        let gpu = cc
+            .gl
+            .as_ref()
+            .map(|gl| unsafe {
+                use eframe::glow::HasContext;
+                format!("{} ({})", gl.get_parameter_string(eframe::glow::RENDERER), gl.get_parameter_string(eframe::glow::VERSION))
+            })
+            .unwrap_or_default();
+        let bench = BENCH_SECONDS.get().map(|&seconds| Bench {
+            started: Instant::now(),
+            last: None,
+            seconds,
+            frames: vec![],
+            cpu: vec![],
+            pixels: [0.0; 2],
+        });
+        App { dock: default_layout(), st, frames: 0, fps_at: Instant::now(), fps: 0.0, gpu, bench, show_fps: false, last_frame: Instant::now() }
     }
 
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
@@ -1246,6 +1771,30 @@ impl App {
                 if ui.button(tr!("Import model, texture or sound…", "Importar modelo, textura ou som…")).clicked() {
                     ui.close();
                     st.import_dialog();
+                }
+                if ui
+                    .button(tr!("Import video…", "Importar vídeo…"))
+                    .on_hover_text(tr!(
+                        "Converts a video (.mp4, .mov, .webm, .mkv, .avi, .gif) into a cutscene the game can play. GIFs work as they are; the other formats need ffmpeg installed on this computer.",
+                        "Converte um vídeo (.mp4, .mov, .webm, .mkv, .avi, .gif) em uma cutscene que o jogo toca. GIFs funcionam direto; os outros formatos precisam do ffmpeg instalado neste computador."
+                    ))
+                    .clicked()
+                {
+                    ui.close();
+                    st.import_video_dialog();
+                }
+                if ui
+                    .button(tr!("Import video from a folder of pictures…", "Importar vídeo de uma pasta de imagens…"))
+                    .on_hover_text(tr!(
+                        "A folder of numbered PNG or JPEG frames (24 a second) and an optional sound.wav, as any video editor exports. Works without ffmpeg.",
+                        "Uma pasta de quadros PNG ou JPEG numerados (24 por segundo) e um sound.wav opcional, como qualquer editor de vídeo exporta. Funciona sem ffmpeg."
+                    ))
+                    .clicked()
+                {
+                    ui.close();
+                    if let Some(dir) = rfd::FileDialog::new().set_title(tr!("Folder of video frames", "Pasta com os quadros do vídeo")).pick_folder() {
+                        st.import_video(&dir);
+                    }
                 }
                 if ui.button(tr!("Export game…", "Exportar jogo…")).on_hover_text(tr!("Creates a folder with the game ready to run without the editor", "Gera uma pasta com o jogo pronto para rodar sem o editor")).clicked() {
                     ui.close();
@@ -1297,6 +1846,12 @@ impl App {
             ui.menu_button(tr!("Object", "Objeto"), |ui| st.create_menu(ui));
             ui.menu_button(tr!("Window", "Janela"), |ui| {
                 st.graphics_choice(ui);
+                st.fps_choice(ui);
+                st.volume_choice(ui);
+                if ui.button(tr!("Controls and gamepad…", "Controles e gamepad…")).clicked() {
+                    st.show_controls = true;
+                    ui.close();
+                }
                 ui.separator();
                 if ui.button(tr!("Reset default layout", "Restaurar layout padrão")).clicked() {
                     self.dock = default_layout();
@@ -1400,6 +1955,26 @@ impl App {
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        // frame-rate limit: a running game waits here until its next frame is due. With the
+        // screen's sync on, the wait stops a little early and the sync does the exact timing.
+        let limit = self.st.settings.fps();
+        if limit > 0 && self.bench.is_none() && self.st.playing() {
+            let period = std::time::Duration::from_secs_f64((if self.st.vsync_off { 1.0 } else { 0.9 }) / limit as f64);
+            let due = self.last_frame + period;
+            let now = Instant::now();
+            if due > now {
+                let wait = due - now;
+                // sleep most of it, spin the last millisecond for accuracy
+                if wait > std::time::Duration::from_millis(2) {
+                    std::thread::sleep(wait - std::time::Duration::from_millis(1));
+                }
+                while Instant::now() < due {
+                    std::hint::spin_loop();
+                }
+            }
+        }
+        self.last_frame = Instant::now();
+        let frame_start = Instant::now();
 
         self.frames += 1;
         let el = self.fps_at.elapsed().as_secs_f32();
@@ -1442,6 +2017,7 @@ impl eframe::App for App {
         self.st.collect_input(&ctx);
         self.st.shortcuts(&ctx);
         self.st.apply_mouse_lock(&ctx);
+        let mut next_scene = None;
         if let Some(play) = &mut self.st.play {
             if !play.paused {
                 let dt = ctx.input(|i| i.stable_dt).min(0.1);
@@ -1455,7 +2031,11 @@ impl eframe::App for App {
                         self.st.input.pressed.insert("j".into());
                     }
                 }
+                let st = &self.st.settings;
+                play.rt.audio.set_mix(st.volume_master.unwrap_or(1.0), st.volume_music.unwrap_or(1.0), st.volume_effects.unwrap_or(1.0));
                 play.rt.update(&mut self.st.scene, &self.st.input, dt, &mut self.st.logs);
+                // scene.load(...) from a script: the next level replaces this one
+                next_scene = play.rt.take_scene_request();
                 // CRYO_DEMO=qte shows a quick time event shortly after Play (for screenshots)
                 if play.rt.qte.is_none() && play.rt.real_time > 1.0 && play.rt.qte_result.is_none() {
                     if std::env::var("CRYO_DEMO").as_deref() == Ok("qte") {
@@ -1472,10 +2052,28 @@ impl eframe::App for App {
             }
             ctx.request_repaint();
         }
+        if let Some(next) = next_scene {
+            self.st.switch_scene(&next);
+        }
 
         // --- exported game: only the game screen ---
         if self.st.game_only {
             egui::CentralPanel::no_frame().show(ui, |ui| self.st.game_view(ui));
+            // the pause menu (Esc or the gamepad's Start) and its Controls window
+            self.st.pause_ui(&ctx);
+            if ctx.input(|i| i.key_pressed(Key::F3)) {
+                self.show_fps = !self.show_fps;
+            }
+            if self.show_fps {
+                let rect = ctx.content_rect();
+                let text = format!("{:.0} fps  {:.1} ms", self.fps, 1000.0 / self.fps.max(0.1));
+                let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("fps")));
+                let pos = egui::pos2(rect.right() - 12.0, rect.top() + 10.0);
+                let font = egui::FontId::monospace(15.0);
+                painter.text(pos + egui::vec2(1.0, 1.0), egui::Align2::RIGHT_TOP, &text, font.clone(), Color32::BLACK);
+                painter.text(pos, egui::Align2::RIGHT_TOP, &text, font, Color32::from_rgb(140, 255, 140));
+            }
+            self.bench_frame(&ctx, frame_start);
             return;
         }
 
@@ -1509,6 +2107,9 @@ impl eframe::App for App {
         }
         self.st.tutorial_ui(&ctx);
         self.st.pause_ui(&ctx);
+        if !self.st.game_only {
+            self.st.controls_ui(&ctx);
+        }
 
         if self.st.show_about {
             egui::Window::new(tr!("About Cryo Engine", "Sobre a Cryo Engine"))
@@ -1527,6 +2128,34 @@ impl eframe::App for App {
         }
 
         self.st.track_history(&ctx);
+    }
+}
+
+impl App {
+    /// Records one frame of the benchmark; when it is over, writes the report and quits.
+    fn bench_frame(&mut self, ctx: &egui::Context, frame_start: Instant) {
+        let Some(b) = &mut self.bench else { return };
+        let now = Instant::now();
+        let warm = b.started.elapsed().as_secs_f32() > Bench::WARMUP;
+        if let (Some(last), true) = (b.last, warm) {
+            b.frames.push((frame_start - last).as_secs_f32() * 1000.0);
+            b.cpu.push((now - frame_start).as_secs_f32() * 1000.0);
+        }
+        b.last = Some(frame_start);
+        let r = ctx.content_rect();
+        b.pixels = [r.width() * ctx.pixels_per_point(), r.height() * ctx.pixels_per_point()];
+        ctx.request_repaint();
+        if b.started.elapsed().as_secs_f32() < Bench::WARMUP + b.seconds {
+            return;
+        }
+        let report = b.report(&self.gpu, &self.st);
+        println!("{report}");
+        let path = self.st.project_dir.join("bench-report.txt");
+        if std::fs::write(&path, &report).is_ok() {
+            println!("written to {}", path.display());
+        }
+        self.bench = None;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
 }
 

@@ -1,8 +1,8 @@
 //! Post-processing: the scene is drawn into an off-screen HDR image, then ambient
-//! occlusion, screen-space reflections and bloom are added, and a filmic tone curve,
+//! occlusion, global illumination, screen-space reflections and bloom are added, and a filmic tone curve,
 //! vignette and dithering produce the final picture.
 //!
-//! Turned on per scene (Scene settings > Bloom, Ambient occlusion, Reflections).
+//! Turned on per scene (Scene settings > Bloom, Ambient occlusion, Reflections, Bounced light).
 //! `CRYO_POST=0` turns it off everywhere, for very old graphics cards.
 
 use eframe::glow::{self, HasContext};
@@ -34,21 +34,27 @@ vec3 view_normal(vec2 uv, vec3 p) {
     vec3 d = p - view_pos(uv - vec2(0.0, u_texel.y));
     vec3 dx = abs(r.z) < abs(l.z) ? r : l;
     vec3 dy = abs(u.z) < abs(d.z) ? u : d;
-    vec3 n = normalize(cross(dx, dy));
+    vec3 c = cross(dx, dy);
+    if (dot(c, c) < 1e-20) return vec3(0.0, 0.0, 1.0);   // flat neighbourhood: face the camera
+    vec3 n = normalize(c);
     return dot(n, p) > 0.0 ? -n : n;
 }
 float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
 "#;
 
-/// Screen-space ambient occlusion: how much nearby geometry hides each point from the sky.
+/// Screen-space ambient occlusion (alpha: how much nearby geometry hides each point from the
+/// sky) and screen-space global illumination (rgb: light bounced onto each point by the lit
+/// surfaces around it, read from the finished image: sun, lamps, glowing objects, all of them).
 pub fn ao_fs() -> String {
     format!(
         "in vec2 v_uv;\nout vec4 frag;\n{VIEW_FN}{}",
         r#"
 uniform mat4 u_proj;
 uniform float u_radius;
+uniform sampler2D u_color;
+uniform float u_gi;
 void main() {
-    if (texture(u_depth, v_uv).r >= 0.99999) { frag = vec4(1.0); return; }
+    if (texture(u_depth, v_uv).r >= 0.99999) { frag = vec4(0.0, 0.0, 0.0, 1.0); return; }
     vec3 p = view_pos(v_uv);
     vec3 n = view_normal(v_uv, p);
     float a = hash(gl_FragCoord.xy) * 6.2831;
@@ -69,7 +75,43 @@ void main() {
         float range = smoothstep(0.0, 1.0, radius / max(abs(p.z - sd), 0.0001));
         occ += (sd >= q.z + 0.04 ? 1.0 : 0.0) * range;
     }
-    frag = vec4(vec3(1.0 - occ / 14.0), 1.0);
+    vec3 gi = vec3(0.0);
+    if (u_gi > 0.0) {
+        // gather: cast short rays over the hemisphere, take the lit surface the screen shows
+        // where each ray points, weighted by the angle and the distance
+        float reach = 3.0 * clamp(-p.z * 0.1, 0.4, 1.0);
+        float a2 = hash(gl_FragCoord.yx + 3.1) * 6.2831;
+        for (int i = 0; i < 12; i++) {
+            float fi = float(i);
+            float u1 = fract(hash(vec2(fi, 2.3)) + a2 * 0.159);
+            float u2 = hash(vec2(fi, 7.7));
+            float phi = u1 * 6.2831;
+            float ct = sqrt(1.0 - u2), st = sqrt(u2);
+            vec3 dir = t * (cos(phi) * st) + b * (sin(phi) * st) + n * ct;
+            vec3 q = p + dir * reach * mix(0.15, 1.0, fract(fi * 0.618 + a2));
+            vec4 c = u_proj * vec4(q, 1.0);
+            if (c.w <= 0.0) continue;
+            vec2 uv = c.xy / c.w * 0.5 + 0.5;
+            if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) continue;
+            if (texture(u_depth, uv).r >= 0.99999) continue;
+            vec3 s = view_pos(uv);
+            vec3 v = s - p;
+            float d = length(v);
+            if (d < 0.05 || d > reach * 2.0) continue;
+            float cosine = max(dot(n, v / d), 0.0);
+            // very bright samples (lamps, glowing parts) are tamed so a few lucky rays do not sparkle
+            vec3 lit = texture(u_color, uv).rgb;
+            float peak = max(lit.r, max(lit.g, lit.b));
+            lit *= min(1.0, 1.2 / max(peak, 1e-4));
+            gi += lit * cosine / (1.0 + d * d * 0.6);
+        }
+        gi *= 2.0 / 12.0;
+    }
+    float vis = 1.0 - occ / 14.0;
+    // half-float images keep NaN and infinity, and the blur would spread them into black blocks
+    if (any(isnan(gi)) || any(isinf(gi))) gi = vec3(0.0);
+    if (isnan(vis) || isinf(vis)) vis = 1.0;
+    frag = vec4(gi, vis);
 }
 "#
     )
@@ -87,6 +129,8 @@ void main() {
         for (int y = -1; y <= 1; y += 2)
             c += texture(u_src, v_uv + vec2(float(x), float(y)) * u_texel * 0.5).rgb;
     c *= 0.25;
+    if (any(isnan(c)) || any(isinf(c))) c = vec3(0.0);
+    c = min(c, vec3(64.0));   // many glowing sparks stacked up must not blow the bloom out
     float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
     frag = vec4(c * max(l - 0.85, 0.0) / max(l, 0.0001), 1.0);
 }
@@ -121,16 +165,28 @@ uniform mat4 u_proj;
 uniform float u_ssao;
 uniform float u_bloom_amount;
 uniform float u_ssr;
+uniform float u_gi;
 void main() {
     vec4 src = texture(u_color, v_uv);
     vec3 col = src.rgb;
+    if (any(isnan(col)) || any(isinf(col))) col = vec3(64.0);
     float depth = texture(u_depth, v_uv).r;
-    if (u_ssao > 0.0) {
-        float ao = 0.0;
+    if (u_ssao > 0.0 || u_gi > 0.0) {
+        // a 4 x 4 average removes the noise of the random rays
+        vec4 ao = vec4(0.0);
         for (int x = -2; x <= 1; x++)
             for (int y = -2; y <= 1; y++)
-                ao += texture(u_ao, v_uv + (vec2(float(x), float(y)) + 0.5) * u_texel).r;
-        col *= mix(1.0, ao / 16.0, clamp(u_ssao, 0.0, 1.5));
+                ao += texture(u_ao, v_uv + (vec2(float(x), float(y)) + 0.5) * u_texel * 2.0);
+        ao /= 16.0;
+        if (u_ssao > 0.0) col *= mix(1.0, ao.a, clamp(u_ssao, 0.0, 1.5));
+        if (u_gi > 0.0 && depth < 0.99999) {
+            // bounced light takes the colour of the surface it lands on; without an albedo
+            // buffer the hue comes from the lit colour, and dark surfaces count as mid grey
+            float peak = max(col.r, max(col.g, col.b));
+            vec3 hue = col / max(peak, 0.001);
+            vec3 albedo = mix(vec3(0.45), hue * 0.6, clamp(peak * 3.0, 0.0, 1.0) * 0.8);
+            col += ao.rgb * albedo * u_gi;
+        }
     }
     if (u_ssr > 0.0 && src.a > 0.02 && depth < 0.99999) {
         // march the reflected ray in view space and look up what the screen shows there
@@ -237,7 +293,7 @@ impl Targets {
             let color = texture(gl, w, h, glow::RGBA16F, glow::RGBA, glow::HALF_FLOAT, true)?;
             let depth = texture(gl, w, h, glow::DEPTH_COMPONENT24, glow::DEPTH_COMPONENT, glow::FLOAT, false)?;
             let scene_fbo = fbo(gl, Some(color), Some(depth))?;
-            let ao = texture(gl, w, h, glow::RGBA8, glow::RGBA, glow::UNSIGNED_BYTE, true)?;
+            let ao = texture(gl, (w / 2).max(1), (h / 2).max(1), glow::RGBA16F, glow::RGBA, glow::HALF_FLOAT, true)?;
             let ao_fbo = fbo(gl, Some(ao), None)?;
             let (bw, bh) = ((w / 2).max(1), (h / 2).max(1));
             let b0 = texture(gl, bw, bh, glow::RGBA16F, glow::RGBA, glow::HALF_FLOAT, true)?;

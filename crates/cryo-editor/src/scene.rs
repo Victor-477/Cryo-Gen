@@ -204,6 +204,7 @@ pub enum ColliderShape {
     Box,
     Sphere,
     /// The triangles of the imported model (static bodies only; others fall back to Box).
+    /// On a terrain model it is the terrain's height field.
     Mesh,
 }
 
@@ -229,6 +230,9 @@ pub struct Physics {
     /// Triangles of a Mesh collider in local space, filled when Play starts.
     #[serde(skip)]
     pub mesh: Option<std::sync::Arc<Vec<[Vec3; 3]>>>,
+    /// Filled when the model is a terrain: the Mesh collider then uses its height field.
+    #[serde(skip)]
+    pub terrain: Option<std::sync::Arc<crate::terrain::Heightfield>>,
 }
 
 impl Physics {
@@ -245,6 +249,7 @@ impl Physics {
             can_rotate: false,
             angular: Vec3::ZERO,
             mesh: None,
+            terrain: None,
         }
     }
 }
@@ -602,7 +607,59 @@ impl Scene {
         serde_json::to_string_pretty(self).unwrap_or_default()
     }
 
+    /// An entity and everything under it, as a prefab (`.cryoprefab`): a reusable piece that
+    /// can be placed many times, in the editor or from a script.
+    pub fn prefab_json(&self, id: u64) -> Option<String> {
+        let root = self.get(id)?;
+        let mut list = vec![root.clone()];
+        let mut i = 0;
+        while i < list.len() {
+            let parent = list[i].id;
+            list.extend(self.entities.iter().filter(|e| e.parent == Some(parent)).cloned());
+            i += 1;
+        }
+        list[0].parent = None;
+        serde_json::to_string_pretty(&Prefab { cryo_prefab: 1, entities: list }).ok()
+    }
+
+    /// Places a copy of a prefab: new ids, the root under `parent` and at `position` (if
+    /// given). Returns the new entities, root first.
+    pub fn instantiate(&mut self, json: &str, parent: Option<u64>, position: Option<Vec3>) -> Result<Vec<u64>, String> {
+        let prefab: Prefab = serde_json::from_str(json).map_err(|e| format!("invalid prefab: {e}"))?;
+        if prefab.entities.is_empty() {
+            return Err("the prefab is empty".into());
+        }
+        let mut map = std::collections::HashMap::new();
+        for e in &prefab.entities {
+            map.insert(e.id, self.next_id);
+            self.next_id += 1;
+        }
+        let mut out = vec![];
+        for (i, e) in prefab.entities.into_iter().enumerate() {
+            let mut e = e;
+            e.id = map[&e.id];
+            e.parent = if i == 0 { parent } else { e.parent.and_then(|p| map.get(&p).copied()) };
+            if i == 0 {
+                if let Some(p) = position {
+                    e.position = p;
+                }
+            }
+            out.push(e.id);
+            self.entities.push(e);
+        }
+        Ok(out)
+    }
+
     pub fn from_json(s: &str) -> Result<Scene, String> {
         serde_json::from_str(s).map_err(|e| format!("invalid scene: {e}"))
     }
 }
+
+/// The file format of a prefab.
+#[derive(Serialize, Deserialize)]
+struct Prefab {
+    cryo_prefab: u32,
+    entities: Vec<Entity>,
+}
+
+pub const PREFAB_EXT: &str = "cryoprefab";

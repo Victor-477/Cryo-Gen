@@ -135,6 +135,7 @@ impl State {
                 resp.context_menu(|ui| {
                     for (label, act) in [
                         (tr!("Duplicate", "Duplicar"), "dup"),
+                        (tr!("Save as prefab", "Salvar como prefab"), "prefab"),
                         (tr!("Create empty child", "Criar filho vazio"), "child"),
                         (tr!("Unparent", "Soltar do pai"), "unparent"),
                         (tr!("Delete", "Excluir"), "del"),
@@ -162,6 +163,10 @@ impl State {
         if let Some((id, act)) = action {
             match act {
                 "dup" => self.selected = self.scene.duplicate(id),
+                "prefab" => {
+                    self.selected = Some(id);
+                    self.save_prefab();
+                }
                 "child" => {
                     let c = self.scene.add_empty("Empty");
                     self.scene.get_mut(c).unwrap().parent = Some(id);
@@ -759,6 +764,12 @@ impl State {
                 go = Some(rel);
             } else if rel.ends_with(&format!(".{SCRIPT_EXT}")) {
                 self.open_script(&rel);
+            } else if rel.ends_with(&format!(".{}", crate::scene::PREFAB_EXT)) {
+                if self.playing() {
+                    self.info(tr!("Stop the game before adding objects to the scene.", "Pare o jogo antes de adicionar objetos à cena."));
+                } else {
+                    self.add_prefab_to_scene(&rel);
+                }
             } else if rel.ends_with(&format!(".{SCENE_EXT}")) {
                 if self.playing() {
                     self.info(tr!("Stop the game before opening another scene.", "Pare o jogo antes de abrir outra cena."));

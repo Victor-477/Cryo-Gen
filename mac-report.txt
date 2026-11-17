@@ -1,0 +1,26 @@
+== Cryo Engine check on macOS, Tue 17 Nov 2026 00:00:15 -03
+macOS 27.2.1 (arm64), Apple M4
+  Chipset Model: Apple M4
+  Resolution: 2560 x 1664 Retina
+rust: rustc 1.99.1 (58cf8f9c3 2026-10-13)
+build: ok
+test result: ok. 69 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.02s
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+-- outpost
+exit code: 0
+no report; last lines of the log:
+-- ashen
+exit code: 0
+Cryo Engine 0.16.0-beta benchmark
+project: /Users/victorsamuel/Documents/repositorios/Cryo Gen/target/check/ashen
+system: macos aarch64
+graphics card: Apple M4 (4.1 Metal - 91.7)
+resolution: 2880 x 1760
+graphics quality: high
+entities: 227, model triangles in the scene: 330129
+frames measured: 1196 over 20.0 s (after 3 s warm-up), vsync off
+average: 59.8 fps (16.73 ms per frame)
+frame time: median 16.85 ms, 95% 17.90 ms, 99% 18.33 ms, worst 102.49 ms
+1% low: 54.6 fps
+main thread (game + preparing the frame): 0.32 ms per frame

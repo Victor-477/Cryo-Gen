@@ -11,9 +11,14 @@ pub struct Audio {
     sink: Option<MixerDeviceSink>,
     tried: bool,
     files: HashMap<String, Arc<[u8]>>,
-    playing: Vec<Player>,
-    music: Option<Player>,
+    /// Sound effects playing, with the volume each was asked for.
+    playing: Vec<(Player, f32)>,
+    music: Option<(Player, f32)>,
+    /// The sound track of the video cutscene on screen.
+    film: Option<Player>,
     pub volume: f32,
+    /// The player's volumes (settings): all, music, effects.
+    mix: [f32; 3],
     /// How many sounds were triggered (useful for tests and debugging).
     pub played: usize,
 }
@@ -27,7 +32,9 @@ impl Audio {
             files: HashMap::new(),
             playing: vec![],
             music: None,
+            film: None,
             volume: 1.0,
+            mix: [1.0; 3],
             played: 0,
         }
     }
@@ -66,13 +73,13 @@ impl Audio {
         let Some(sink) = &self.sink else { return Ok(warn) };
         let source = Decoder::new(Cursor::new(data)).map_err(|e| format!("invalid sound `{rel}` ({e})"))?;
         let player = Player::connect_new(sink.mixer());
-        player.set_volume((volume * self.volume).clamp(0.0, 4.0));
+        player.set_volume((volume * self.volume * self.mix[0] * self.mix[2]).clamp(0.0, 4.0));
         player.append(source);
-        self.playing.retain(|p| !p.empty());
+        self.playing.retain(|p| !p.0.empty());
         if self.playing.len() > 48 {
             self.playing.remove(0);
         }
-        self.playing.push(player);
+        self.playing.push((player, volume));
         Ok(warn)
     }
 
@@ -86,10 +93,47 @@ impl Audio {
         let source =
             Decoder::new_looped(Cursor::new(data)).map_err(|e| format!("invalid music `{rel}` ({e})"))?;
         let player = Player::connect_new(sink.mixer());
-        player.set_volume((volume * self.volume).clamp(0.0, 4.0));
+        player.set_volume((volume * self.volume * self.mix[0] * self.mix[1]).clamp(0.0, 4.0));
         player.append(source);
-        self.music = Some(player);
+        self.music = Some((player, volume));
         Ok(warn)
+    }
+
+    /// Plays the sound track of a video cutscene (a WAV in memory); replaces the previous one.
+    pub fn play_film(&mut self, wav: Vec<u8>) -> Result<(), String> {
+        self.played += 1;
+        self.film = None;
+        let _ = self.open();
+        let Some(sink) = &self.sink else { return Ok(()) };
+        let source = Decoder::new(Cursor::new(wav)).map_err(|e| format!("invalid sound track in the video ({e})"))?;
+        let player = Player::connect_new(sink.mixer());
+        player.set_volume((self.volume * self.mix[0]).clamp(0.0, 4.0));
+        player.append(source);
+        self.film = Some(player);
+        Ok(())
+    }
+
+    /// Applies the player's volumes (all, music, effects; 0 to 1) to what is playing and to
+    /// what plays next.
+    pub fn set_mix(&mut self, master: f32, music: f32, effects: f32) {
+        let mix = [master.clamp(0.0, 1.0), music.clamp(0.0, 1.0), effects.clamp(0.0, 1.0)];
+        if mix == self.mix {
+            return;
+        }
+        self.mix = mix;
+        for (p, v) in &self.playing {
+            p.set_volume((v * self.volume * mix[0] * mix[2]).clamp(0.0, 4.0));
+        }
+        if let Some((p, v)) = &self.music {
+            p.set_volume((v * self.volume * mix[0] * mix[1]).clamp(0.0, 4.0));
+        }
+        if let Some(p) = &self.film {
+            p.set_volume((self.volume * mix[0]).clamp(0.0, 4.0));
+        }
+    }
+
+    pub fn stop_film(&mut self) {
+        self.film = None;
     }
 
     pub fn stop_music(&mut self) {
@@ -98,11 +142,12 @@ impl Audio {
 
     pub fn stop_all(&mut self) {
         self.music = None;
+        self.film = None;
         self.playing.clear();
     }
 
     pub fn set_paused(&mut self, paused: bool) {
-        for p in self.playing.iter().chain(self.music.iter()) {
+        for (p, _) in self.playing.iter().chain(self.music.iter()) {
             if paused {
                 p.pause();
             } else {

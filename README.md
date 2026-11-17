@@ -20,7 +20,7 @@ On first launch the editor creates the example project in `~/CryoProjects/Frostp
 
 ## Run from source
 
-Requires [Rust](https://rustup.rs). On Linux, also install `libasound2-dev` (audio).
+Requires [Rust](https://rustup.rs). On Linux, also install `libasound2-dev` (audio) and `libudev-dev` (gamepads).
 
 ```bash
 git clone https://github.com/Victor-477/Cryo-Gen.git
@@ -45,7 +45,7 @@ If you get a graphics configuration error, run with `CRYO_MSAA=0`.
 |---|---|
 | **Editor** | Dockable panels (Hierarchy, Scene, Game, Inspector, Content, Console, script editor), move/rotate/scale gizmos, undo/redo, parent/child entities, Play/Pause/Stop. |
 | **Performance** | Skeletal animation runs on the graphics card, objects out of view are skipped, and physics only tests bodies that are near each other. |
-| **Rendering** | Primitives and imported models (`.obj`, `.gltf`, `.glb`), physically based materials (roughness, metallic, normal maps), textures with anisotropic filtering, directional/point/spot lights, shadows from the sun and the nearest point lights and spotlights, sky gradient, distance fog, relief lighting, sky reflections, glowing and transparent materials, automatic levels of detail, bounced light from lamps. Exported games have a pause menu with graphics quality (High, Medium, Low) and full screen. |
+| **Rendering** | Primitives and imported models (`.obj`, `.gltf`, `.glb`), physically based materials (roughness, metallic, normal maps), textures with anisotropic filtering, directional/point/spot lights, shadows from the sun and the nearest point lights and spotlights, sky gradient, distance fog, relief lighting, sky reflections, glowing and transparent materials, automatic levels of detail (animated models too), screen-space global illumination, terrains from height maps. Gamepads work out of the box and every control can be remapped by the player; prefabs and `scene.load` make multi-level games. Cutscenes are made on the Timeline (cameras, subtitles, fades, quick time events) or imported as video. Exported games have a pause menu with graphics quality (High, Medium, Low), frame-rate limit (30, 60, 120, none) and full screen. |
 | **Post-processing** | Bloom, ambient occlusion, screen-space reflections, filmic tone curve, vignette (per scene). |
 | **Physics** | Gravity, box, sphere and triangle-mesh colliders, triggers, contact events with normals, optional rotation (bodies that roll and tip over). |
 | **Scripting** | The Cryo language: typed, with maps, `match`, state machines, global events and live error checking. Script properties are editable in the Inspector. |
@@ -135,7 +135,7 @@ A first-person shooter with one complete level in three sectors: the yard, the w
 
 `WASD` moves, the mouse aims, left click fires, `R` reloads, `Shift` runs, `Space` jumps. Clear each sector of security drones to open the next door, then destroy the three coolant nodes of the reactor.
 
-It shows first-person play in the engine: shots are `scene.raycast(...)` rays, drones check line of sight the same way, and the scene uses relief lighting (textures bump the light without normal maps) with coloured point lights at night. Models and textures come from `tools/make_outpost_assets.py`. It uses the post-processing effects (bloom, ambient occlusion, screen-space reflections), shadows from the yard lamps and 1024 x 1024 textures. It is still short of a commercial shooter: the hands animate (Idle, Fire, Reload) but their fingers are coarse, and bounced light is an approximation, not full global illumination.
+It shows first-person play in the engine: shots are `scene.raycast(...)` rays, drones check line of sight the same way, and the scene uses relief lighting (textures bump the light without normal maps) with coloured point lights at night. Models and textures come from `tools/make_outpost_assets.py`. It uses the post-processing effects (bloom, ambient occlusion, screen-space reflections), shadows from the yard lamps and 1024 x 1024 textures. The hands are high resolution (about 118,000 triangles, three joints per finger, made by `tools/make_hands.py`) and animate with Idle, Fire and Reload; the compound sits in a basin of ridges (a terrain). It is still short of a commercial shooter: one level, one weapon, one kind of enemy.
 
 ## Repository layout
 
@@ -164,20 +164,23 @@ crates/
     src/ashen.rs     the Ashen Keep example: level layout, sounds, play-through tests
     src/outpost.rs   the Outpost Kestrel example (first-person shooter)
     template/        scripts and generated assets of the example games
-tools/             make_ashen_assets.py: builds the Ashen Keep models and textures
+tools/             make_ashen_assets.py, make_outpost_assets.py, make_hands.py, make_terrains.py:
+                   build the example games' models, textures and terrains
 docs/              documentation site (GitHub Pages)
 ```
 
-## Known limits (0.12.0-beta)
+## Known limits (0.16.0-beta)
 
 - Skeletal animation: one clip per model at a time (blended when switching), up to 64 joints on the graphics card (more fall back to the CPU); no morph targets.
 - Modelling: `.obj` models, one material, automatic texture coordinates. No loop cuts, bevels or booleans yet.
-- Bounced light is an approximation (a soft fill from nearby lamps), not full global illumination.
-- Levels of detail are made automatically by vertex clustering; animated models do not get them.
+- Bounced light is screen-space: light from things outside the view, or hidden behind others, does not bounce.
+- Terrains blend two textures by slope (ground and rock); no texture painting yet.
 - Shadows: the first directional light, plus 16 shadow tiles for the nearest local lights (a spotlight uses one, a point light six).
 - Lights: 4 directional, and the 16 point/spot lights nearest the camera, per view.
 - Physics: mesh colliders are for static bodies; rotating bodies use a simplified model, so stacks of boxes are not stable.
-- The macOS app is not signed.
+- The macOS app is not signed. (`scripts/check-mac.command` builds, tests and measures speed on a Mac.)
+- Video cutscenes: MP4/MOV/WebM need ffmpeg on the computer where the game is made (GIFs and folders of pictures do not); videos are kept at up to 1280 x 720, 24 frames a second.
+- Gamepads: the first one connected is used; the menus are driven with the mouse.
 - Script error messages are in English only.
 
 ## License

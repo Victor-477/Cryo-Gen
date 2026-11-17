@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::skel::{Channel, SkClip, Skeleton, Skin, SkinData, Target};
 use std::sync::Arc;
 
-pub const MODEL_EXTS: &[&str] = &["obj", "gltf", "glb"];
+pub const MODEL_EXTS: &[&str] = &["obj", "gltf", "glb", "terrain"];
 pub const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg"];
 pub const SOUND_EXTS: &[&str] = &["wav", "ogg", "mp3"];
 
@@ -47,6 +47,18 @@ pub struct SubMesh {
     pub emissive: [f32; 3],
     /// 1 is solid; less lets what is behind show through (glass, liquids).
     pub opacity: f32,
+    /// A second texture that takes over on steep slopes (terrains).
+    pub blend: Option<Arc<Blend>>,
+}
+
+/// The texture of steep ground, mixed in by the slope of the surface.
+pub struct Blend {
+    pub texture: Option<Arc<TextureData>>,
+    pub normal: Option<Arc<TextureData>>,
+    /// Height of the surface normal where the two textures are half and half.
+    pub steep: f32,
+    /// Texture coordinates of the second texture, relative to the first.
+    pub uv_scale: f32,
 }
 
 pub struct ModelData {
@@ -61,6 +73,8 @@ pub struct ModelData {
     pub triangles: usize,
     /// Simpler versions for when the model is small on screen (level of detail), coarsest last.
     pub lods: Vec<Arc<ModelData>>,
+    /// Height field of a terrain (`.terrain` models), for its collider.
+    pub terrain: Option<Arc<crate::terrain::Heightfield>>,
 }
 
 /// Cache of assets loaded from disk (CPU side; the GPU side is filled by the renderer).
@@ -82,6 +96,11 @@ type PoseKey = (u64, Option<usize>, u32, Option<usize>, u32, u32);
 impl Assets {
     pub fn new(project_dir: PathBuf) -> Self {
         Assets { project_dir, models: HashMap::new(), textures: HashMap::new(), overrides: HashMap::new(), errors: vec![], posed: HashMap::new(), joint_mats: HashMap::new() }
+    }
+
+    /// A model already loaded (never loads anything).
+    pub fn cached_model(&self, rel: &str) -> Option<Arc<ModelData>> {
+        self.models.get(rel).cloned().flatten()
     }
 
     pub fn model(&mut self, rel: &str) -> Option<Arc<ModelData>> {
@@ -199,6 +218,7 @@ impl Assets {
                     metal: s.metal,
                     emissive: s.emissive,
                     opacity: s.opacity,
+            blend: s.blend.clone(),
                 }
             })
             .collect();
@@ -211,6 +231,7 @@ impl Assets {
             half: base.half,
             triangles: base.triangles,
             lods: vec![],
+            terrain: None,
         });
         if self.posed.len() > 512 {
             self.posed.clear();
@@ -239,16 +260,28 @@ pub fn load_texture(path: &Path) -> Result<TextureData, String> {
 
 pub fn load_model(path: &Path) -> Result<ModelData, String> {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+    let mut terrain = None;
     let (subs, skeleton) = match ext.as_str() {
         "obj" => (load_obj(path)?, None),
         "gltf" | "glb" => load_gltf(path)?,
-        other => return Err(format!("format `.{other}` is not supported (use .obj, .gltf or .glb)")),
+        "terrain" => {
+            let (field, subs) = crate::terrain::load(path)?;
+            terrain = Some(Arc::new(field));
+            (subs, None)
+        }
+        other => return Err(format!("format `.{other}` is not supported (use .obj, .gltf, .glb or .terrain)")),
     };
     let mut model = finish(subs)?;
+    if terrain.is_some() {
+        model.terrain = terrain;
+        return Ok(model);
+    }
     if model.subs.iter().any(|s| s.skin.is_some()) {
         model.skeleton = skeleton.map(Arc::new);
-    } else if model.triangles > 2500 {
-        // detailed static models get two simpler versions for when they are far away
+    }
+    if model.triangles > 2500 {
+        // detailed models get two simpler versions for when they are far away; animated ones keep
+        // their joints and weights, so the simpler versions move the same way
         for cells in [36.0, 14.0] {
             if let Some(lod) = simplify(&model, cells) {
                 if lod.triangles * 10 < model.triangles * 8 {
@@ -267,11 +300,13 @@ pub fn simplify(model: &ModelData, cells: f32) -> Option<ModelData> {
     let origin = model.center - model.half;
     let mut subs = vec![];
     for s in &model.subs {
-        // cell -> (sum of position, normal and uv, count, new index)
+        // cell -> (sum of position, normal and uv, count); skinned vertices also sum their
+        // rest position and normal, and pool the weight each joint has
         let mut cell_of: HashMap<(i32, i32, i32), usize> = HashMap::new();
         let mut acc: Vec<([f32; 8], f32)> = vec![];
+        let mut rest: Vec<(Vec3, Vec3, Vec<(u16, f32)>)> = vec![];
         let mut remap = Vec::with_capacity(s.vertices.len() / 8);
-        for v in s.vertices.chunks_exact(8) {
+        for (vi, v) in s.vertices.chunks_exact(8).enumerate() {
             let p = (Vec3::new(v[0], v[1], v[2]) - origin) / size;
             // the normal is part of the key, so hard edges between faces survive
             let n = Vec3::new(v[3], v[4], v[5]);
@@ -280,12 +315,29 @@ pub fn simplify(model: &ModelData, cells: f32) -> Option<ModelData> {
             let key = (p.x.floor() as i32 * 8 + side, p.y.floor() as i32, p.z.floor() as i32);
             let i = *cell_of.entry(key).or_insert_with(|| {
                 acc.push(([0.0; 8], 0.0));
+                rest.push((Vec3::ZERO, Vec3::ZERO, vec![]));
                 acc.len() - 1
             });
             for k in 0..8 {
                 acc[i].0[k] += v[k];
             }
             acc[i].1 += 1.0;
+            if let Some(sk) = &s.skin {
+                if vi < sk.positions.len() {
+                    let r = &mut rest[i];
+                    r.0 += sk.positions[vi];
+                    r.1 += sk.normals[vi];
+                    for k in 0..4 {
+                        let (j, w) = (sk.joints[vi][k], sk.weights[vi][k]);
+                        if w > 0.0 {
+                            match r.2.iter_mut().find(|e| e.0 == j) {
+                                Some(e) => e.1 += w,
+                                None => r.2.push((j, w)),
+                            }
+                        }
+                    }
+                }
+            }
             remap.push(i as u32);
         }
         let mut vertices = Vec::with_capacity(acc.len() * 8);
@@ -295,6 +347,27 @@ pub fn simplify(model: &ModelData, cells: f32) -> Option<ModelData> {
             v[3..6].copy_from_slice(&nl.to_array());
             vertices.extend_from_slice(&v);
         }
+        let skin = s.skin.as_ref().map(|sk| {
+            let mut out = SkinData { skin: sk.skin, positions: vec![], normals: vec![], joints: vec![], weights: vec![] };
+            for ((pos, nor, js), (_, n)) in rest.iter_mut().zip(&acc) {
+                out.positions.push(*pos / *n);
+                out.normals.push(nor.normalize_or(Vec3::Y));
+                // the four strongest joints, weights summing to one
+                js.sort_by(|a, b| b.1.total_cmp(&a.1));
+                let total: f32 = js.iter().take(4).map(|e| e.1).sum::<f32>().max(1e-6);
+                let (mut j4, mut w4) = ([0u16; 4], [0f32; 4]);
+                for (k, e) in js.iter().take(4).enumerate() {
+                    j4[k] = e.0;
+                    w4[k] = e.1 / total;
+                }
+                if js.is_empty() {
+                    w4[0] = 1.0;
+                }
+                out.joints.push(j4);
+                out.weights.push(w4);
+            }
+            Arc::new(out)
+        });
         let mut indices = vec![];
         for t in s.indices.chunks_exact(3) {
             let (a, b, c) = (remap[t[0] as usize], remap[t[1] as usize], remap[t[2] as usize]);
@@ -307,15 +380,18 @@ pub fn simplify(model: &ModelData, cells: f32) -> Option<ModelData> {
             indices,
             color: s.color,
             texture: s.texture.clone(),
-            skin: None,
+            skin,
             normal: s.normal.clone(),
             rough: s.rough,
             metal: s.metal,
             emissive: s.emissive,
             opacity: s.opacity,
+            blend: s.blend.clone(),
         });
     }
-    finish(subs).ok()
+    let mut lod = finish(subs).ok()?;
+    lod.skeleton = model.skeleton.clone();
+    Some(lod)
 }
 
 /// Reads the node tree, the skins and the animation clips of a glTF document.
@@ -429,6 +505,7 @@ fn finish(subs: Vec<SubMesh>) -> Result<ModelData, String> {
         half: ((max - min) * 0.5).max(Vec3::splat(0.001)),
         triangles,
         lods: vec![],
+        terrain: None,
     })
 }
 
@@ -691,6 +768,7 @@ fn load_obj(path: &Path) -> Result<Vec<SubMesh>, String> {
                 metal: mat.map(|m| m.metal).unwrap_or(0.0),
                 emissive: mat.map(|m| m.emissive).unwrap_or([0.0; 3]),
                 opacity: mat.map(|m| m.opacity).unwrap_or(1.0),
+                blend: None,
             }
         })
         .collect())
@@ -818,6 +896,7 @@ fn load_gltf(path: &Path) -> Result<(Vec<SubMesh>, Option<Skeleton>), String> {
                         metal,
                         emissive,
                         opacity,
+                        blend: None,
                     });
                     continue;
                 }
@@ -852,7 +931,7 @@ fn load_gltf(path: &Path) -> Result<(Vec<SubMesh>, Option<Skeleton>), String> {
                     tri.swap(1, 2);
                 }
             }
-            subs.push(SubMesh { vertices, indices: out_idx, color: [c[0], c[1], c[2]], texture, skin: None, normal, rough, metal, emissive, opacity });
+            subs.push(SubMesh { vertices, indices: out_idx, color: [c[0], c[1], c[2]], texture, skin: None, normal, rough, metal, emissive, opacity, blend: None });
         }
     }
     Ok((subs, skeleton))
@@ -969,6 +1048,36 @@ mod tests {
         mesh.advance_animation(0.3);
         assert_eq!(mesh.anim.fade, 0.0);
         std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn animated_models_get_simpler_versions_that_still_move() {
+        let base = Arc::new(load_model(Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/template/outpost/hands.gltf"))).unwrap());
+        assert!(base.triangles > 100_000, "high-resolution hands: {}", base.triangles);
+        let sk = base.skeleton.as_ref().unwrap();
+        assert!(sk.skins[0].joints.len() >= 30, "every finger has its own joints");
+        assert!(!base.lods.is_empty());
+        for lod in &base.lods {
+            assert!(lod.triangles * 2 < base.triangles);
+            assert!(lod.skeleton.is_some());
+            for s in &lod.subs {
+                let skin = s.skin.as_ref().expect("the simple version keeps its skin");
+                assert_eq!(skin.positions.len() * 8, s.vertices.len());
+                for w in &skin.weights {
+                    assert!((w.iter().sum::<f32>() - 1.0).abs() < 1e-3);
+                }
+            }
+        }
+        // the trigger finger of the simple version bends with the clip like the full one
+        let mut assets = Assets::new(std::env::temp_dir());
+        let mut mesh = crate::scene::MeshRenderer::primitive(crate::scene::Shape::Cube);
+        mesh.animation = "Fire".into();
+        mesh.anim.time = 0.035;
+        let full = assets.pose_matrices(1, &base, &mesh).expect("posed on the graphics card");
+        let lod = base.lods[0].clone();
+        let low = assets.pose_matrices(2, &lod, &mesh).unwrap();
+        assert_eq!(full[0].len(), low[0].len());
+        assert!(full[0].iter().zip(low[0].iter()).all(|(a, b)| a.abs_diff_eq(*b, 1e-5)));
     }
 
     #[test]

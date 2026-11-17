@@ -4,15 +4,67 @@ Cryo Engine is a native 3D game engine with a visual editor, scripted in the Cry
 
 | System | File |
 |---|---|
-| Windows 10/11 (64-bit) | `CryoEngine-v0.12.0-beta-windows-x86_64.zip` |
-| macOS 11+ (Apple Silicon and Intel) | `CryoEngine-v0.12.0-beta-macos-universal.zip` |
-| Linux (x86_64) | `CryoEngine-v0.12.0-beta-linux-x86_64.zip` |
+| Windows 10/11 (64-bit) | `CryoEngine-v0.16.0-beta-windows-x86_64.zip` |
+| macOS 11+ (Apple Silicon and Intel) | `CryoEngine-v0.16.0-beta-macos-universal.zip` |
+| Linux (x86_64) | `CryoEngine-v0.16.0-beta-linux-x86_64.zip` |
 
 Unzip and run. On first launch the editor creates the example game in `~/CryoProjects/FrostpeakIsles` and starts a welcome tour.
 
 **macOS:** the app is not signed. Right-click **Cryo Engine.app** and choose **Open** the first time. If macOS still refuses, run `xattr -dr com.apple.quarantine "Cryo Engine.app"` in a terminal.
 
-## New in 0.12.0-beta
+## New in 0.16.0-beta
+
+- **Gamepads**: Xbox, PlayStation, Switch Pro and most other controllers work in every game with no changes. The left stick moves (`input.axis`), the right stick looks like the mouse, buttons are `pad_a`, `pad_b`... and Start opens the pause menu.
+- **Remappable controls**: bindings make one name stand for several inputs (by default `space` is also the A button, `mouse_left` the right trigger...). Players change them in **Controls** (pause menu, or Window > Controls and gamepad), kept per game; a project can list its own in `input.json`.
+- **Volume**: sliders for everything, music and effects in the pause menu and the Window menu.
+- **Prefabs**: right-click > Save as prefab writes an entity and its children to `prefabs/`; double-click places a copy; `scene.spawn_prefab(file, position)` places one while playing, with its scripts running.
+- **Several levels**: `scene.load("scenes/Level2.cryoscene")` switches scene while playing.
+- Fix: the pause menu of exported games (since 0.12) was never drawn; Esc only paused.
+- Linux builds need `libudev-dev` (gamepads).
+
+## From 0.15.0-beta
+
+Video cutscenes, Create > Cutscene with subtitles and fades, faster rendering (lamps per object, shadow caching) and much faster rebuilds.
+
+## Details of 0.15.0-beta
+
+- **Video cutscenes**: **File > Import video…** turns a film into a `.cryovid` in `videos/` that every exported game plays the same way, with its sound. Animated GIFs convert directly; MP4, MOV, WebM, MKV and AVI need ffmpeg on the computer where the game is made; without ffmpeg, a folder of numbered pictures (plus `sound.wav`) works too. Play it with a **Play video** event on the Timeline or `video.play(...)`; the game waits, Enter/Space/Esc skips, `on video_end(file)` follows.
+- **Making cutscenes in the engine**: **Create > Cutscene** makes a clip with its own camera at the editor's view, a fade in, a first subtitle and the cut back to the game. New Timeline events **Subtitle** and **Fade**, and `subtitle(text, seconds)` and `fade(amount, seconds)` for scripts. Cutscenes show cinema bars and a "skip" hint.
+- **Faster games**: each object is shaded only by the lamps that reach it; shadows of lamps that stay still are redrawn every other frame; shader settings are looked up once instead of hundreds of times a frame.
+- **Faster builds**: `cargo build --release` is now incremental (a change to the engine rebuilt in about 29 s here; now about 5 s). Development builds optimise dependencies and keep only line numbers (the debug editor was 400 MB). The shipped build is the new `dist` profile (thin LTO, stripped), used by `scripts/package.sh` and the release workflow.
+
+## From 0.14.0-beta
+
+Frame-rate limit (30, 60, 120, none), render scale on dense screens, smooth terrain texture blending, first check on macOS.
+
+## Details of 0.14.0-beta
+
+- **Frame-rate limit**: 30, 60, 120 or no limit, in **Window > Frame rate limit** and in the pause menu of games (60 by default). "No limit" also turns off the screen's own sync, after a restart.
+- **Checked on macOS** (Apple M4, macOS 27): the engine builds, all tests pass and both example games run. The first measurement showed that Retina screens were the bottleneck (2880 x 1760 pixels), which led to the next two changes.
+- **Render scale**: on very dense screens the 3D picture is drawn up to 1260 lines high (High), 1080 (Medium) or 900 (Low) and stretched to the window; text and HUD stay sharp. `CRYO_RENDER_SCALE=1` forces full size.
+- Ambient occlusion and bounced light are computed at half size (they are soft anyway).
+- **Terrain**: the ground and cliff textures now blend smoothly by slope, with the rock's own detail breaking up the edge.
+- Outpost Kestrel: the rifle is held a little turned in and rolled, so the hands show more.
+- `scripts/check-mac.command` keeps its logs in `target/check` and reports each game's exit code.
+
+## From 0.13.0-beta
+
+High-resolution hands, terrain, screen-space global illumination, levels of detail for animated models, the benchmark.
+
+## Details of 0.13.0-beta
+
+- **High-resolution first-person hands**: about 118,000 triangles, made from code (`tools/make_hands.py`): palm, knuckles, fingernails, fingerless tactical gloves with a knuckle guard, 2048 x 2048 skin and fabric textures. Every finger has three joints and is curled automatically around the rifle's grip and handguard; Idle, Fire and Reload bend each joint.
+- **Terrain**: **Create > Terrain** makes ground with hills from a grayscale height map, with a texture for gentle ground and another for steep slopes. Its Mesh collider is a height field, so characters walk its slopes and rays hit it. Ashen Keep now has mounds in the bailey and wooded hills and crags around the castle; Outpost Kestrel sits in a basin of ridges.
+- **Global illumination in screen space**: Bounced light now bounces the light of everything on screen (sun, lamps, glowing parts) onto the surfaces around it, instead of the old approximation.
+- **Levels of detail for animated models**: rigged models get simpler versions too, which keep their skeleton and move the same way.
+- **Measuring performance**: `cryo MyGame --bench` writes `bench-report.txt` (average and 1% low frame rate, median, 95% and 99% frame times, graphics card); F3 shows the frame rate in a game; `scripts/check-mac.command` builds, tests and benchmarks on a Mac.
+- Fixes: black squares that could appear near many glowing sparks; a thin pistol grip and a trigger on the rifle.
+
+## From 0.12.0-beta
+
+Glowing and transparent materials, glass windows, levels of detail, pause menu with graphics quality, animated hands.
+
+## Details of 0.12.0-beta
 
 - **Glowing and transparent materials**: emissive colour (MTL `Ke`, glTF `emissiveFactor`) feeds the bloom; transparent materials (MTL `d`/`Tr`, glTF alpha Blend) are drawn after solid objects, far to near, and reflect more at grazing angles. Outpost Kestrel's buildings now have glass windows.
 - **Levels of detail**: big models (over 2500 triangles) get two simplified versions automatically; distant objects use them, and tiny far objects are skipped.

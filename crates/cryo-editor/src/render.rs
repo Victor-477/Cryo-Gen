@@ -66,6 +66,8 @@ pub struct RenderFrame {
     pub sky_top: [f32; 3],
     pub sky_horizon: [f32; 3],
     pub fog: f32,
+    /// Size of the 3D picture relative to the panel (1 = full size).
+    pub render_scale: f32,
     pub relief: f32,
     /// Post-processing amounts (0 = off): bloom, ambient occlusion, screen-space reflections.
     pub bloom: f32,
@@ -188,7 +190,8 @@ impl RenderFrame {
                 continue;
             }
             if let MeshRef::Model(m) = &item.mesh {
-                if item.joints.is_none() && !m.lods.is_empty() {
+                // animated models switch too when the graphics card poses them (the joints do not change)
+                if (item.joints.is_some() || m.skeleton.is_none()) && !m.lods.is_empty() {
                     let pick = if size < 0.06 { m.lods.len() - 1 } else if size < 0.18 { 0 } else { usize::MAX };
                     if let Some(lod) = m.lods.get(pick) {
                         item.mesh = MeshRef::Model(lod.clone());
@@ -221,6 +224,7 @@ impl RenderFrame {
             ssao: scene.ssao,
             reflections: scene.reflections,
             indirect: scene.indirect,
+            render_scale: 1.0,
             lines: vec![],
             particles: vec![],
             shadow,
@@ -314,6 +318,7 @@ struct GpuMesh {
     metal: f32,
     emissive: [f32; 3],
     opacity: f32,
+    blend: Option<Arc<crate::assets::Blend>>,
     /// Index of the skin whose joints move this mesh on the graphics card.
     skin: Option<usize>,
 }
@@ -357,6 +362,11 @@ pub struct Renderer {
     /// Shadows of up to four spotlights, one quarter of this image each.
     spot_fbo: Option<glow::Framebuffer>,
     spot_tex: Option<glow::Texture>,
+    /// The view of each local-light shadow tile last frame: a tile whose view did not change is
+    /// redrawn only every other frame (half the shadow work for lamps that stay still).
+    spot_views: Vec<Mat4>,
+    /// Uniform locations already asked of the driver, per program and name.
+    uniforms: HashMap<glow::Program, HashMap<String, Option<glow::UniformLocation>>>,
     post: Option<crate::post::Post>,
     /// Strongest anisotropic filtering the card offers (sharper textures seen at an angle).
     anisotropy: f32,
@@ -422,6 +432,8 @@ uniform int u_ndir;
 uniform vec3 u_ldir[4];
 uniform vec3 u_ldir_color[4];
 uniform int u_npoints;
+// which of the local lights reach this object (bit i = light i)
+uniform int u_lmask;
 uniform vec3 u_ppos[16];
 uniform vec3 u_pcolor[16];
 uniform float u_prange[16];
@@ -440,6 +452,13 @@ uniform int u_pshadow[16];
 uniform int u_post;
 uniform sampler2D u_normal_tex;
 uniform int u_has_normal;
+// terrains: a second texture mixed in where the ground is steep
+uniform int u_blend;
+uniform sampler2D u_tex2;
+uniform sampler2D u_normal_tex2;
+uniform int u_has_normal2;
+uniform float u_blend_steep;
+uniform float u_blend_scale;
 uniform float u_rough;
 uniform float u_metal;
 uniform vec3 u_emissive;
@@ -496,8 +515,8 @@ vec3 shade(vec3 n, vec3 v, vec3 l, vec3 lc, vec3 base) {
 }
 
 // normal mapping without stored tangents: the frame comes from screen-space derivatives
-vec3 perturb(vec3 N, vec3 p, vec2 uv) {
-    vec3 m = texture(u_normal_tex, uv).xyz * 2.0 - 1.0;
+vec3 perturb(sampler2D map, vec3 N, vec3 p, vec2 uv) {
+    vec3 m = texture(map, uv).xyz * 2.0 - 1.0;
     vec3 dp1 = dFdx(p);
     vec3 dp2 = dFdy(p);
     vec2 duv1 = dFdx(uv);
@@ -534,13 +553,24 @@ void main() {
         if (t.a < 0.3) discard;
         albedo *= t.rgb;
     }
+    float steepness = 0.0;
+    if (u_blend == 1) {
+        // the mix follows the slope, with the textures' own detail breaking up the edge
+        float flat_y = normalize(v_normal).y;
+        vec3 rock = texture(u_tex2, v_uv * u_blend_scale).rgb;
+        float detail = (dot(rock, vec3(0.333)) - 0.35) * 0.12;
+        steepness = 1.0 - smoothstep(u_blend_steep - 0.07, u_blend_steep + 0.07, flat_y + detail);
+        albedo = mix(albedo, u_color * rock, steepness);
+    }
     // unlit things (flames, lamps, screens) glow when there is bloom
     if (u_mode == 1) { frag = u_post == 1 ? vec4(pow(albedo, vec3(2.2)) * 3.0, 0.0) : vec4(albedo, 1.0); return; }
     vec3 base = pow(albedo, vec3(2.2));
     vec3 n = normalize(v_normal);
     if (!gl_FrontFacing) n = -n;
-    if (u_has_normal == 1) {
-        n = perturb(n, v_world, v_uv);
+    if (u_blend == 1 && steepness > 0.5 && u_has_normal2 == 1) {
+        n = perturb(u_normal_tex2, n, v_world, v_uv * u_blend_scale);
+    } else if (u_has_normal == 1) {
+        n = perturb(u_normal_tex, n, v_world, v_uv);
     } else if (u_relief > 0.0 && u_has_tex == 1) {
         // bump mapping without a normal map: the brightness of the texture is the height,
         // and screen-space derivatives give the slope (Mikkelsen's method)
@@ -574,6 +604,7 @@ void main() {
     }
     for (int i = 0; i < 16; i++) {
         if (i >= u_npoints) break;
+        if ((u_lmask & (1 << i)) == 0) continue;
         vec3 d = u_ppos[i] - v_world;
         float dist = length(d);
         vec3 l = d / max(dist, 0.0001);
@@ -819,7 +850,7 @@ impl Renderer {
             for shape in Shape::ALL {
                 let (verts, idx) = build_mesh(shape);
                 let (vao, buffers, count) = upload_mesh(gl, &verts, &idx)?;
-                shapes.insert(shape, GpuMesh { vao, buffers, count, color: [1.0; 3], texture: None, skin: None, normal: None, rough: -1.0, metal: 0.0, emissive: [0.0; 3], opacity: 1.0 });
+                shapes.insert(shape, GpuMesh { vao, buffers, count, color: [1.0; 3], texture: None, skin: None, normal: None, rough: -1.0, metal: 0.0, emissive: [0.0; 3], opacity: 1.0, blend: None });
             }
 
             let line_vao = gl.create_vertex_array()?;
@@ -898,6 +929,8 @@ impl Renderer {
                 shadow_tex,
                 spot_fbo,
                 spot_tex,
+                spot_views: vec![],
+                uniforms: HashMap::new(),
                 post,
                 anisotropy,
                 white_tex: None,
@@ -1022,6 +1055,7 @@ impl Renderer {
                     metal: s.metal,
                     emissive: s.emissive,
                     opacity: s.opacity,
+                    blend: s.blend.clone(),
                 });
             }
         }
@@ -1044,6 +1078,11 @@ impl Renderer {
                         }
                         if let Some(t) = &s.normal {
                             self.ensure_texture(gl, t);
+                        }
+                        if let Some(b) = &s.blend {
+                            for t in [&b.texture, &b.normal].into_iter().flatten() {
+                                self.ensure_texture(gl, t);
+                            }
                         }
                     }
                 }
@@ -1152,11 +1191,14 @@ impl Renderer {
                 if !jobs.is_empty() {
                     let prev = gl.get_parameter_framebuffer(glow::DRAW_FRAMEBUFFER_BINDING);
                     gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
-                    gl.disable(glow::SCISSOR_TEST);
-                    gl.viewport(0, 0, SPOT_ATLAS, SPOT_ATLAS);
+                    // the panel's own clip rectangle, put back afterwards
+                    let mut panel_scissor = [0i32; 4];
+                    gl.get_parameter_i32_slice(glow::SCISSOR_BOX, &mut panel_scissor);
+                    gl.enable(glow::SCISSOR_TEST);
                     gl.clear_depth_f32(1.0);
-                    gl.clear(glow::DEPTH_BUFFER_BIT);
                     gl.use_program(Some(self.depth_prog));
+                    let last_views = std::mem::take(&mut self.spot_views);
+                    let frame_no = self.frame_no;
                     let u_mvp = gl.get_uniform_location(self.depth_prog, "u_mvp");
                     let d_flag = gl.get_uniform_location(self.depth_prog, "u_skinned");
                     let d_mats = gl.get_uniform_location(self.depth_prog, "u_joints[0]");
@@ -1168,7 +1210,15 @@ impl Renderer {
                         let l = &f.locals[li];
                         for vp in views {
                             let t = tile_vps.len() as i32;
+                            // the same view as last frame: half of these tiles wait a frame
+                            let same = last_views.get(t as usize).map(|old| old.abs_diff_eq(vp, 1e-4)).unwrap_or(false);
+                            if same && (t as u64 + frame_no) % 2 == 1 {
+                                tile_vps.push(vp);
+                                continue;
+                            }
                             gl.viewport((t % 4) * tile, (t / 4) * tile, tile, tile);
+                            gl.scissor((t % 4) * tile, (t / 4) * tile, tile, tile);
+                            gl.clear(glow::DEPTH_BUFFER_BIT);
                             for item in f.items.iter().filter(|i| i.cast_shadow && i.center.distance(l.pos) < l.range + i.radius) {
                                 gl.uniform_matrix_4_f32_slice(u_mvp.as_ref(), false, &(vp * item.model).to_cols_array());
                                 let parts: &[GpuMesh] = match &item.mesh {
@@ -1185,6 +1235,8 @@ impl Renderer {
                             tile_vps.push(vp);
                         }
                     }
+                    self.spot_views = tile_vps.clone();
+                    gl.scissor(panel_scissor[0], panel_scissor[1], panel_scissor[2], panel_scissor[3]);
                     gl.disable(glow::POLYGON_OFFSET_FILL);
                     gl.bind_framebuffer(glow::FRAMEBUFFER, prev);
                     gl.viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
@@ -1193,9 +1245,12 @@ impl Renderer {
             }
 
             // --- post-processing: draw into an off-screen image first ---
-            let use_post = f.bloom > 0.0 || f.ssao > 0.0 || f.reflections > 0.0;
+            // the 3D picture may be drawn smaller than the panel and stretched by the last pass:
+            // on very dense screens that costs little sharpness and saves most of the work
+            let scale = f.render_scale.clamp(0.25, 1.0);
+            let use_post = f.bloom > 0.0 || f.ssao > 0.0 || f.reflections > 0.0 || f.indirect > 0.0 || scale < 0.999;
             let frame_no = self.frame_no;
-            let (vw, vh) = (viewport[2].max(1), viewport[3].max(1));
+            let (vw, vh) = (((viewport[2] as f32 * scale).round() as i32).max(1), ((viewport[3] as f32 * scale).round() as i32).max(1));
             let screen_fbo = gl.get_parameter_framebuffer(glow::DRAW_FRAMEBUFFER_BINDING);
             let target = match (&mut self.post, use_post) {
                 (Some(post), true) => post.targets(gl, vw, vh, frame_no),
@@ -1214,7 +1269,18 @@ impl Renderer {
             gl.clear_depth_f32(1.0);
             gl.clear(glow::DEPTH_BUFFER_BIT);
             gl.disable(glow::CULL_FACE);
-            let loc = |p, name: &str| gl.get_uniform_location(p, name);
+            // uniform locations never change for a program: ask the driver once
+            let cache = std::cell::RefCell::new(std::mem::take(&mut self.uniforms));
+            let loc = |p: glow::Program, name: &str| -> Option<glow::UniformLocation> {
+                let mut c = cache.borrow_mut();
+                let per = c.entry(p).or_default();
+                if let Some(l) = per.get(name) {
+                    return l.clone();
+                }
+                let l = gl.get_uniform_location(p, name);
+                per.insert(name.to_string(), l.clone());
+                l
+            };
 
             // --- sky ---
             gl.use_program(Some(self.sky_prog));
@@ -1239,7 +1305,10 @@ impl Renderer {
             gl.uniform_3_f32_slice(loc(p, "u_ambient").as_ref(), &f.ambient);
             gl.uniform_1_f32(loc(p, "u_fog").as_ref(), f.fog.clamp(0.0, 1.0));
             gl.uniform_1_f32(loc(p, "u_relief").as_ref(), f.relief.clamp(0.0, 4.0));
-            gl.uniform_1_f32(loc(p, "u_indirect").as_ref(), f.indirect.clamp(0.0, 3.0));
+            // with post-processing the screen-space pass bounces the light; the shader's own soft
+            // fill from nearby lamps stays only as a faint base
+            let fill = if post_on { 0.3 } else { 1.0 };
+            gl.uniform_1_f32(loc(p, "u_indirect").as_ref(), f.indirect.clamp(0.0, 3.0) * fill);
             gl.uniform_3_f32_slice(loc(p, "u_sky_top").as_ref(), &f.sky_top);
             gl.uniform_1_i32(loc(p, "u_post").as_ref(), post_on as i32);
             for i in 0..MAX_POINT {
@@ -1285,6 +1354,13 @@ impl Renderer {
             let u_rough = loc(p, "u_rough");
             let u_metal = loc(p, "u_metal");
             gl.uniform_1_i32(loc(p, "u_normal_tex").as_ref(), 4);
+            gl.uniform_1_i32(loc(p, "u_tex2").as_ref(), 5);
+            gl.uniform_1_i32(loc(p, "u_normal_tex2").as_ref(), 6);
+            let u_blend = loc(p, "u_blend");
+            let u_has_normal2 = loc(p, "u_has_normal2");
+            let u_blend_steep = loc(p, "u_blend_steep");
+            let u_blend_scale = loc(p, "u_blend_scale");
+            gl.uniform_1_i32(u_blend.as_ref(), 0);
             if self.white_tex.is_none() {
                 if let Ok(t) = gl.create_texture() {
                     gl.bind_texture(glow::TEXTURE_2D, Some(t));
@@ -1314,6 +1390,7 @@ impl Renderer {
             far_first.sort_by(|a, b| b.center.distance(f.cam_pos).total_cmp(&a.center.distance(f.cam_pos)));
             let u_emissive = loc(p, "u_emissive");
             let u_opacity = loc(p, "u_opacity");
+            let u_lmask = loc(p, "u_lmask");
             for pass in 0..2 {
             if pass == 1 {
                 order = far_first.clone();
@@ -1328,6 +1405,14 @@ impl Renderer {
                     MeshRef::Model(m) => self.models.get(&m.id).map(|v| v.as_slice()).unwrap_or(&[]),
                 };
                 gl.uniform_matrix_4_f32_slice(u_model.as_ref(), false, &item.model.to_cols_array());
+                // only the lamps whose light can reach this object are shaded for it
+                let mut mask = 0i32;
+                for (i, l) in f.locals.iter().enumerate().take(16) {
+                    if item.center.distance(l.pos) < l.range + item.radius {
+                        mask |= 1 << i;
+                    }
+                }
+                gl.uniform_1_i32(u_lmask.as_ref(), mask);
                 let nm = Mat3::from_mat4(item.model).inverse().transpose();
                 gl.uniform_matrix_3_f32_slice(u_normal.as_ref(), false, &nm.to_cols_array());
                 // negative scale flips face winding
@@ -1385,6 +1470,18 @@ impl Renderer {
                     gl.uniform_1_f32(u_metal.as_ref(), m.metal);
                     gl.active_texture(glow::TEXTURE4);
                     gl.bind_texture(glow::TEXTURE_2D, normal.or(white));
+                    let second = m.blend.as_ref().and_then(|b| b.texture.as_ref().and_then(|t| self.textures.get(&t.id).copied()).map(|t| (b, t)));
+                    gl.uniform_1_i32(u_blend.as_ref(), second.is_some() as i32);
+                    if let Some((b, t)) = second {
+                        let n2 = b.normal.as_ref().and_then(|t| self.textures.get(&t.id).copied());
+                        gl.active_texture(glow::TEXTURE5);
+                        gl.bind_texture(glow::TEXTURE_2D, Some(t));
+                        gl.active_texture(glow::TEXTURE6);
+                        gl.bind_texture(glow::TEXTURE_2D, n2.or(white));
+                        gl.uniform_1_i32(u_has_normal2.as_ref(), n2.is_some() as i32);
+                        gl.uniform_1_f32(u_blend_steep.as_ref(), b.steep);
+                        gl.uniform_1_f32(u_blend_scale.as_ref(), b.uv_scale);
+                    }
                     gl.active_texture(glow::TEXTURE0);
                     bind_skin(gl, &u_flag, &u_mats, m, &item.joints);
                     gl.bind_vertex_array(Some(m.vao));
@@ -1464,14 +1561,18 @@ impl Renderer {
                     gl.active_texture(glow::TEXTURE0 + unit);
                     gl.bind_texture(glow::TEXTURE_2D, Some(tex));
                 };
-                // ambient occlusion
-                if f.ssao > 0.0 {
+                // ambient occlusion and bounced light
+                if f.ssao > 0.0 || f.indirect > 0.0 {
+                    // at half size: both are soft, and the last pass smooths them
                     gl.bind_framebuffer(glow::FRAMEBUFFER, Some(t.ao_fbo));
-                    gl.viewport(0, 0, vw, vh);
+                    gl.viewport(0, 0, (vw / 2).max(1), (vh / 2).max(1));
                     let q = post.ao_prog;
                     gl.use_program(Some(q));
                     bind(0, t.depth);
+                    bind(1, t.color);
                     gl.uniform_1_i32(loc(q, "u_depth").as_ref(), 0);
+                    gl.uniform_1_i32(loc(q, "u_color").as_ref(), 1);
+                    gl.uniform_1_f32(loc(q, "u_gi").as_ref(), f.indirect.clamp(0.0, 3.0));
                     gl.uniform_matrix_4_f32_slice(loc(q, "u_inv_proj").as_ref(), false, &inv_proj.to_cols_array());
                     gl.uniform_matrix_4_f32_slice(loc(q, "u_proj").as_ref(), false, &f.proj.to_cols_array());
                     gl.uniform_2_f32_slice(loc(q, "u_texel").as_ref(), &texel);
@@ -1527,6 +1628,7 @@ impl Renderer {
                 gl.uniform_1_f32(loc(q, "u_ssao").as_ref(), f.ssao);
                 gl.uniform_1_f32(loc(q, "u_bloom_amount").as_ref(), f.bloom);
                 gl.uniform_1_f32(loc(q, "u_ssr").as_ref(), f.reflections);
+                gl.uniform_1_f32(loc(q, "u_gi").as_ref(), f.indirect.clamp(0.0, 3.0));
                 gl.draw_arrays(glow::TRIANGLES, 0, 3);
                 gl.depth_func(glow::LEQUAL);
                 for unit in (0..4).rev() {
@@ -1556,6 +1658,7 @@ impl Renderer {
             gl.bind_vertex_array(None);
             gl.use_program(None);
             gl.disable(glow::DEPTH_TEST);
+            self.uniforms = cache.into_inner();
         }
     }
 }

@@ -300,7 +300,20 @@ impl State {
     }
 
     /// Lowers the scene's effects to the graphics quality chosen by the user.
-    fn apply_quality(&self, frame: &mut RenderFrame) {
+    /// `pixels_high`: height of the panel in real pixels.
+    fn apply_quality(&self, frame: &mut RenderFrame, pixels_high: f32) {
+        // dense screens (Retina, 4K) have more pixels than the lighting needs: the 3D picture is
+        // drawn up to a height that depends on the quality, then stretched. CRYO_RENDER_SCALE=1
+        // forces full size.
+        let budget = match self.settings.graphics.as_str() {
+            "low" => 900.0,
+            "medium" => 1080.0,
+            _ => 1260.0,
+        };
+        frame.render_scale = match std::env::var("CRYO_RENDER_SCALE").ok().and_then(|v| v.parse::<f32>().ok()) {
+            Some(v) => v.clamp(0.25, 1.0),
+            None => (budget / pixels_high.max(1.0)).clamp(0.5, 1.0),
+        };
         match self.settings.graphics.as_str() {
             "low" => {
                 frame.bloom = 0.0;
@@ -796,7 +809,7 @@ impl State {
 
         // ---------- 3D drawing ----------
         let mut frame = RenderFrame::from_scene(&self.scene, &mut self.assets, view, proj, self.selected);
-        self.apply_quality(&mut frame);
+        self.apply_quality(&mut frame, rect.height() * ui.ctx().pixels_per_point());
         if let Some(play) = &self.play {
             frame.particles = play.rt.fx.list.iter().map(|p| { let (s, c) = p.look(); (p.pos, s, c, p.glow) }).collect();
         }
@@ -1010,10 +1023,44 @@ impl State {
             cam.far.max(cam.near + 1.0),
         );
         let mut frame = RenderFrame::from_scene(&self.scene, &mut self.assets, view, proj, None);
-        self.apply_quality(&mut frame);
+        self.apply_quality(&mut frame, rect.height() * ui.ctx().pixels_per_point());
         if let Some(play) = &self.play {
             frame.particles = play.rt.fx.list.iter().map(|p| { let (s, c) = p.look(); (p.pos, s, c, p.glow) }).collect();
         }
+        // a video cutscene covers the whole game screen
+        let film = self.play.as_ref().and_then(|p| p.rt.film_frame().map(|(f, i)| (f.file.clone(), f.video.clone(), i)));
+        if let Some((file, video, index)) = film {
+            let stale = self.film_tex.as_ref().map(|(f, i, _)| f != &file || *i != index).unwrap_or(true);
+            if stale {
+                if let Ok((w, h, px)) = video.frame(index) {
+                    let img = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &px);
+                    match &mut self.film_tex {
+                        Some((f, i, tex)) => {
+                            tex.set(img, egui::TextureOptions::LINEAR);
+                            *f = file.clone();
+                            *i = index;
+                        }
+                        None => self.film_tex = Some((file.clone(), index, ui.ctx().load_texture("film", img, egui::TextureOptions::LINEAR))),
+                    }
+                }
+            }
+            painter.rect_filled(rect, 0.0, Color32::BLACK);
+            if let Some((_, _, tex)) = &self.film_tex {
+                let (vw, vh) = video.size();
+                let k = (rect.width() / vw as f32).min(rect.height() / vh as f32);
+                let r = Rect::from_center_size(rect.center(), egui::vec2(vw as f32 * k, vh as f32 * k));
+                painter.image(tex.id(), r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+            }
+            painter.text(
+                rect.right_bottom() + egui::vec2(-14.0, -12.0),
+                Align2::RIGHT_BOTTOM,
+                tr!("Enter: skip", "Enter: pular"),
+                FontId::proportional(13.0),
+                Color32::from_white_alpha(150),
+            );
+            return;
+        }
+        self.film_tex = None;
         self.paint_3d(ui, rect, frame);
 
         match &self.play {
@@ -1081,6 +1128,18 @@ impl State {
                         painter.text(pos + egui::vec2(2.0, 2.0), Align2::CENTER_CENTER, &text, FontId::proportional(30.0), Color32::from_black_alpha(alpha));
                         painter.text(pos, Align2::CENTER_CENTER, &text, FontId::proportional(30.0), c);
                     }
+                }
+                // fades asked by cutscenes and scripts
+                if play.rt.fade > 0.003 {
+                    painter.rect_filled(rect, 0.0, Color32::from_black_alpha((play.rt.fade.clamp(0.0, 1.0) * 255.0) as u8));
+                }
+                if let Some(text) = play.rt.subtitle() {
+                    let size = (rect.height() * 0.034).clamp(15.0, 30.0);
+                    let pos = Pos2::new(rect.center().x, rect.bottom() - rect.height() * 0.13);
+                    let galley = painter.layout(text.to_string(), FontId::proportional(size), Color32::WHITE, rect.width() * 0.8);
+                    let r = Rect::from_center_size(pos, galley.size()).expand2(egui::vec2(12.0, 6.0));
+                    painter.rect_filled(r, 4.0, Color32::from_black_alpha(150));
+                    painter.galley(r.min + egui::vec2(12.0, 6.0), galley, Color32::WHITE);
                 }
                 if play.rt.in_cutscene(&self.scene) {
                     // cinema bars

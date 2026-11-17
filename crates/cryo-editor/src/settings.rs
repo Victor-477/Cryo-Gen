@@ -20,6 +20,20 @@ pub struct Settings {
     /// "high", "medium" or "low": how much of a scene's effects and shadows are drawn.
     #[serde(default)]
     pub graphics: String,
+    /// Most frames per second a running game draws: 30, 60, 120, or 0 for no limit.
+    /// Not set: 60.
+    #[serde(default)]
+    pub fps_limit: Option<u32>,
+    /// Volumes, 0 to 1 (not set: full).
+    #[serde(default)]
+    pub volume_master: Option<f32>,
+    #[serde(default)]
+    pub volume_music: Option<f32>,
+    #[serde(default)]
+    pub volume_effects: Option<f32>,
+    /// The player's control changes, per project (folder name), name -> inputs.
+    #[serde(default)]
+    pub bindings: std::collections::HashMap<String, std::collections::HashMap<String, Vec<String>>>,
 }
 
 fn home() -> Option<PathBuf> {
@@ -46,6 +60,14 @@ fn settings_dir() -> Option<PathBuf> {
 }
 
 impl Settings {
+    /// The frame-rate limit in use (0 = none).
+    pub fn fps(&self) -> u32 {
+        match self.fps_limit {
+            Some(v) if [0, 30, 60, 120].contains(&v) => v,
+            _ => 60,
+        }
+    }
+
     pub fn load() -> Settings {
         settings_dir()
             .and_then(|d| std::fs::read_to_string(d.join("settings.json")).ok())
@@ -70,5 +92,25 @@ pub fn default_project_dir() -> PathBuf {
     match std::env::var_os("CRYO_HOME") {
         Some(dir) => PathBuf::from(dir).join("FrostpeakIsles"),
         None => home().unwrap_or_else(|| PathBuf::from(".")).join("CryoProjects").join("FrostpeakIsles"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frame_rate_limit_defaults_to_60_and_accepts_only_the_offered_values() {
+        let mut s = Settings::default();
+        assert_eq!(s.fps(), 60);
+        for v in [0, 30, 60, 120] {
+            s.fps_limit = Some(v);
+            assert_eq!(s.fps(), v);
+        }
+        s.fps_limit = Some(45);
+        assert_eq!(s.fps(), 60);
+        // old settings files have no limit: they still load
+        let old: Settings = serde_json::from_str(r#"{"language":"pt","graphics":"low"}"#).unwrap();
+        assert_eq!((old.fps(), old.graphics.as_str()), (60, "low"));
     }
 }

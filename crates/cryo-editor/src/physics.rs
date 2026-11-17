@@ -5,7 +5,9 @@
 //! triangles of their model as the collider.
 
 use crate::scene::{BodyKind, ColliderShape, Scene};
+use crate::terrain::Heightfield;
 use glam::{Mat3, Mat4, Quat, Vec3};
+use std::sync::Arc;
 
 #[derive(Clone)]
 enum Col {
@@ -13,6 +15,8 @@ enum Col {
     Sphere { r: f32 },
     /// Triangles in world space.
     Mesh { tris: Vec<[Vec3; 3]> },
+    /// A terrain's height field, with the terrain's world matrix and its inverse.
+    Height { field: Arc<Heightfield>, world: Mat4, inv: Mat4 },
 }
 
 struct Body {
@@ -53,6 +57,9 @@ fn gather(scene: &Scene) -> Vec<Body> {
             let half = base * scale.abs();
             let col = match (p.collider, &p.mesh) {
                 (ColliderShape::Sphere, _) => Col::Sphere { r: half.max_element() },
+                (ColliderShape::Mesh, _) if p.kind == BodyKind::Static && p.terrain.is_some() => {
+                    Col::Height { field: p.terrain.clone().unwrap(), world, inv: world.inverse() }
+                }
                 (ColliderShape::Mesh, Some(tris)) if p.kind == BodyKind::Static => Col::Mesh {
                     tris: tris.iter().map(|t| t.map(|v| world.transform_point3(v))).collect(),
                 },
@@ -143,7 +150,9 @@ fn obb(a: &Body, ha: Vec3, b: &Body, hb: Vec3) -> Option<(Vec3, f32)> {
 /// Returns (normal pointing from B to A, depth) if they overlap.
 fn overlap(a: &Body, b: &Body) -> Option<(Vec3, f32)> {
     match (&a.col, &b.col) {
-        (Col::Mesh { .. }, Col::Mesh { .. }) => None,
+        (Col::Mesh { .. } | Col::Height { .. }, Col::Mesh { .. } | Col::Height { .. }) => None,
+        (Col::Height { field, world, inv }, _) => height_overlap(field, world, inv, b).map(|(n, d)| (-n, d)),
+        (_, Col::Height { field, world, inv }) => height_overlap(field, world, inv, a),
         (Col::Mesh { tris }, _) => mesh_overlap(tris, b).map(|(n, d)| (-n, d)),
         (_, Col::Mesh { tris }) => mesh_overlap(tris, a),
         (Col::Box { half: ha }, Col::Box { half: hb }) => {
@@ -169,13 +178,65 @@ fn overlap(a: &Body, b: &Body) -> Option<(Vec3, f32)> {
     }
 }
 
+/// Gives Mesh colliders that have no shape yet their model's triangles, or the height field
+/// of a terrain. The editor does this from its asset cache; this is for games started
+/// without it (tests, tools).
+pub fn fill_missing_colliders(scene: &mut Scene, project_dir: &std::path::Path) {
+    let mut fields: std::collections::HashMap<String, Option<Arc<Heightfield>>> = Default::default();
+    for e in &mut scene.entities {
+        let (Some(p), Some(m)) = (&mut e.physics, &e.mesh) else { continue };
+        if p.collider != ColliderShape::Mesh || p.mesh.is_some() || p.terrain.is_some() {
+            continue;
+        }
+        let Some(rel) = &m.model else { continue };
+        let path = project_dir.join(rel);
+        if rel.ends_with(".terrain") {
+            p.terrain = fields.entry(rel.clone()).or_insert_with(|| crate::terrain::load_field(&path).ok().map(Arc::new)).clone();
+        } else if let Ok(model) = crate::assets::load_model(&path) {
+            let mut tris = vec![];
+            for s in &model.subs {
+                let v = |i: u32| Vec3::new(s.vertices[i as usize * 8], s.vertices[i as usize * 8 + 1], s.vertices[i as usize * 8 + 2]);
+                for t in s.indices.chunks_exact(3) {
+                    tris.push([v(t[0]), v(t[1]), v(t[2])]);
+                }
+            }
+            if tris.len() <= 60_000 {
+                p.mesh = Some(Arc::new(tris));
+            }
+        }
+    }
+}
+
+/// Contact between a terrain and a box or sphere: the ground's tangent plane under the body.
+/// The normal points from the ground towards the body.
+fn height_overlap(field: &Heightfield, world: &Mat4, inv: &Mat4, body: &Body) -> Option<(Vec3, f32)> {
+    let q = inv.transform_point3(body.pos);
+    if !field.covers(q.x, q.z) {
+        return None;
+    }
+    let h = field.height(q.x, q.z);
+    let ground = world.transform_point3(Vec3::new(q.x, h, q.z));
+    let n = (Mat3::from_mat4(*inv).transpose() * field.normal(q.x, q.z)).normalize_or(Vec3::Y);
+    let extent = match &body.col {
+        Col::Sphere { r } => *r,
+        Col::Box { half } => {
+            let r = Mat3::from_quat(body.rot);
+            (0..3).map(|i| r.col(i).dot(n).abs() * half[i]).sum()
+        }
+        _ => return None,
+    };
+    // anything under the ground is pushed back up, however deep it went
+    let pen = extent - (body.pos - ground).dot(n);
+    (pen > 0.0).then_some((n, pen))
+}
+
 /// Deepest contact between a triangle mesh and a box or sphere.
 /// The normal points from the mesh towards the body.
 fn mesh_overlap(tris: &[[Vec3; 3]], body: &Body) -> Option<(Vec3, f32)> {
     let reach = match &body.col {
         Col::Sphere { r } => *r,
         Col::Box { half } => half.length(),
-        Col::Mesh { .. } => return None,
+        Col::Mesh { .. } | Col::Height { .. } => return None,
     };
     let (lo, hi) = (body.pos - Vec3::splat(reach), body.pos + Vec3::splat(reach));
     let inv = body.rot.inverse();
@@ -191,7 +252,7 @@ fn mesh_overlap(tris: &[[Vec3; 3]], body: &Body) -> Option<(Vec3, f32)> {
                 let local = t.map(|v| inv * (v - body.pos));
                 box_triangle(*half, &local).map(|(n, d)| (body.rot * n, d))
             }
-            Col::Mesh { .. } => None,
+            Col::Mesh { .. } | Col::Height { .. } => None,
         };
         if let Some((n, d)) = hit {
             if best.map(|(_, bd)| d > bd).unwrap_or(true) {
@@ -305,7 +366,7 @@ fn support_point(b: &Body, normal: Vec3) -> Vec3 {
             }
             sum / n
         }
-        Col::Mesh { .. } => b.pos,
+        Col::Mesh { .. } | Col::Height { .. } => b.pos,
     }
 }
 
@@ -317,7 +378,7 @@ fn inverse_inertia(b: &Body) -> Mat3 {
             let s = *half * 2.0;
             Vec3::new(s.y * s.y + s.z * s.z, s.x * s.x + s.z * s.z, s.x * s.x + s.y * s.y) / 12.0
         }
-        Col::Mesh { .. } => Vec3::ONE,
+        Col::Mesh { .. } | Col::Height { .. } => Vec3::ONE,
     };
     let r = Mat3::from_quat(b.rot);
     r * Mat3::from_diagonal(Vec3::ONE / local.max(Vec3::splat(1e-5))) * r.transpose()
@@ -452,6 +513,15 @@ pub fn raycast(scene: &Scene, origin: Vec3, dir: Vec3, max: f32, ignore: Option<
                 }
                 nearest
             }
+            Col::Height { field, inv, .. } => {
+                let (o, dl) = (inv.transform_point3(origin), inv.transform_vector3(d));
+                let len = dl.length().max(1e-9);
+                field.raycast(o, dl / len, max * len).map(|t| {
+                    let p = o + dl / len * t;
+                    let n = (Mat3::from_mat4(*inv).transpose() * field.normal(p.x, p.z)).normalize_or(Vec3::Y);
+                    (t / len, n)
+                })
+            }
         };
         if let Some((t, n)) = hit {
             if t <= max && best.map(|h| t < h.1).unwrap_or(true) {
@@ -545,7 +615,7 @@ pub fn step(scene: &mut Scene, dt: f32) -> Vec<Contact> {
             .map(|b| match &b.col {
                 Col::Box { half } => half.length(),
                 Col::Sphere { r } => *r,
-                Col::Mesh { .. } => f32::INFINITY,
+                Col::Mesh { .. } | Col::Height { .. } => f32::INFINITY,
             })
             .collect();
         let movers: Vec<usize> = (0..bodies.len()).filter(|i| bodies[*i].dynamic).collect();
@@ -756,6 +826,41 @@ mod tests {
         let p = e.physics.as_ref().unwrap();
         assert!(p.angular.length() < 0.05 && p.velocity.length() < 0.2, "and it is at rest: {:?} {:?}", p.angular, p.velocity);
         assert!(e.position.is_finite() && e.position.distance(Vec3::new(5.0, 0.5, 4.0)) < 3.0);
+    }
+
+    #[test]
+    fn terrain_holds_bodies_on_its_slopes_and_stops_rays() {
+        let mut s = Scene::empty();
+        // a valley 40 m across: a V along X, 0 m at x = 0 rising 0.4 m per metre
+        let (cols, rows) = (41, 41);
+        let heights = (0..rows).flat_map(|_| (0..cols).map(|c| (c as f32 - 20.0).abs() * 0.4)).collect();
+        let field = std::sync::Arc::new(Heightfield { cols, rows, size: glam::Vec2::new(40.0, 40.0), heights });
+        let ground = s.add_empty("Terrain");
+        let mut p = Physics::new(BodyKind::Static, ColliderShape::Mesh);
+        p.terrain = Some(field);
+        s.get_mut(ground).unwrap().physics = Some(p);
+        s.get_mut(ground).unwrap().position = Vec3::new(0.0, -1.0, 0.0);
+        let mut bodies = vec![];
+        for (i, x) in [-8.0f32, 0.0, 6.0].into_iter().enumerate() {
+            let id = s.add_mesh(if i == 1 { Shape::Sphere } else { Shape::Cube });
+            let e = s.get_mut(id).unwrap();
+            e.position = Vec3::new(x, 8.0, 0.0);
+            e.physics = Some(Physics::new(BodyKind::Dynamic, if i == 1 { ColliderShape::Sphere } else { ColliderShape::Box }));
+            bodies.push(id);
+        }
+        for _ in 0..240 {
+            step(&mut s, 1.0 / 60.0);
+        }
+        for id in bodies {
+            let p = s.get(id).unwrap().position;
+            let ground_y = p.x.abs() * 0.4 - 1.0;
+            assert!(p.y > ground_y && p.y < ground_y + 1.0, "resting on the terrain: {p:?}");
+        }
+        // a shot down into the valley stops at the ground
+        let (id, t, n) = raycast(&s, Vec3::new(5.0, 10.0, 3.0), -Vec3::Y, 50.0, None).unwrap();
+        assert_eq!(id, ground);
+        assert!((10.0 - t - 1.0).abs() < 0.05, "{t}");
+        assert!(n.x < -0.3 && n.y > 0.8, "faces back down the slope: {n:?}");
     }
 
     #[test]

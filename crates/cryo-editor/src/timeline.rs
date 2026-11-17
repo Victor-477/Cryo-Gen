@@ -50,6 +50,9 @@ fn action_name(a: &Action) -> String {
         Action::Qte { .. } => tr!("Quick time event", "Quick time event"),
         Action::Play { .. } => tr!("Play animation", "Tocar animação"),
         Action::TimeScale { .. } => tr!("Game speed", "Velocidade do jogo"),
+        Action::Video { .. } => tr!("Play video", "Tocar vídeo"),
+        Action::Subtitle { .. } => tr!("Subtitle", "Legenda"),
+        Action::Fade { .. } => tr!("Fade", "Fade (escurecer/clarear)"),
     }
 }
 
@@ -63,6 +66,9 @@ fn action_color(a: &Action) -> Color32 {
         Action::Qte { .. } => Color32::from_rgb(255, 120, 130),
         Action::Play { .. } => Color32::from_rgb(240, 230, 120),
         Action::TimeScale { .. } => Color32::from_rgb(200, 200, 210),
+        Action::Video { .. } => Color32::from_rgb(255, 140, 220),
+        Action::Subtitle { .. } => Color32::from_rgb(230, 230, 160),
+        Action::Fade { .. } => Color32::from_rgb(140, 140, 150),
     }
 }
 
@@ -275,6 +281,9 @@ impl State {
                         },
                         Action::Play { clip: String::new() },
                         Action::TimeScale { scale: 0.3 },
+                        Action::Video { file: crate::project::list_files(&self.project_dir.join("videos"), crate::video::EXT).into_iter().next().map(|f| format!("videos/{f}")).unwrap_or_default() },
+                        Action::Subtitle { text: String::new(), seconds: 3.0 },
+                        Action::Fade { to: 1.0, seconds: 0.5 },
                     ] {
                         if ui.button(action_name(&action)).clicked() {
                             add_marker = Some(action);
@@ -590,6 +599,41 @@ impl State {
                                 ui.label(tr!("Speed", "Velocidade"));
                                 ui.add(DragValue::new(scale).speed(0.02).range(0.0..=4.0).suffix("x"))
                                     .on_hover_text(tr!("1 is normal, 0.3 is slow motion. Add another event to bring it back to 1.", "1 é normal, 0.3 é câmera lenta. Adicione outro evento para voltar a 1."));
+                            }
+                            Action::Video { file } => {
+                                ui.label(tr!("File", "Arquivo"));
+                                ui.add(egui::TextEdit::singleline(file).desired_width(220.0).hint_text("videos/intro.cryovid"))
+                                    .on_hover_text(tr!(
+                                        "A video of the project (File > Import video converts .mp4, .mov, .webm...). The game and this clip wait until it ends; Enter skips it.",
+                                        "Um vídeo do projeto (Arquivo > Importar vídeo converte .mp4, .mov, .webm...). O jogo e este clipe esperam até ele acabar; Enter pula."
+                                    ));
+                                let videos = crate::project::list_files(&self.project_dir.join("videos"), crate::video::EXT);
+                                if !videos.is_empty() {
+                                    ui.menu_button("▾", |ui| {
+                                        for v in videos {
+                                            if ui.button(&v).clicked() {
+                                                *file = format!("videos/{v}");
+                                                ui.close();
+                                            }
+                                        }
+                                    });
+                                }
+                            }
+                            Action::Subtitle { text, seconds } => {
+                                ui.label(tr!("Text", "Texto"));
+                                ui.add(egui::TextEdit::singleline(text).desired_width(280.0));
+                                ui.add(DragValue::new(seconds).speed(0.05).range(0.2..=30.0).suffix(" s"));
+                            }
+                            Action::Fade { to, seconds } => {
+                                let mut black = *to > 0.5;
+                                egui::ComboBox::from_id_salt("fade_to")
+                                    .selected_text(if black { tr!("to black", "para preto") } else { tr!("from black", "de volta do preto") })
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(&mut black, true, tr!("to black", "para preto"));
+                                        ui.selectable_value(&mut black, false, tr!("from black", "de volta do preto"));
+                                    });
+                                *to = if black { 1.0 } else { 0.0 };
+                                ui.add(DragValue::new(seconds).speed(0.05).range(0.0..=10.0).suffix(" s"));
                             }
                         }
                         if ui.button(tr!("🗑 Delete event", "🗑 Excluir evento")).clicked() {

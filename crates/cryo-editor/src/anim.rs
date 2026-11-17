@@ -159,6 +159,13 @@ pub enum Action {
     Play { clip: String },
     /// Changes the speed of the game (1 = normal, 0.25 = slow motion).
     TimeScale { scale: f32 },
+    /// Plays a video over the game screen (`videos/name.cryovid`); the game and the clip
+    /// wait until it ends or the player skips it.
+    Video { file: String },
+    /// A line of dialogue or narration at the bottom of the screen, for some seconds.
+    Subtitle { text: String, seconds: f32 },
+    /// Fades the picture to black (`to` = 1) or back from black (`to` = 0) over some seconds.
+    Fade { to: f32, seconds: f32 },
 }
 
 fn ten() -> u32 {

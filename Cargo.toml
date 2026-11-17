@@ -2,8 +2,27 @@
 resolver = "2"
 members = ["crates/cryo-lang", "crates/cryo-editor"]
 
+# Development builds: the engine's own code lightly optimised (fast to rebuild), every
+# dependency fully optimised (built once), and only line numbers as debug info (smaller, faster
+# to link: the editor binary was 400 MB with full debug info).
 [profile.dev]
 opt-level = 1
+debug = "line-tables-only"
 
+[profile.dev.package."*"]
+opt-level = 3
+
+# `cargo build --release`: fast enough to play, and incremental, so changing one file
+# rebuilds in a fraction of the time.
 [profile.release]
 opt-level = 3
+incremental = true
+
+# What is shipped (scripts/package.sh, the release workflow): `cargo build --profile dist`.
+# Slower to build, a little faster and smaller to run.
+[profile.dist]
+inherits = "release"
+incremental = false
+lto = "thin"
+codegen-units = 1
+strip = true

@@ -174,8 +174,16 @@ pub fn build_scene(dir: &Path) -> Scene {
 
     // ------------------------------------------------------------ ground
     let world = group(&mut s, "Keep");
+    // the land: low mounds in the bailey, wooded hills and crags around the castle
+    let land = model(&mut s, "Hills", "keep.terrain", v(0.0, 0.0, -5.0), 0.0);
+    {
+        let e = s.get_mut(land).unwrap();
+        e.physics = Some(Physics::new(BodyKind::Static, ColliderShape::Mesh));
+        let m = e.mesh.as_mut().unwrap();
+        m.color = [0.8, 0.8, 0.8];
+    }
+    adopt(&mut s, world, land);
     for (name, file, pos) in [
-        ("Bailey Ground", "ground_grass.obj", v(0.0, 0.0, 30.0)),
         ("Courtyard Ground", "ground_cobble.obj", v(0.0, 0.0, -16.0)),
         ("Hall Floor", "ground_hall.obj", v(0.0, 0.0, -51.0)),
     ] {
@@ -458,7 +466,59 @@ pub fn build_scene(dir: &Path) -> Scene {
     intro.markers.push(Marker { t: 0.6, action: Action::Broadcast { event: "title".into(), arg: String::new() } });
     intro.markers.push(Marker { t: 6.95, action: Action::Camera { entity: cam } });
     s.animations.push(intro);
+    settle_on_land(&mut s, dir, land, &[walls, world], props);
     s
+}
+
+/// Stands everything in the bailey on the mounds of the terrain, and plants pines on the
+/// hills outside the walls.
+fn settle_on_land(s: &mut Scene, dir: &Path, land: u64, skip: &[u64], props: u64) {
+    let Ok((field, _)) = crate::terrain::load(&dir.join("models/keep.terrain")) else { return };
+    let origin = s.get(land).map(|e| e.position).unwrap_or_default();
+    let height = |x: f32, z: f32| field.height(x - origin.x, z - origin.z) + origin.y;
+    let groups: Vec<u64> = s.entities.iter().filter(|e| e.mesh.is_none() && e.physics.is_none() && e.script.is_none() && e.light.is_none() && e.camera.is_none()).map(|e| e.id).collect();
+    for e in &mut s.entities {
+        let top = match e.parent {
+            None => true,
+            Some(p) => groups.contains(&p) && !skip.contains(&p),
+        };
+        let in_bailey = e.position.x.abs() < 19.8 && e.position.z > 2.6 && e.position.z < 56.8;
+        let directional = e.light.as_ref().map(|l| l.kind == LightKind::Directional).unwrap_or(false);
+        if e.id == land || !top || !in_bailey || e.camera.is_some() || directional || groups.contains(&e.id) {
+            continue;
+        }
+        e.position.y += height(e.position.x, e.position.z).max(0.0);
+    }
+    // pines on the lower slopes outside the walls (a fixed pattern, the same every time)
+    let pine = crate::assets::load_model(&dir.join("models/pine.obj")).ok().map(|m| (m.center.to_array(), m.half.to_array()));
+    let mut planted = 0;
+    for i in 0..400 {
+        if planted >= 56 {
+            break;
+        }
+        let f = i as f32;
+        let a = f * 2.399_963;
+        let r = 30.0 + (f * 7.31).sin().abs() * 70.0;
+        let (x, z) = (a.cos() * r, a.sin() * r + 0.0);
+        let outside = x.abs() > 25.0 || z > 63.0 || z < -75.0;
+        let y = height(x, z);
+        if !outside || !(0.5..22.0).contains(&y) || field.normal(x - origin.x, z - origin.z).y < 0.86 {
+            continue;
+        }
+        let id = s.add_mesh(Shape::Cube);
+        let e = s.get_mut(id).unwrap();
+        e.name = "Pine".into();
+        e.position = Vec3::new(x, y - 0.15, z);
+        e.rotation = Vec3::new(0.0, f * 47.0 % 360.0, 0.0);
+        e.scale = Vec3::splat(1.3 + (f * 3.7).sin().abs() * 0.9);
+        e.parent = Some(props);
+        let m = e.mesh.as_mut().unwrap();
+        m.model = Some("models/pine.obj".into());
+        m.model_bounds = pine;
+        m.color = [1.0; 3];
+        m.shininess = 0.08;
+        planted += 1;
+    }
 }
 
 #[cfg(test)]
