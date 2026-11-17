@@ -9,6 +9,10 @@ script Shrine {
                 fx.burst(self.position + vec3(0, 1.8, 0), "magic", 60)
                 audio.play("sounds/heal.wav", 0.8)
                 banner("SHRINE KINDLED", 1.8)
+                // the first shrine leaves an Ember Ring in the knight's bag
+                if not inventory.has("ember_ring") {
+                    inventory.add("ember_ring")
+                }
             }
         }
     }

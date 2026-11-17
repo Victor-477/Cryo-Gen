@@ -77,7 +77,7 @@ footer { margin-top: 70px; color: var(--muted); font-size: .86rem; border-top: 1
 <div class="layout">
 <nav>
   <a class="brand" href="#top">❄ Cryo Engine</a>
-  <div class="version">Documentation · 0.18.0-beta</div>
+  <div class="version">Documentation · 0.19.0-beta</div>
   <h4>Start</h4>
   <a class="item" href="#top">Overview</a>
   <a class="item" href="#install">Download and install</a>
@@ -102,6 +102,8 @@ footer { margin-top: 70px; color: var(--muted); font-size: .86rem; border-top: 1
   <a class="item" href="#controls">Gamepads and controls</a>
   <a class="item" href="#prefabs">Prefabs and levels</a>
   <a class="item" href="#menus">Game menus</a>
+  <a class="item" href="#hud">Game HUD</a>
+  <a class="item" href="#rpg">RPG: inventory, levels, skills, talents</a>
   <a class="item" href="#physics">Physics</a>
   <a class="item" href="#terrain">Terrain</a>
   <a class="item" href="#performance">Performance</a>
@@ -599,6 +601,7 @@ fade(<span class="n">1</span>, <span class="n">0.5</span>)   <span class="c">// 
   <li><b>Loading</b>: a loading screen between levels with text, a picture, tips (one at random) and a minimum time.</li>
   <li><b>Look</b>: position (left, centre, right), fonts (any .ttf/.otf in the project), colours of the title, text, buttons, panels and the darkening over the game, sizes, spacing, rounded corners, capitals, shadow, fade-in, the slide of the highlighted button, sounds for moving and choosing, and how fast the camera behind the main menu turns.</li>
 </ul>
+<p>The examples use free fonts (SIL Open Font License) and sounds (Kenney, CC0) that come with each new example project, with <code>CREDITS.txt</code> and the licence texts.</p>
 <p>Every button can ask <b>"Are you sure?"</b> first and show a <b>hint</b> while highlighted. <b>▶ Test from the main menu</b> plays the game from its title screen.</p>
 <p>In the game, <kbd>Esc</kbd> or the gamepad's Start opens the pause menu; the arrows, <kbd>W</kbd>/<kbd>S</kbd> or the d-pad move between buttons, <kbd>Enter</kbd>, <kbd>Space</kbd> or A choose, B goes back. <b>Options</b> holds graphics quality, frame-rate limit, volumes, full screen and controls.</p>
 <pre><code><span class="c">// a button with the action "event" and the argument "hard" sends:</span>
@@ -612,6 +615,39 @@ save.set(<span class="s">"checkpoint"</span>, <span class="s">"scenes/Level2.cry
 <span class="k">on</span> option_changed(id, value) { <span class="k">if</span> id == <span class="s">"sensitivity"</span> { speed = value } }
 <span class="c">// a screen of your own, from a script</span>
 <span class="k">on</span> died() { menu.open(<span class="s">"gameover"</span>) }</code></pre>
+
+<h2 id="hud">Game HUD</h2>
+<p><b>File &gt; Game HUD…</b> places what is drawn over the game, with a preview where elements are picked with a click and dragged. Saved in <code>hud.json</code>; a project without it uses the classic HUD (script text at the top left, bars under it, boss bars at the bottom, crosshair).</p>
+<ul>
+  <li><b>Elements</b>: text, a bar for one value, the scripts' bars stacked, boss bars, picture, skill bar and level/XP (RPG), crosshair, minimap, messages.</li>
+  <li>Each hangs from one of nine <b>anchors</b> (corners, edges, centre) with an offset, so it stays in place on any screen; sizes and offsets grow with the screen (designed for 900 points high).</li>
+  <li>Colours (fill, background, text), text size, the menus' fonts (title or text), shadow and rounded corners.</li>
+  <li>The <b>minimap</b> follows the entity tagged <code>player</code> (or one you choose) and shows <code>enemy</code> (red), <code>pickup</code>/<code>item</code> (gold) and <code>ally</code>/<code>npc</code> (green) tags.</li>
+</ul>
+<pre><code>bar(<span class="s">"Health"</span>, health / max_health)        <span class="c">// a bar element with the value "Health" shows it</span>
+hud.set(<span class="s">"potions"</span>, <span class="n">3</span>)                      <span class="c">// a text "Potions: {potions}" shows 3</span>
+hud.set(<span class="s">"Shield"</span>, <span class="n">40</span>, <span class="n">100</span>)                 <span class="c">// value and maximum, for bars</span>
+hud.message(<span class="s">"The door is locked"</span>)          <span class="c">// a line in the messages for a few seconds</span>
+hud.show(<span class="s">"minimap"</span>, <span class="k">false</span>)                  <span class="c">// hide an element by its id</span></code></pre>
+
+<h2 id="rpg">RPG: inventory, levels, skills, talents</h2>
+<p><b>File &gt; RPG: items, skills, talents…</b> switches on role-playing systems and defines them (saved in <code>rpg.json</code>). In the game, <kbd>I</kbd> opens the inventory and another key (K by default) the talent tree; both pause the game and use the colours and fonts of the game's menus. The gamepad's Select opens the inventory, the d-pad moves, A chooses, LB/RB switch pages, B closes.</p>
+<ul>
+  <li><b>Items</b>: name, description, icon, how many per bag slot, used up when used (potions), worn as weapon, armour or trinket, and the stats they add when worn.</li>
+  <li><b>Levels</b>: highest level, experience for the first level and how much more each next one needs, talent points per level, stats each level adds.</li>
+  <li><b>Skills</b>: on a bar (keys 1-4 by default) with cooldowns. When a key is pressed and the skill is ready, every script gets <code>on skill(id)</code>; the script decides what it does.</li>
+  <li><b>Talents</b>: a tree in columns, rows by tier, ranks, the player's level needed, talents needed first, stats per rank, and a skill taught by the first rank.</li>
+  <li>What the player has goes with them to the next level (<code>scene.load</code>) and can be saved with <code>level.save()</code> / <code>level.load()</code>.</li>
+</ul>
+<pre><code>level.add_xp(<span class="n">25</span>)                     <span class="c">// on level_up(n) when a level is reached</span>
+<span class="k">let</span> hit = damage + level.stat(<span class="s">"damage"</span>)   <span class="c">// levels + talents + worn items</span>
+inventory.add(<span class="s">"potion"</span>, <span class="n">2</span>)   inventory.count(<span class="s">"potion"</span>)   inventory.use(<span class="s">"potion"</span>)
+inventory.equip(<span class="s">"knight_blade"</span>)   inventory.equipped(<span class="s">"weapon"</span>)   inventory.open()
+skills.ready(<span class="s">"whirlwind"</span>)   skills.use(<span class="s">"whirlwind"</span>)   skills.reset(<span class="s">"whirlwind"</span>)   <span class="c">// reset: refund the cooldown</span>
+talents.rank(<span class="s">"keen_edge"</span>)   talents.open()
+<span class="k">on</span> skill(id) { <span class="k">if</span> id == <span class="s">"whirlwind"</span> { goto whirl } }
+<span class="k">on</span> item_used(id) { <span class="k">if</span> id == <span class="s">"potion"</span> { health += <span class="n">45</span> } }</code></pre>
+<p>Other events: <code>item_added(id, count)</code>, <code>equipped(slot, id)</code>, <code>unequipped(slot, id)</code>, <code>talent_learned(id, rank)</code>, <code>skill_learned(id)</code>. Ashen Keep uses all of it: experience and loot from each enemy, gear from the armoury, the Bone Brute and the Warden, and 11 talents in three columns (Blade, Bulwark, Ember) that teach Whirlwind, Shield Bash, War Cry, Ember Burst and Second Wind.</p>
 
 <h2 id="physics">Physics</h2>
 <ul>

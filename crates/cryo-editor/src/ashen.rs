@@ -28,6 +28,30 @@ const SCRIPTS: &[(&str, &str)] = &[
     ("Flame.cryo", include_str!("../template/ashen_scripts/Flame.cryo")),
 ];
 
+/// Item, skill and talent icons, drawn by `tools/make_rpg_icons.py`.
+const ICONS: &[(&str, &[u8])] = &[
+    ("ashen_blood.png", include_bytes!("../template/ashen_icons/ashen_blood.png")),
+    ("ember_burst.png", include_bytes!("../template/ashen_icons/ember_burst.png")),
+    ("ember_ring.png", include_bytes!("../template/ashen_icons/ember_ring.png")),
+    ("ember_shard.png", include_bytes!("../template/ashen_icons/ember_shard.png")),
+    ("executioner.png", include_bytes!("../template/ashen_icons/executioner.png")),
+    ("iron_hauberk.png", include_bytes!("../template/ashen_icons/iron_hauberk.png")),
+    ("iron_will.png", include_bytes!("../template/ashen_icons/iron_will.png")),
+    ("keen_edge.png", include_bytes!("../template/ashen_icons/keen_edge.png")),
+    ("kindled.png", include_bytes!("../template/ashen_icons/kindled.png")),
+    ("knight_blade.png", include_bytes!("../template/ashen_icons/knight_blade.png")),
+    ("padded_gambeson.png", include_bytes!("../template/ashen_icons/padded_gambeson.png")),
+    ("potion.png", include_bytes!("../template/ashen_icons/potion.png")),
+    ("rusted_sword.png", include_bytes!("../template/ashen_icons/rusted_sword.png")),
+    ("second_wind.png", include_bytes!("../template/ashen_icons/second_wind.png")),
+    ("shield_bash.png", include_bytes!("../template/ashen_icons/shield_bash.png")),
+    ("thick_hide.png", include_bytes!("../template/ashen_icons/thick_hide.png")),
+    ("war_cry.png", include_bytes!("../template/ashen_icons/war_cry.png")),
+    ("ward_amulet.png", include_bytes!("../template/ashen_icons/ward_amulet.png")),
+    ("warden_cleaver.png", include_bytes!("../template/ashen_icons/warden_cleaver.png")),
+    ("whirlwind.png", include_bytes!("../template/ashen_icons/whirlwind.png")),
+];
+
 pub const SCENE: &str = "scenes/AshenKeep.cryoscene";
 
 /// Writes the whole game into `dir` (which must not already hold a project) and returns the scene path.
@@ -48,10 +72,123 @@ pub fn create(dir: &Path) -> Result<String, String> {
     for (name, wav) in sounds() {
         std::fs::write(dir.join(format!("sounds/{name}.wav")), wav).map_err(err)?;
     }
+    // free fonts and sounds (OFL / CC0) and the RPG icons
+    crate::free_assets::write(dir)?;
+    std::fs::create_dir_all(dir.join("textures/icons")).map_err(err)?;
+    for (name, png) in ICONS {
+        std::fs::write(dir.join("textures/icons").join(name), png).map_err(err)?;
+    }
+    rpg().save(dir)?;
+    hud().save(dir)?;
     let scene = build_scene(dir);
     std::fs::write(dir.join(SCENE), scene.to_json()).map_err(err)?;
     menus().save(dir)?;
     Ok(SCENE.to_string())
+}
+
+/// The knight's growth: an inventory with gear, ten levels, four skills on 1-4 and a talent
+/// tree in three columns (Blade, Bulwark, Ember).
+pub fn rpg() -> crate::rpg::Rpg {
+    use crate::rpg::{ItemDef, Leveling, Rpg, RpgScreens, SkillDef, Stack, Talent};
+    let st = |pairs: &[(&str, f64)]| pairs.iter().map(|(k, v)| (k.to_string(), *v)).collect::<BTreeMap<String, f64>>();
+    let icon = |n: &str| format!("textures/icons/{n}.png");
+    let item = |id: &str, name: &str, desc: &str, slot: &str, stats: &[(&str, f64)]| ItemDef {
+        id: id.into(),
+        name: name.into(),
+        description: desc.into(),
+        icon: icon(id),
+        slot: slot.into(),
+        stats: st(stats),
+        ..Default::default()
+    };
+    let skill = |id: &str, name: &str, desc: &str, cooldown: f32, cost: &str| SkillDef { id: id.into(), name: name.into(), description: desc.into(), icon: icon(id), cooldown, cost: cost.into(), ..Default::default() };
+    #[allow(clippy::too_many_arguments)]
+    let talent = |id: &str, name: &str, desc: &str, branch: usize, tier: u32, ranks: u32, level: u32, requires: &[&str], stats: &[(&str, f64)], skill: &str| Talent {
+        id: id.into(),
+        name: name.into(),
+        description: desc.into(),
+        icon: icon(if skill.is_empty() { id } else { skill }),
+        branch,
+        tier,
+        max_rank: ranks,
+        level,
+        requires: requires.iter().map(|r| r.to_string()).collect(),
+        stats: st(stats),
+        skill: skill.into(),
+        ..Default::default()
+    };
+    Rpg {
+        enabled: true,
+        items: vec![
+            ItemDef { stack: 10, consumable: true, ..item("potion", "Healing Draught", "Restores 45 health. Q drinks one in battle.", "", &[]) },
+            ItemDef { stack: 99, ..item("ember_shard", "Ember Shard", "A sliver of the keep's cursed fire. The dead carry them.", "", &[]) },
+            item("rusted_sword", "Rusted Sword", "It has seen better centuries.", "weapon", &[]),
+            item("knight_blade", "Knight's Blade", "Taken from the Bone Brute. Still sharp.", "weapon", &[("damage", 8.0)]),
+            item("warden_cleaver", "Warden's Cleaver", "The Ashen Warden's own blade, warm to the touch.", "weapon", &[("damage", 16.0), ("stamina_regen", 4.0)]),
+            item("padded_gambeson", "Padded Gambeson", "Quilted cloth. Better than nothing.", "armor", &[("armor", 2.0)]),
+            item("iron_hauberk", "Iron Hauberk", "Rings of iron that turn a blade.", "armor", &[("armor", 6.0), ("max_health", 20.0)]),
+            item("ember_ring", "Ember Ring", "Burns faintly. Blows land harder; breath comes easier.", "trinket", &[("damage", 4.0), ("stamina_regen", 6.0)]),
+            item("ward_amulet", "Ward Amulet", "A charm against the restless dead.", "trinket", &[("armor", 4.0)]),
+        ],
+        skills: vec![
+            skill("whirlwind", "Whirlwind", "Spin with the blade out, striking everything around you.", 8.0, "30 stamina"),
+            skill("shield_bash", "Shield Bash", "Slam the shield into the foes in front: they reel, stunned.", 6.0, "20 stamina"),
+            skill("war_cry", "War Cry", "Your blows deal half again as much damage for 8 seconds.", 20.0, ""),
+            skill("ember_burst", "Ember Burst", "The cursed fire bursts from you, burning all nearby.", 14.0, "25 stamina"),
+            skill("second_wind", "Second Wind", "Recover a third of your health at once.", 30.0, ""),
+        ],
+        branches: vec!["Blade".into(), "Bulwark".into(), "Ember".into()],
+        talents: vec![
+            talent("keen_edge", "Keen Edge", "Every blow cuts deeper.", 0, 0, 3, 1, &[], &[("damage", 3.0)], ""),
+            talent("t_whirlwind", "Whirlwind", "Learn to spin through a crowd.", 0, 1, 1, 2, &["keen_edge"], &[], "whirlwind"),
+            talent("executioner", "Executioner", "Heavy blows (right click) hit much harder.", 0, 2, 2, 4, &["t_whirlwind"], &[("heavy_bonus", 0.3)], ""),
+            talent("t_war_cry", "War Cry", "A roar that sharpens every blow.", 0, 3, 1, 6, &["executioner"], &[], "war_cry"),
+            talent("thick_hide", "Thick Hide", "More health.", 1, 0, 3, 1, &[], &[("max_health", 15.0)], ""),
+            talent("t_shield_bash", "Shield Bash", "Turn the shield into a weapon.", 1, 1, 1, 2, &["thick_hide"], &[], "shield_bash"),
+            talent("iron_will", "Iron Will", "Blocking costs less stamina and stops more of the blow.", 1, 2, 2, 4, &["t_shield_bash"], &[("guard", 0.25), ("armor", 1.0)], ""),
+            talent("t_second_wind", "Second Wind", "Find strength when it is needed most.", 1, 3, 1, 6, &["iron_will"], &[], "second_wind"),
+            talent("kindled", "Kindled", "Stamina returns faster.", 2, 0, 3, 1, &[], &[("stamina_regen", 5.0)], ""),
+            talent("t_ember_burst", "Ember Burst", "Let the curse out, all at once.", 2, 1, 1, 3, &["kindled"], &[], "ember_burst"),
+            talent("ashen_blood", "Ashen Blood", "Each blow that lands heals you a little.", 2, 2, 2, 5, &["t_ember_burst"], &[("lifesteal", 0.04)], ""),
+        ],
+        levels: Leveling { max_level: 10, xp_first: 120.0, growth: 1.4, points_per_level: 1, stats_per_level: st(&[("max_health", 8.0), ("damage", 1.0)]) },
+        screens: RpgScreens {
+            sound_open: "sounds/rpg_book_open.ogg".into(),
+            sound_item: "sounds/rpg_handle_coins.ogg".into(),
+            sound_talent: "sounds/rpg_metal_latch.ogg".into(),
+            sound_level: "sounds/jingle_level_up.ogg".into(),
+            // K is the heavy blow in this game: the talents open with T
+            talents_key: "t".into(),
+            ..Default::default()
+        },
+        start_items: vec![
+            Stack { id: "potion".into(), count: 2 },
+            Stack { id: "rusted_sword".into(), count: 1 },
+            Stack { id: "padded_gambeson".into(), count: 1 },
+        ],
+        start_skills: vec![],
+    }
+}
+
+/// The HUD: health and stamina at the top left, the objective at the top right with a
+/// minimap under it, the loot feed, and the skill bar and experience at the bottom.
+pub fn hud() -> crate::hud::Hud {
+    use crate::hud::{Element, Hud};
+    let e = |id: &str, kind: &str, anchor: &str, x: f32, y: f32| Element { id: id.into(), kind: kind.into(), anchor: anchor.into(), x, y, ..Default::default() };
+    let gold = [222, 184, 112, 255];
+    Hud {
+        elements: vec![
+            Element { source: "Health".into(), label: "Health".into(), w: 280.0, h: 14.0, font: "text".into(), text_size: 22.0, ..e("health", "bar", "top_left", 24.0, 36.0) },
+            Element { source: "Stamina".into(), label: "Stamina".into(), w: 220.0, h: 9.0, font: "text".into(), text_size: 20.0, ..e("stamina", "bar", "top_left", 24.0, 76.0) },
+            Element { source: "Potions (Q): {potions}".into(), font: "text".into(), text_size: 19.0, text_color: [235, 220, 200, 255], ..e("potions", "text", "top_left", 24.0, 98.0) },
+            Element { source: "{hud}".into(), font: "title".into(), text_size: 22.0, text_color: gold, ..e("objective", "text", "top_right", -24.0, 22.0) },
+            Element { w: 170.0, range: 45.0, back: [12, 10, 8, 200], text_color: gold, color: [255, 240, 210, 255], ..e("minimap", "minimap", "top_right", -24.0, 70.0) },
+            Element { font: "text".into(), text_size: 18.0, text_color: [240, 225, 190, 255], ..e("feed", "feed", "right", -24.0, 40.0) },
+            Element { w: 600.0, font: "title".into(), ..e("boss", "boss", "bottom", 0.0, -190.0) },
+            Element { w: 60.0, h: 60.0, ..e("skills", "skills", "bottom", 0.0, -22.0) },
+            Element { w: 300.0, h: 6.0, color: [210, 160, 70, 255], font: "text".into(), ..e("xp", "xp", "bottom", 0.0, -108.0) },
+        ],
+    }
 }
 
 /// The game's menus: a gothic title on the left over the castle, gold on near black.
@@ -87,12 +224,12 @@ fn menus() -> crate::menus::Menus {
             shadow: true,
             fade_in: 0.6,
             hover_slide: 10.0,
-            sound_move: String::new(),
-            sound_choose: "sounds/block.wav".into(),
+            sound_move: "sounds/ui_rollover2.wav".into(),
+            sound_choose: "sounds/ui_click3.wav".into(),
             camera_drift: 1.2,
             panel: [style_panel[0], style_panel[1], style_panel[2], 235],
-            title_font: String::new(),
-            text_font: String::new(),
+            title_font: "fonts/CinzelDecorative-Bold.ttf".into(),
+            text_font: "fonts/AlegreyaSans-Medium.ttf".into(),
         },
         options: vec![GameOption {
             id: "difficulty".into(),
@@ -413,8 +550,8 @@ pub fn build_scene(dir: &Path) -> Scene {
     let num = PropValue::Num;
     let mut enemy = |s: &mut Scene, kind: &str, x: f32, z: f32, area: &str| {
         let (file, size, props): (&str, f32, Vec<(&str, PropValue)>) = match kind {
-            "archer" => ("archer.gltf", 1.0, vec![("max_health", num(40.0)), ("damage", num(14.0)), ("speed", num(2.6)), ("sight", num(19.0)), ("ranged", PropValue::Bool(true)), ("rest", num(1.4))]),
-            "brute" => ("brute.gltf", 1.4, vec![("max_health", num(190.0)), ("damage", num(24.0)), ("speed", num(2.7)), ("reach", num(2.9)), ("windup", num(0.7)), ("rest", num(1.5))]),
+            "archer" => ("archer.gltf", 1.0, vec![("max_health", num(40.0)), ("damage", num(14.0)), ("speed", num(2.6)), ("sight", num(19.0)), ("ranged", PropValue::Bool(true)), ("rest", num(1.4)), ("xp", num(35.0))]),
+            "brute" => ("brute.gltf", 1.4, vec![("max_health", num(190.0)), ("damage", num(24.0)), ("speed", num(2.7)), ("reach", num(2.9)), ("windup", num(0.7)), ("rest", num(1.5)), ("xp", num(90.0)), ("loot", PropValue::Text("knight_blade".into()))]),
             _ => ("skeleton.gltf", 1.0, vec![]),
         };
         let name = match kind {
@@ -735,6 +872,57 @@ mod tests {
         assert!(g.pos("Bailey Gate").y - gate_y > 5.0, "the portcullis rose");
         assert!(g.rt.hud.starts_with("The gate is open"), "{}", g.rt.hud);
         assert!((g.pos("Hall Gate").y).abs() < 0.01, "the second gate waits for the courtyard");
+    }
+
+    #[test]
+    fn the_knight_levels_up_wears_loot_and_uses_skills() {
+        use crate::rpg::{Act, RpgEvent};
+        let mut g = Game::start("rpg");
+        let (_, st) = g.rt.rpg().expect("Ashen Keep uses the RPG systems");
+        // a new game: level 1, the starting gear worn, two potions
+        assert_eq!(st.level, 1);
+        assert_eq!(st.equipped.get("weapon").map(String::as_str), Some("rusted_sword"));
+        assert_eq!(st.equipped.get("armor").map(String::as_str), Some("padded_gambeson"));
+        assert_eq!(st.count("potion"), 2);
+        // the bailey falls: experience, shards, a level and the armoury's hauberk
+        for id in g.foes("bailey") {
+            g.rt.send_for_test(id, "hit", vec![cryo_lang::Value::Num(999.0), cryo_lang::Value::Vec3([0.0, 0.0, 60.0])]);
+        }
+        g.run(4.5, &[], &[]);
+        let (_, st) = g.rt.rpg().unwrap();
+        assert!(st.level >= 2, "six kills are worth a level: {} xp at level {}", st.xp, st.level);
+        assert!(st.points >= 1);
+        assert!(st.count("ember_shard") >= 6);
+        assert_eq!(st.count("iron_hauberk"), 1);
+        // wearing it from the bag: more health
+        let slot = st.bag.iter().position(|s| s.as_ref().map(|s| s.id == "iron_hauberk").unwrap_or(false)).unwrap();
+        let before = g.rt.rpg().map(|(d, s)| s.stat(d, "max_health")).unwrap();
+        assert!(g.rt.rpg_act(&Act::UseSlot(slot)));
+        let (d, st) = g.rt.rpg().unwrap();
+        assert_eq!(st.stat(d, "max_health"), before + 20.0);
+        // learn Whirlwind (Keen Edge first), then press 1 near the courtyard's soldiers
+        let mut st2 = st.clone();
+        st2.points = 2;
+        let def = d.clone();
+        assert!(!st2.learn_talent(&def, "keen_edge").is_empty());
+        assert!(st2.learn_talent(&def, "t_whirlwind").contains(&RpgEvent::SkillLearned("whirlwind".into())));
+        g.rt = {
+            let mut scene = std::mem::replace(&mut g.scene, Scene::empty());
+            let rt = Runtime::start_carrying(&mut scene, &g.dir, Default::default(), Some(st2), &mut g.logs);
+            g.scene = scene;
+            rt
+        };
+        g.rt.skip_cutscenes(&mut g.scene, &mut g.logs);
+        let foe = g.foes("courtyard")[0];
+        let at = g.scene.get(foe).unwrap().position;
+        g.place_hero(at.x + 1.5, at.z);
+        g.run(0.1, &[], &[]);
+        let near = g.scene.get(foe).unwrap().position;
+        g.run(0.8, &["1"], &[]);
+        let (_, st) = g.rt.rpg().unwrap();
+        assert!(st.cooldowns.get("whirlwind").copied().unwrap_or(0.0) > 5.0, "the skill fired and is cooling down");
+        let after = g.scene.get(foe).unwrap().position;
+        assert!(after.distance(near) > 0.3 || g.scene.get(foe).unwrap().tag != "enemy", "the spin knocked the soldier back");
     }
 
     #[test]

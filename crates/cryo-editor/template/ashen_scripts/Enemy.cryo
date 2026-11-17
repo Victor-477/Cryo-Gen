@@ -11,6 +11,8 @@ script Enemy {
     prop rest: num = 1.1          // pause between attacks
     prop ranged: bool = false
     prop area: text = "bailey"    // the gate of this area opens when all its enemies fall
+    prop xp: num = 25             // experience for the knight (Game > RPG)
+    prop loot: text = ""          // an item it always drops
 
     var health = 60
     var model: entity = nil
@@ -21,6 +23,7 @@ script Enemy {
     var arrows = []
     var route = []
     var repath = 0
+    var stunned_for = 0
 
     on start() {
         model = self.child("Model")
@@ -102,6 +105,14 @@ script Enemy {
             goto dead
         }
         goto stagger
+    }
+
+    // Shield Bash: reels for a while
+    on stun(seconds) {
+        if current_state() != "dead" {
+            stunned_for = seconds
+            goto stunned
+        }
     }
 
     on hero_respawned() {
@@ -245,9 +256,30 @@ script Enemy {
         }
     }
 
+    state stunned {
+        on enter() {
+            model.animate("Hit", 0.5, false)
+            fx.burst(self.position + vec3(0, 2, 0), "magic", 12)
+        }
+        on update(dt) {
+            drive(vec3(0))
+            if state_time() >= stunned_for {
+                goto chase
+            }
+        }
+    }
+
     state dead {
         on enter() {
             self.tag = "fallen"
+            // experience and loot for the knight: shards always, sometimes a potion
+            level.add_xp(xp)
+            inventory.add("ember_shard", floor(random(1, 3)))
+            if loot != "" {
+                inventory.add(loot)
+            } else if random() < 0.2 {
+                inventory.add("potion")
+            }
             model.animate("Die", 1, false)
             audio.play_at("sounds/bones.wav", self.position, 0.8)
             fx.burst(self.position, "dust", 30)

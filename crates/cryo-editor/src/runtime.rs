@@ -149,6 +149,62 @@ struct Queues {
     subtitle: (String, f64),
     /// `fade(to, seconds)`: a fade asked this frame.
     fade: Option<(f32, f32)>,
+    /// `hud.set(key, value, max)`: values the HUD's texts and bars show.
+    hud_values: std::collections::BTreeMap<String, (f64, f64)>,
+    /// `hud.show(id, false)`: HUD elements hidden by scripts.
+    hud_hidden: Vec<String>,
+    /// `hud.message(text)` and what the RPG reports, with when (real seconds).
+    hud_feed: Vec<(String, f64)>,
+    /// The game's RPG data (rpg.json) when it is switched on, and what the player has.
+    rpg_def: Option<Rc<crate::rpg::Rpg>>,
+    rpg: crate::rpg::RpgState,
+    /// Sounds the RPG asks for (level up, item, talent).
+    rpg_sounds: Vec<String>,
+}
+
+impl Queues {
+    /// Tells every script what happened to the player, with the sounds the game chose.
+    fn rpg_happened(&mut self, events: Vec<crate::rpg::RpgEvent>) {
+        use crate::rpg::RpgEvent as E;
+        let Some(def) = self.rpg_def.clone() else { return };
+        for e in events {
+            let sound = match &e {
+                E::LevelUp(_) => &def.screens.sound_level,
+                E::ItemAdded(..) | E::Equipped(..) | E::ItemUsed(_) => &def.screens.sound_item,
+                E::TalentLearned(..) => &def.screens.sound_talent,
+                _ => &String::new(),
+            };
+            if !sound.is_empty() && !self.rpg_sounds.contains(sound) {
+                self.rpg_sounds.push(sound.clone());
+            }
+            let note = match &e {
+                E::ItemAdded(id, n) => Some(format!("+{n} {}", def.item(id).map(|i| i.name.as_str()).unwrap_or(id))),
+                E::LevelUp(l) => Some(tr!("Level {l}!", "Nível {l}!")),
+                E::SkillLearned(id) => Some(tr!("New skill: {}", "Nova habilidade: {}", def.skill(id).map(|i| i.name.as_str()).unwrap_or(id))),
+                _ => None,
+            };
+            if let Some(n) = note {
+                self.message(n);
+            }
+            let (name, args) = e.event();
+            self.broadcast.push((name.to_string(), args));
+        }
+    }
+
+    fn message(&mut self, text: String) {
+        self.hud_feed.retain(|(_, at)| self.real_time - at < 5.0);
+        if self.hud_feed.len() >= 12 {
+            self.hud_feed.remove(0);
+        }
+        self.hud_feed.push((text, self.real_time));
+    }
+
+    fn rpg_parts(&mut self) -> Result<(Rc<crate::rpg::Rpg>, &mut crate::rpg::RpgState), String> {
+        match &self.rpg_def {
+            Some(d) => Ok((d.clone(), &mut self.rpg)),
+            None => Err("this game has no RPG systems: switch them on in Game > RPG".into()),
+        }
+    }
 }
 
 fn qte_from_args(method: &str, args: &[Value], me: u64) -> Result<Qte, String> {
@@ -278,7 +334,7 @@ impl Host for EngineHost<'_> {
     fn global(&mut self, name: &str) -> Option<Value> {
         match name {
             "self" => Some(Value::Entity(self.me)),
-            "input" | "scene" | "time" | "audio" | "anim" | "qte" | "global" | "fx" | "save" | "video" | "menu" => Some(Value::Object(Rc::from(name))),
+            "input" | "scene" | "time" | "audio" | "anim" | "qte" | "global" | "fx" | "save" | "video" | "menu" | "hud" | "inventory" | "level" | "skills" | "talents" => Some(Value::Object(Rc::from(name))),
             _ => None,
         }
     }
@@ -329,6 +385,35 @@ impl Host for EngineHost<'_> {
                 ("audio", "volume") => Ok(Value::Num(self.audio.volume as f64)),
                 ("video", "playing") => Ok(Value::Bool(self.queues.video_active)),
                 ("menu", "is_open") => Ok(Value::Bool(self.queues.menu_open)),
+                ("level", "value" | "xp" | "next" | "points") => {
+                    let (def, st) = self.queues.rpg_parts()?;
+                    Ok(Value::Num(match name {
+                        "value" => st.level as f64,
+                        "xp" => st.xp,
+                        "next" => st.xp_next(&def),
+                        _ => st.points as f64,
+                    }))
+                }
+                ("inventory", "items") => {
+                    let (def, st) = self.queues.rpg_parts()?;
+                    let list = st
+                        .bag
+                        .iter()
+                        .flatten()
+                        .map(|s| {
+                            let mut m = std::collections::BTreeMap::new();
+                            m.insert("id".to_string(), Value::text(&s.id));
+                            m.insert("name".to_string(), Value::text(def.item(&s.id).map(|i| i.name.as_str()).unwrap_or(&s.id)));
+                            m.insert("count".to_string(), Value::Num(s.count as f64));
+                            Value::Map(Rc::new(std::cell::RefCell::new(m.into_iter().collect())))
+                        })
+                        .collect();
+                    Ok(Value::list(list))
+                }
+                ("skills", "bar") => {
+                    let (_, st) = self.queues.rpg_parts()?;
+                    Ok(Value::list(st.bar.iter().map(|b| if b.is_empty() { Value::Nil } else { Value::text(b) }).collect()))
+                }
                 _ => Err(format!("`{o}` has no member `{name}`")),
             },
             other => Err(format!("`{}` has no member `{name}`", other.type_name())),
@@ -808,6 +893,157 @@ impl Host for EngineHost<'_> {
                     self.queues.menu_request = Some(String::new());
                     Ok(Value::Nil)
                 }
+                // hud.set("potions", 3) or hud.set("Health", 70, 100): a value the HUD shows
+                ("hud", "set", [Value::Text(k), Value::Num(v), rest @ ..]) => {
+                    let max = match rest {
+                        [] => 1.0,
+                        [Value::Num(m)] => *m,
+                        _ => return Err("`hud.set` expects (key, value) or (key, value, max)".into()),
+                    };
+                    if self.queues.hud_values.len() > 500 && !self.queues.hud_values.contains_key(&**k) {
+                        return Err("too many HUD values (500)".into());
+                    }
+                    self.queues.hud_values.insert(k.to_string(), (*v, max));
+                    Ok(Value::Nil)
+                }
+                // hud.message("The door is locked"): a line in the HUD's messages for a few seconds
+                ("hud", "message", [v]) => {
+                    self.queues.message(v.to_string());
+                    Ok(Value::Nil)
+                }
+                ("hud", "get", [Value::Text(k)]) => Ok(self.queues.hud_values.get(&**k).map(|v| Value::Num(v.0)).unwrap_or(Value::Nil)),
+                // hud.show("minimap", false) hides an element placed in Game > HUD
+                ("hud", "show", [Value::Text(id), Value::Bool(on)]) => {
+                    self.queues.hud_hidden.retain(|h| h != &**id);
+                    if !on {
+                        self.queues.hud_hidden.push(id.to_string());
+                    }
+                    Ok(Value::Nil)
+                }
+                ("inventory", "add", [Value::Text(id), rest @ ..]) => {
+                    let n = match rest {
+                        [] => 1,
+                        [Value::Num(n)] => n.max(0.0) as u32,
+                        _ => return Err("`inventory.add` expects (item) or (item, count)".into()),
+                    };
+                    let (def, st) = self.queues.rpg_parts()?;
+                    if def.item(id).is_none() {
+                        return Err(format!("there is no item `{id}` (Game > RPG > Items)"));
+                    }
+                    let added = st.add_item(&def, id, n);
+                    if added > 0 {
+                        self.queues.rpg_happened(vec![crate::rpg::RpgEvent::ItemAdded(id.to_string(), added)]);
+                    }
+                    Ok(Value::Num(added as f64))
+                }
+                ("inventory", "remove", [Value::Text(id), rest @ ..]) => {
+                    let n = match rest {
+                        [] => 1,
+                        [Value::Num(n)] => n.max(0.0) as u32,
+                        _ => return Err("`inventory.remove` expects (item) or (item, count)".into()),
+                    };
+                    let (_, st) = self.queues.rpg_parts()?;
+                    Ok(Value::Num(st.remove_item(id, n) as f64))
+                }
+                ("inventory", "count", [Value::Text(id)]) => Ok(Value::Num(self.queues.rpg_parts()?.1.count(id) as f64)),
+                ("inventory", "has", [Value::Text(id)]) => Ok(Value::Bool(self.queues.rpg_parts()?.1.count(id) > 0)),
+                ("inventory", "use", [Value::Text(id)]) => {
+                    let (def, st) = self.queues.rpg_parts()?;
+                    let ev = st.use_item(&def, id);
+                    let ok = !ev.is_empty();
+                    self.queues.rpg_happened(ev);
+                    Ok(Value::Bool(ok))
+                }
+                ("inventory", "equip", [Value::Text(id)]) => {
+                    let (def, st) = self.queues.rpg_parts()?;
+                    let ev = st.equip(&def, id);
+                    let ok = !ev.is_empty();
+                    self.queues.rpg_happened(ev);
+                    Ok(Value::Bool(ok))
+                }
+                ("inventory", "unequip", [Value::Text(slot)]) => {
+                    let (def, st) = self.queues.rpg_parts()?;
+                    let ev = st.unequip(&def, slot);
+                    let ok = !ev.is_empty();
+                    self.queues.rpg_happened(ev);
+                    Ok(Value::Bool(ok))
+                }
+                ("inventory", "equipped", [Value::Text(slot)]) => Ok(self.queues.rpg_parts()?.1.equipped.get(&**slot).map(Value::text).unwrap_or(Value::Nil)),
+                ("inventory", "open", []) => {
+                    self.queues.rpg_parts()?;
+                    self.queues.menu_request = Some("inventory".into());
+                    Ok(Value::Nil)
+                }
+                ("talents", "open", []) => {
+                    self.queues.rpg_parts()?;
+                    self.queues.menu_request = Some("talents".into());
+                    Ok(Value::Nil)
+                }
+                ("level", "add_xp", [Value::Num(n)]) => {
+                    let (def, st) = self.queues.rpg_parts()?;
+                    let ev = st.add_xp(&def, *n);
+                    let ups = ev.len();
+                    self.queues.rpg_happened(ev);
+                    Ok(Value::Num(ups as f64))
+                }
+                ("level", "give_points", [Value::Num(n)]) => {
+                    let (_, st) = self.queues.rpg_parts()?;
+                    st.points += n.max(0.0) as u32;
+                    Ok(Value::Nil)
+                }
+                // level.stat("damage"): what levels, talents and worn items add up to
+                ("level", "stat", [Value::Text(k)]) => {
+                    let (def, st) = self.queues.rpg_parts()?;
+                    Ok(Value::Num(st.stat(&def, k)))
+                }
+                // level.save() / level.load(): the player's progress in the game's save file
+                ("level", "save", []) => {
+                    let (_, st) = self.queues.rpg_parts()?;
+                    let v = serde_json::to_value(&*st).map_err(|e| e.to_string())?;
+                    self.saves.data.insert("rpg".into(), v);
+                    self.saves.write()?;
+                    Ok(Value::Nil)
+                }
+                ("level", "load", []) => {
+                    let saved = self.saves.data.get("rpg").cloned();
+                    let (_, st) = self.queues.rpg_parts()?;
+                    match saved.and_then(|v| serde_json::from_value::<crate::rpg::RpgState>(v).ok()) {
+                        Some(loaded) => {
+                            *st = loaded;
+                            Ok(Value::Bool(true))
+                        }
+                        None => Ok(Value::Bool(false)),
+                    }
+                }
+                ("skills", "ready", [Value::Text(id)]) => Ok(Value::Bool(self.queues.rpg_parts()?.1.ready(id))),
+                ("skills", "knows", [Value::Text(id)]) => Ok(Value::Bool(self.queues.rpg_parts()?.1.known.iter().any(|k| k == &**id))),
+                ("skills", "cooldown", [Value::Text(id)]) => Ok(Value::Num(self.queues.rpg_parts()?.1.cooldowns.get(&**id).copied().unwrap_or(0.0) as f64)),
+                ("skills", "reset", [Value::Text(id)]) => {
+                    self.queues.rpg_parts()?.1.cooldowns.remove(&**id);
+                    Ok(Value::Nil)
+                }
+                ("skills", "learn", [Value::Text(id)]) => {
+                    let (def, st) = self.queues.rpg_parts()?;
+                    if def.skill(id).is_none() {
+                        return Err(format!("there is no skill `{id}` (Game > RPG > Skills)"));
+                    }
+                    let ev = st.learn_skill(&def, id);
+                    self.queues.rpg_happened(ev);
+                    Ok(Value::Nil)
+                }
+                // skills.use("whirlwind"): true (and the cooldown starts) when it was ready
+                ("skills", "use", [Value::Text(id)]) => {
+                    let (def, st) = self.queues.rpg_parts()?;
+                    Ok(Value::Bool(st.use_skill(&def, id).is_some()))
+                }
+                ("talents", "rank", [Value::Text(id)]) => Ok(Value::Num(self.queues.rpg_parts()?.1.rank(id) as f64)),
+                ("talents", "learn", [Value::Text(id)]) => {
+                    let (def, st) = self.queues.rpg_parts()?;
+                    let ev = st.learn_talent(&def, id);
+                    let ok = !ev.is_empty();
+                    self.queues.rpg_happened(ev);
+                    Ok(Value::Bool(ok))
+                }
                 ("scene", "destroy", [Value::Entity(id)]) => {
                     self.queues.destroy.push(*id);
                     Ok(Value::Nil)
@@ -890,6 +1126,7 @@ pub struct Film {
 
 impl Runtime {
     /// Compiles the scene's scripts, creates the instances and fires `start`.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn start(scene: &mut Scene, project_dir: &Path, logs: &mut Vec<LogLine>) -> Runtime {
         Self::start_with(scene, project_dir, Default::default(), logs)
     }
@@ -901,13 +1138,31 @@ impl Runtime {
         options: std::collections::BTreeMap<String, Value>,
         logs: &mut Vec<LogLine>,
     ) -> Runtime {
+        Self::start_carrying(scene, project_dir, options, None, logs)
+    }
+
+    /// Starts a level with what the player had on the last one (RPG systems).
+    pub fn start_carrying(
+        scene: &mut Scene,
+        project_dir: &Path,
+        options: std::collections::BTreeMap<String, Value>,
+        carried: Option<crate::rpg::RpgState>,
+        logs: &mut Vec<LogLine>,
+    ) -> Runtime {
         crate::physics::fill_missing_colliders(scene, project_dir);
+        let rpg_def = crate::rpg::Rpg::load(project_dir);
+        let (rpg_def, rpg) = if rpg_def.enabled {
+            let st = carried.unwrap_or_else(|| crate::rpg::RpgState::new(&rpg_def));
+            (Some(Rc::new(rpg_def)), st)
+        } else {
+            (None, Default::default())
+        };
         let mut rt = Runtime {
             instances: HashMap::new(),
             time: 0.0,
             hud: String::new(),
             audio: Audio::new(project_dir.to_path_buf()),
-            queues: Queues { time_scale: 1.0, options, ..Default::default() },
+            queues: Queues { time_scale: 1.0, options, rpg_def, rpg, ..Default::default() },
             playing: vec![],
             active_camera: None,
             qte: None,
@@ -942,6 +1197,66 @@ impl Runtime {
     /// Sends an event to every script (menu buttons use it), delivered on the next update.
     pub fn emit(&mut self, event: &str, args: Vec<Value>) {
         self.queues.broadcast.push((event.to_string(), args));
+    }
+
+    /// The game's RPG data and what the player has, when the game uses them.
+    pub fn rpg(&self) -> Option<(&crate::rpg::Rpg, &crate::rpg::RpgState)> {
+        self.queues.rpg_def.as_deref().map(|d| (d, &self.queues.rpg))
+    }
+
+    /// What the player has, to carry it to the next level.
+    pub fn rpg_state(&self) -> Option<crate::rpg::RpgState> {
+        self.queues.rpg_def.as_ref().map(|_| self.queues.rpg.clone())
+    }
+
+    /// Something the player did on the inventory or talent screen. Returns whether it did anything.
+    pub fn rpg_act(&mut self, act: &crate::rpg::Act) -> bool {
+        use crate::rpg::Act;
+        let Ok((def, st)) = self.queues.rpg_parts() else { return false };
+        let ev = match act {
+            Act::UseSlot(i) => st.use_slot(&def, *i),
+            Act::Unequip(slot) => st.unequip(&def, slot),
+            Act::Learn(id) => st.learn_talent(&def, id),
+            Act::Assign(slot, id) => {
+                st.assign(*slot, id);
+                return true;
+            }
+            _ => return false,
+        };
+        let did = !ev.is_empty();
+        self.queues.rpg_happened(ev);
+        self.play_rpg_sounds();
+        did
+    }
+
+    /// A key of the skill bar was pressed: the skill fires (`on skill(id)`) when ready.
+    pub fn rpg_press(&mut self, slot: usize) -> bool {
+        let Ok((def, st)) = self.queues.rpg_parts() else { return false };
+        match st.press_slot(&def, slot) {
+            Some(e) => {
+                self.queues.rpg_happened(vec![e]);
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn play_rpg_sounds(&mut self) {
+        for s in std::mem::take(&mut self.queues.rpg_sounds) {
+            let _ = self.audio.play(&s, 0.8);
+        }
+    }
+
+    pub fn hud_values(&self) -> &std::collections::BTreeMap<String, (f64, f64)> {
+        &self.queues.hud_values
+    }
+
+    pub fn hud_hidden(&self) -> &[String] {
+        &self.queues.hud_hidden
+    }
+
+    pub fn hud_feed(&self) -> &[(String, f64)] {
+        &self.queues.hud_feed
     }
 
     /// What a script asked of the menus: a screen to open, or "" to close them.
@@ -1388,6 +1703,17 @@ impl Runtime {
         for k in keys {
             self.queues.broadcast.push(("key_up".into(), vec![Value::text(k)]));
         }
+
+        // the RPG: cooldowns run, the skill bar's keys fire skills, sounds asked last frame play
+        if let Some(def) = self.queues.rpg_def.clone() {
+            self.queues.rpg.tick(dt);
+            for (i, key) in def.screens.bar_keys.iter().enumerate() {
+                if input.pressed.contains(key) {
+                    self.rpg_press(i);
+                }
+            }
+        }
+        self.play_rpg_sounds();
 
         // timers created with after(...) and every(...)
         let now = self.time;

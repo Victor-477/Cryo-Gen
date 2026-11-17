@@ -1,6 +1,8 @@
 // The knight. WASD moves (relative to the camera), left click or J attacks (up to a
 // three-hit combo), right click or K is a heavy blow, Space rolls, Shift blocks, Q drinks a potion.
-// Each thing the knight can be doing is a `state`.
+// 1-4 use the skills learned in the talent tree (T opens it, I the inventory).
+// Each thing the knight can be doing is a `state`. Levels, gear and talents (Game > RPG) add to
+// the numbers through level.stat(...).
 script Hero {
     prop speed: num = 6.5
     prop max_health: num = 100
@@ -8,7 +10,7 @@ script Hero {
 
     var health = 100
     var stamina = 100
-    var potions = 2
+    var buff = 0             // seconds of War Cry left
     var model: entity = nil
     var yaw = 0              // where the knight wants to face
     var shown_yaw = 0        // where the model is facing (follows smoothly)
@@ -22,7 +24,14 @@ script Hero {
 
     on start() {
         model = self.child("HeroModel")
-        health = max_health
+        // a new game starts with the rusted sword and the gambeson on
+        if inventory.equipped("weapon") == nil {
+            inventory.equip("rusted_sword")
+        }
+        if inventory.equipped("armor") == nil {
+            inventory.equip("padded_gambeson")
+        }
+        health = top()
         spawn = self.position
         global.hero_alive = true
         input.lock_mouse(true)
@@ -33,6 +42,19 @@ script Hero {
         var d = vec3(-sin(a), 0, -cos(a)) * input.axis("vertical") + vec3(cos(a), 0, -sin(a)) * input.axis("horizontal")
         if length(d) > 1 {
             d = normalize(d)
+        }
+        return d
+    }
+
+    // health, damage and stamina with what levels, talents and gear add
+    fn top() -> num {
+        return max_health + level.stat("max_health")
+    }
+
+    fn dmg() -> num {
+        var d = damage + level.stat("damage")
+        if buff > 0 {
+            d = d * 1.5
         }
         return d
     }
@@ -68,7 +90,7 @@ script Hero {
 
     // Hits every enemy inside the arc in front of the knight.
     fn strike(reach: num, arc: num, amount: num) {
-        var landed = false
+        var landed = 0
         for e in scene.tagged("enemy") {
             var d = e.position - self.position
             d.y = 0
@@ -76,22 +98,26 @@ script Hero {
             if dist < reach and (dist < 0.6 or dot(normalize(d), forward()) > arc) {
                 e.send("hit", amount, self.position)
                 fx.burst(e.position + vec3(0, 0.3, 0), "sparks", 14, nil, normalize(self.position - e.position))
-                landed = true
+                landed += 1
             }
         }
-        if landed {
+        if landed > 0 {
             audio.play("sounds/hit.wav", 0.8)
             emit("shake", 0.25)
+            // Ashen Blood: blows that land heal
+            health = min(top(), health + amount * landed * level.stat("lifesteal"))
         }
     }
 
     on update(dt) {
         safe = max(0, safe - dt)
+        buff = max(0, buff - dt)
+        hud.set("potions", inventory.count("potion"))
         shown_yaw += wrap(yaw - shown_yaw, -180, 180) * min(1, dt * 16)
         if model != nil {
             model.rotation = vec3(0, shown_yaw, 0)
         }
-        bar("Health", max(health, 0) / max_health, vec3(0.8, 0.16, 0.14))
+        bar("Health", max(health, 0) / top(), vec3(0.8, 0.16, 0.14))
         bar("Stamina", stamina / 100, vec3(0.3, 0.72, 0.36))
         if self.position.y < -12 and current_state() != "dead" {
             health = 0
@@ -100,11 +126,69 @@ script Hero {
     }
 
     on key_down(key) {
-        if key == "q" and potions > 0 and health < max_health and current_state() != "dead" {
-            potions -= 1
-            health = min(max_health, health + 45)
+        if key == "q" and health < top() and current_state() != "dead" {
+            inventory.use("potion")
+        }
+    }
+
+    // a potion drunk with Q or from the inventory (I)
+    on item_used(id) {
+        if id == "potion" {
+            health = min(top(), health + 45)
             audio.play("sounds/heal.wav", 0.7)
-            emit("potions", potions)
+            fx.burst(self.position + vec3(0, 1, 0), "magic", 20)
+        }
+    }
+
+    on level_up(n) {
+        health = top()
+        fx.burst(self.position + vec3(0, 1, 0), "magic", 50)
+    }
+
+    // the skill bar (1-4): each skill was learned in the talent tree (T)
+    on skill(id) {
+        let s = current_state()
+        if s == "dead" or s == "roll" or s == "whirl" or s == "bash" {
+            skills.reset(id)
+            return
+        }
+        if id == "whirlwind" or id == "shield_bash" or id == "ember_burst" {
+            var cost = 30
+            if id == "shield_bash" {
+                cost = 20
+            } else if id == "ember_burst" {
+                cost = 25
+            }
+            if stamina < cost {
+                skills.reset(id)
+                hud.message("Not enough stamina")
+                return
+            }
+            stamina -= cost
+        }
+        if id == "whirlwind" {
+            goto whirl
+        } else if id == "shield_bash" {
+            goto bash
+        } else if id == "war_cry" {
+            buff = 8
+            fx.burst(self.position + vec3(0, 1.2, 0), "magic", 40)
+            audio.play("sounds/roar.wav", 0.6)
+            hud.message("War Cry: +50% damage")
+        } else if id == "ember_burst" {
+            fx.burst(self.position + vec3(0, 0.6, 0), "explosion", 50)
+            fx.burst(self.position, "embers", 60)
+            audio.play("sounds/slam.wav", 0.9)
+            emit("shake", 0.45)
+            for e in scene.tagged("enemy") {
+                if distance(e.position, self.position) < 4.8 {
+                    e.send("hit", dmg() * 1.4, self.position)
+                }
+            }
+        } else if id == "second_wind" {
+            health = min(top(), health + top() / 3)
+            fx.burst(self.position + vec3(0, 1, 0), "magic", 40)
+            audio.play("sounds/heal.wav", 0.9)
         }
     }
 
@@ -115,9 +199,12 @@ script Hero {
         var taken = amount
         var d = from - self.position
         d.y = 0
+        // armour softens every blow; Iron Will makes the shield stop more, for less stamina
+        taken = taken * 10 / (10 + level.stat("armor"))
+        let guard = level.stat("guard")
         if blocking and length(d) > 0.01 and dot(normalize(d), forward()) > 0.2 and stamina > 5 {
-            taken = amount * 0.15
-            stamina = max(0, stamina - 18)
+            taken = taken * 0.15 * (1 - guard)
+            stamina = max(0, stamina - 18 * (1 - guard))
             audio.play("sounds/block.wav", 0.8)
         } else {
             audio.play("sounds/hurt.wav", 0.8)
@@ -133,25 +220,26 @@ script Hero {
     }
 
     on pickup_potion() {
-        potions += 1
-        audio.play("sounds/heal.wav", 0.5)
-        emit("potions", potions)
+        inventory.add("potion")
     }
 
     on checkpoint(where) {
         spawn = where
-        health = max_health
+        health = top()
     }
 
     on respawn() {
         self.position = spawn
         self.velocity = vec3(0)
-        health = max_health
+        health = top()
         stamina = 100
-        potions = max(potions, 2)
+        // never back with fewer than two potions
+        let have = inventory.count("potion")
+        if have < 2 {
+            inventory.add("potion", 2 - have)
+        }
         global.hero_alive = true
         emit("hero_respawned")
-        emit("potions", potions)
         goto free
     }
 
@@ -166,7 +254,7 @@ script Hero {
                 drive(vec3(0))
                 model.animate("Idle", 1, true)
             }
-            stamina = min(100, stamina + 24 * dt)
+            stamina = min(100, stamina + (24 + level.stat("stamina_regen")) * dt)
             if input.pressed("mouse_left") or input.pressed("j") {
                 combo = 1
                 goto attack
@@ -212,9 +300,9 @@ script Hero {
             if not struck and t >= hit_at {
                 struck = true
                 if combo == 3 {
-                    strike(2.7, 0.3, damage * 1.6)
+                    strike(2.7, 0.3, dmg() * 1.6)
                 } else {
-                    strike(2.5, 0.1, damage)
+                    strike(2.5, 0.1, dmg())
                 }
             }
             if input.pressed("mouse_left") or input.pressed("j") {
@@ -242,7 +330,7 @@ script Hero {
             drive(vec3(0))
             if not struck and state_time() >= 0.37 {
                 struck = true
-                strike(3.0, -0.2, damage * 2.4)     // wide: also hits enemies at the sides
+                strike(3.0, -0.2, dmg() * 2.4 * (1 + level.stat("heavy_bonus")))     // wide: also hits enemies at the sides
             }
             if state_time() >= 0.83 {
                 goto free
@@ -285,6 +373,60 @@ script Hero {
         }
         on exit() {
             blocking = false
+        }
+    }
+
+    // Whirlwind: two turns with the blade out, hitting everything around
+    state whirl {
+        on enter() {
+            struck = false
+            safe = 0.3
+            audio.play("sounds/swing.wav", 0.9)
+            model.animate("Heavy", 1.5, false)
+        }
+        on update(dt) {
+            drive(vec3(0))
+            yaw += 1300 * dt
+            if not struck and state_time() >= 0.22 {
+                struck = true
+                strike(3.3, -1.1, dmg() * 1.8)
+                fx.burst(self.position + vec3(0, 1, 0), "sparks", 30)
+            }
+            if state_time() >= 0.55 {
+                goto free
+            }
+        }
+    }
+
+    // Shield Bash: a lunge behind the shield; the foes in front reel, stunned
+    state bash {
+        on enter() {
+            struck = false
+            aim()
+            audio.play("sounds/block.wav", 0.9)
+            model.animate("Block", 1.4, false)
+        }
+        on update(dt) {
+            if state_time() < 0.16 {
+                drive(forward() * 8)
+            } else {
+                drive(vec3(0))
+            }
+            if not struck and state_time() >= 0.14 {
+                struck = true
+                for e in scene.tagged("enemy") {
+                    var d = e.position - self.position
+                    d.y = 0
+                    if length(d) < 3 and (length(d) < 0.6 or dot(normalize(d), forward()) > 0.3) {
+                        e.send("hit", dmg() * 0.7, self.position)
+                        e.send("stun", 1.8)
+                    }
+                }
+                emit("shake", 0.3)
+            }
+            if state_time() >= 0.45 {
+                goto free
+            }
         }
     }
 

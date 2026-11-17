@@ -42,7 +42,38 @@ pub fn create(dir: &Path) -> Result<String, String> {
     }
     std::fs::write(dir.join(SCENE), build_scene(dir).to_json()).map_err(err)?;
     menus().save(dir)?;
+    // free fonts and sounds (OFL / CC0) and the HUD
+    crate::free_assets::write(dir)?;
+    hud().save(dir)?;
     Ok(SCENE.to_string())
+}
+
+/// A tactical HUD: the objective at the top left, health and magazine at the bottom corners,
+/// the crosshair, a minimap at the top right and the message feed.
+pub fn hud() -> crate::hud::Hud {
+    use crate::hud::{Element, Hud};
+    let e = |id: &str, kind: &str, anchor: &str, x: f32, y: f32| Element { id: id.into(), kind: kind.into(), anchor: anchor.into(), x, y, ..Default::default() };
+    let cyan = [110, 220, 245, 255];
+    Hud {
+        elements: vec![
+            Element { source: "{hud}".into(), font: "text".into(), text_size: 22.0, text_color: [225, 240, 245, 255], ..e("objective", "text", "top_left", 24.0, 20.0) },
+            Element { source: "Health".into(), label: "HEALTH".into(), w: 260.0, h: 10.0, rounding: 0.0, font: "title".into(), text_size: 18.0, text_color: cyan, ..e("health", "bar", "bottom_left", 28.0, -30.0) },
+            Element { source: "Magazine".into(), label: "MAGAZINE".into(), w: 200.0, h: 10.0, rounding: 0.0, font: "title".into(), text_size: 18.0, text_color: cyan, ..e("magazine", "bar", "bottom_right", -28.0, -30.0) },
+            e("bars", "bars", "bottom_left", 28.0, -70.0),
+            Element { w: 600.0, font: "title".into(), rounding: 0.0, ..e("boss", "boss", "bottom", 0.0, -120.0) },
+            Element { color: [255, 255, 255, 255], ..e("crosshair", "crosshair", "center", 0.0, 0.0) },
+            Element { w: 160.0, range: 40.0, back: [8, 16, 22, 200], text_color: cyan, color: cyan, ..e("minimap", "minimap", "top_right", -24.0, 24.0) },
+            Element { font: "text".into(), text_size: 18.0, text_color: cyan, ..e("feed", "feed", "right", -24.0, 60.0) },
+        ]
+        .into_iter()
+        .map(|mut x| {
+            if x.kind == "crosshair" {
+                (x.w, x.h) = (22.0, 22.0);
+            }
+            x
+        })
+        .collect(),
+    }
 }
 
 /// The game's menus: a tactical look, cyan on dark steel, at the lower left.
@@ -77,12 +108,12 @@ fn menus() -> crate::menus::Menus {
             shadow: true,
             fade_in: 0.6,
             hover_slide: 10.0,
-            sound_move: String::new(),
-            sound_choose: "sounds/pickup.wav".into(),
+            sound_move: "sounds/ui_rollover4.wav".into(),
+            sound_choose: "sounds/ui_switch7.wav".into(),
             camera_drift: 0.0,
             panel: [style_panel[0], style_panel[1], style_panel[2], 235],
-            title_font: String::new(),
-            text_font: String::new(),
+            title_font: "fonts/Orbitron.ttf".into(),
+            text_font: "fonts/Rajdhani-SemiBold.ttf".into(),
         },
         options: vec![
             GameOption { id: "sensitivity".into(), label: "Mouse sensitivity".into(), kind: "slider".into(), default: 1.0, min: 0.3, max: 2.5, step: 0.05, ..GameOption::default() },

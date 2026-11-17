@@ -244,6 +244,8 @@ script Boss {
             emit("shake", 0.7)
             fx.burst(self.position, "embers", 120)
             fx.burst(self.position, "smoke", 30)
+            level.add_xp(400)
+            inventory.add("warden_cleaver")
             emit("victory")
         }
         on update(dt) {

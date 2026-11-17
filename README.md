@@ -45,7 +45,7 @@ If you get a graphics configuration error, run with `CRYO_MSAA=0`.
 |---|---|
 | **Editor** | Dockable panels (Hierarchy, Scene, Game, Inspector, Content, Console, script editor), move/rotate/scale gizmos, undo/redo, parent/child entities, Play/Pause/Stop. |
 | **Performance** | Skeletal animation runs on the graphics card, objects out of view are skipped, and physics only tests bodies that are near each other. |
-| **Rendering** | Primitives and imported models (`.obj`, `.gltf`, `.glb`), physically based materials (roughness, metallic, normal maps), textures with anisotropic filtering, directional/point/spot lights, shadows from the sun and the nearest point lights and spotlights, sky gradient, distance fog, relief lighting, sky reflections, glowing and transparent materials, automatic levels of detail (animated models too), screen-space global illumination, terrains from height maps. Games open on a main menu designed in File > Game menus (buttons, actions, title, logo, background, colours), with pause and options screens, screens of your own, game options scripts read with `option()`, loading screens between levels, confirmations, custom fonts and sounds. Gamepads work out of the box and every control can be remapped by the player; prefabs and `scene.load` make multi-level games. Cutscenes are made on the Timeline (cameras, subtitles, fades, quick time events) or imported as video. Exported games have a pause menu with graphics quality (High, Medium, Low), frame-rate limit (30, 60, 120, none) and full screen. |
+| **Rendering** | Primitives and imported models (`.obj`, `.gltf`, `.glb`), physically based materials (roughness, metallic, normal maps), textures with anisotropic filtering, directional/point/spot lights, shadows from the sun and the nearest point lights and spotlights, sky gradient, distance fog, relief lighting, sky reflections, glowing and transparent materials, automatic levels of detail (animated models too), screen-space global illumination, terrains from height maps. Games open on a main menu designed in File > Game menus (buttons, actions, title, logo, background, colours), with pause and options screens, screens of your own, game options scripts read with `option()`, loading screens between levels, confirmations, custom fonts and sounds. A HUD editor places bars, texts, pictures, minimap, skill bar and messages over the game. RPG systems (inventory and equipment, levels and experience, skill bar with cooldowns, talent tree) are switched on per game; Ashen Keep uses them. Gamepads work out of the box and every control can be remapped by the player; prefabs and `scene.load` make multi-level games. Cutscenes are made on the Timeline (cameras, subtitles, fades, quick time events) or imported as video. Exported games have a pause menu with graphics quality (High, Medium, Low), frame-rate limit (30, 60, 120, none) and full screen. |
 | **Post-processing** | Bloom, ambient occlusion, screen-space reflections, filmic tone curve, vignette (per scene). |
 | **Physics** | Gravity, box, sphere and triangle-mesh colliders, triggers, contact events with normals, optional rotation (bodies that roll and tip over). |
 | **Scripting** | The Cryo language: typed, with maps, `match`, state machines, global events and live error checking. Script properties are editable in the Inspector. |
@@ -164,12 +164,16 @@ crates/
     src/ashen.rs     the Ashen Keep example: level layout, sounds, play-through tests
     src/outpost.rs   the Outpost Kestrel example (first-person shooter)
     template/        scripts and generated assets of the example games
-tools/             make_ashen_assets.py, make_outpost_assets.py, make_hands.py, make_terrains.py:
+tools/             make_ashen_assets.py, make_outpost_assets.py, make_hands.py, make_terrains.py, make_rpg_icons.py:
                    build the example games' models, textures and terrains
 docs/              documentation site (GitHub Pages)
 ```
 
-## Known limits (0.18.0-beta)
+## Free assets
+
+The example games ship free fonts (Cinzel Decorative, Alegreya Sans, Orbitron, Rajdhani: SIL Open Font License 1.1, from Google Fonts) and sounds by Kenney (UI Audio, RPG Audio, Music Jingles: CC0 1.0). They live in `crates/cryo-editor/template/free/` with their licences, and every example project gets them with a `CREDITS.txt`. The item, skill and talent icons are drawn by `tools/make_rpg_icons.py`.
+
+## Known limits (0.19.0-beta)
 
 - Skeletal animation: one clip per model at a time (blended when switching), up to 64 joints on the graphics card (more fall back to the CPU); no morph targets.
 - Modelling: `.obj` models, one material, automatic texture coordinates. No loop cuts, bevels or booleans yet.

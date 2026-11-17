@@ -1,5 +1,8 @@
 //! Editor state, menu bar, toolbar and panel layout.
 
+#[path = "app_extras.rs"]
+mod extras;
+
 use crate::assets::{self, Assets};
 use crate::project;
 use crate::settings::Settings;
@@ -129,6 +132,23 @@ pub struct State {
     first_scene: String,
     running_scene: String,
     pub show_menus_editor: bool,
+    /// The game's HUD (hud.json) and the element picked in its editor.
+    pub hud: crate::hud::Hud,
+    hud_for: PathBuf,
+    hud_sel: usize,
+    pub show_hud_editor: bool,
+    /// The RPG data being edited (Game > RPG).
+    rpg_edit: crate::rpg::Rpg,
+    rpg_edit_for: PathBuf,
+    pub show_rpg_editor: bool,
+    /// The inventory or talent tree on screen while playing.
+    pub rpg_page: Option<crate::rpg::Page>,
+    rpg_focus: usize,
+    rpg_pick: Option<String>,
+    /// What the player had, carried to the next level by `scene.load`.
+    rpg_carry: Option<crate::rpg::RpgState>,
+    /// Pictures of the HUD and the RPG icons, by file.
+    icon_tex: HashMap<String, Option<egui::TextureHandle>>,
     /// Where each panel is on screen, so tutorials can point at it.
     pub tab_rects: HashMap<Tab, egui::Rect>,
     pub toolbar_rect: egui::Rect,
@@ -1338,6 +1358,11 @@ impl State {
         self.info(tr!("▶ Game started", "▶ Jogo iniciado"));
         self.menus = crate::menus::Menus::load(&self.project_dir);
         self.menus_for = self.project_dir.clone();
+        self.hud = crate::hud::Hud::load(&self.project_dir);
+        self.hud_for = self.project_dir.clone();
+        self.icon_tex.clear();
+        self.rpg_page = None;
+        self.rpg_carry = None;
         let values = self.option_values();
         let rt = Runtime::start_with(&mut self.scene, &self.project_dir, values, &mut self.logs);
         if self.logs.iter().rev().take(20).any(|l| l.level == LogLevel::Error) {
@@ -1418,6 +1443,8 @@ impl State {
                 self.open_main_menu();
                 return true;
             }
+            "inventory" => return self.open_rpg(crate::rpg::Page::Inventory),
+            "talents" => return self.open_rpg(crate::rpg::Page::Talents),
             "pause" => Screen::Pause,
             "options" => Screen::Options,
             "credits" => Screen::Credits,
@@ -1711,6 +1738,10 @@ impl State {
             crate::menus::loading_screen(&mut ui, rect, &menus, &look, &pic, &tip, started.elapsed().as_secs_f32());
             return;
         }
+        if self.menu_screen.is_none() && self.rpg_page.is_some() {
+            self.rpg_ui(ui, rect);
+            return;
+        }
         let Some(screen) = self.menu_screen else { return };
         // every key press counts, even several in one slow frame
         let (ups, downs) = ui.ctx().input(|i| {
@@ -1889,7 +1920,8 @@ impl State {
         }
         self.fill_mesh_colliders();
         let values = self.option_values();
-        let mut rt = Runtime::start_with(&mut self.scene, &self.project_dir, values, &mut self.logs);
+        let mut rt = Runtime::start_carrying(&mut self.scene, &self.project_dir, values, self.rpg_carry.take(), &mut self.logs);
+        self.rpg_page = None;
         if self.menu_screen == Some(crate::menus::Screen::Main) && !self.menus.music.is_empty() {
             let _ = rt.audio.music(&self.menus.music, 0.8);
         }
@@ -1941,6 +1973,8 @@ impl State {
     }
 
     pub fn stop_play(&mut self) {
+        self.rpg_page = None;
+        self.rpg_carry = None;
         self.menu_screen = None;
         self.pause_menu = false;
         if let Some(p) = self.play.take() {
@@ -2403,7 +2437,9 @@ impl State {
                 self.start_play();
             }
         }
-        if self.playing() {
+        if self.playing() && self.rpg_keys() {
+            // Esc closed the inventory or talents
+        } else if self.playing() {
             let menus_on = self.game_only || (self.menus.preview_in_editor && self.menus_for == self.project_dir);
             if pressed(Key::Escape) || (menus_on && self.raw_pressed.contains("pad_start")) {
                 if menus_on {
@@ -2623,6 +2659,18 @@ impl App {
             first_scene: String::new(),
             running_scene: String::new(),
             show_menus_editor: false,
+            hud: crate::hud::Hud::default(),
+            hud_for: PathBuf::new(),
+            hud_sel: 0,
+            show_hud_editor: false,
+            rpg_edit: crate::rpg::Rpg::default(),
+            rpg_edit_for: PathBuf::new(),
+            show_rpg_editor: false,
+            rpg_page: None,
+            rpg_focus: 0,
+            rpg_pick: None,
+            rpg_carry: None,
+            icon_tex: HashMap::new(),
             logs: vec![],
             undo: vec![],
             redo: vec![],
@@ -2707,8 +2755,11 @@ impl App {
             st.settings.save();
         }
         // CRYO_DEMO=menus opens the Game menus window (for screenshots)
-        if std::env::var("CRYO_DEMO").as_deref() == Ok("menus") {
-            st.show_menus_editor = true;
+        match std::env::var("CRYO_DEMO").as_deref() {
+            Ok("menus") => st.show_menus_editor = true,
+            Ok("hud") => st.show_hud_editor = true,
+            Ok("rpg") => st.show_rpg_editor = true,
+            _ => {}
         }
         if autoplay || game_only {
             st.start_play();
@@ -2805,6 +2856,14 @@ impl App {
                 if ui.button(tr!("Game menus…", "Menus do jogo…")).on_hover_text(tr!("The main menu, pause menu and options of your game: buttons, title, logo, background, music, colours.", "Menu inicial, menu de pausa e opções do seu jogo: botões, título, logo, fundo, música, cores.")).clicked() {
                     ui.close();
                     st.show_menus_editor = true;
+                }
+                if ui.button(tr!("Game HUD…", "HUD do jogo…")).on_hover_text(tr!("Place the bars, texts, pictures, skill bar, crosshair and minimap drawn over the game.", "Posicione barras, textos, imagens, barra de habilidades, mira e minimapa sobre o jogo.")).clicked() {
+                    ui.close();
+                    st.show_hud_editor = true;
+                }
+                if ui.button(tr!("RPG: items, skills, talents…", "RPG: itens, habilidades, talentos…")).on_hover_text(tr!("Inventory and equipment, levels and experience, a skill bar and a talent tree.", "Inventário e equipamento, níveis e experiência, barra de habilidades e árvore de talentos.")).clicked() {
+                    ui.close();
+                    st.show_rpg_editor = true;
                 }
                 if ui.button(tr!("Export game…", "Exportar jogo…")).on_hover_text(tr!("Creates a folder with the game ready to run without the editor", "Gera uma pasta com o jogo pronto para rodar sem o editor")).clicked() {
                     ui.close();
@@ -3049,6 +3108,10 @@ impl eframe::App for App {
                 play.rt.update(&mut self.st.scene, &self.st.input, dt, &mut self.st.logs);
                 // scene.load(...) from a script: the next level replaces this one
                 next_scene = play.rt.take_scene_request();
+                if next_scene.is_some() {
+                    // the player keeps their level, bag and talents on the next level
+                    self.st.rpg_carry = play.rt.rpg_state();
+                }
                 menu_request = play.rt.take_menu_request();
                 // CRYO_DEMO=qte shows a quick time event shortly after Play (for screenshots)
                 if play.rt.qte.is_none() && play.rt.real_time > 1.0 && play.rt.qte_result.is_none() {
@@ -3135,6 +3198,8 @@ impl eframe::App for App {
         }
         self.st.tutorial_ui(&ctx);
         self.st.menus_editor_ui(&ctx);
+        self.st.hud_editor_ui(&ctx);
+        self.st.rpg_editor_ui(&ctx);
         if !self.st.game_only {
             self.st.controls_ui(&ctx);
         }

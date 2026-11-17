@@ -4,15 +4,27 @@ Cryo Engine is a native 3D game engine with a visual editor, scripted in the Cry
 
 | System | File |
 |---|---|
-| Windows 10/11 (64-bit) | `CryoEngine-v0.18.0-beta-windows-x86_64.zip` |
-| macOS 11+ (Apple Silicon and Intel) | `CryoEngine-v0.18.0-beta-macos-universal.zip` |
-| Linux (x86_64) | `CryoEngine-v0.18.0-beta-linux-x86_64.zip` |
+| Windows 10/11 (64-bit) | `CryoEngine-v0.19.0-beta-windows-x86_64.zip` |
+| macOS 11+ (Apple Silicon and Intel) | `CryoEngine-v0.19.0-beta-macos-universal.zip` |
+| Linux (x86_64) | `CryoEngine-v0.19.0-beta-linux-x86_64.zip` |
 
 Unzip and run. On first launch the editor creates the example game in `~/CryoProjects/FrostpeakIsles` and starts a welcome tour.
 
 **macOS:** the app is not signed. Right-click **Cryo Engine.app** and choose **Open** the first time. If macOS still refuses, run `xattr -dr com.apple.quarantine "Cryo Engine.app"` in a terminal.
 
-## New in 0.18.0-beta
+## New in 0.19.0-beta
+
+- **RPG systems** (File > RPG: items, skills, talents…, saved in `rpg.json`): an inventory with stacks and equipment (weapon, armour, trinket), levels and experience with talent points, a skill bar with cooldowns (keys 1-4), and a talent tree with columns, tiers, ranks, requirements and skills it teaches. In-game inventory and talent screens (I and K by default, gamepad too) in the colours and fonts of the game's menus. Scripts: `inventory.*`, `level.*`, `skills.*`, `talents.*`, and events `on level_up`, `on skill`, `on item_used`, `on talent_learned`... The player's progress goes with them to the next level and can be saved.
+- **Game HUD editor** (File > Game HUD…, saved in `hud.json`): place texts, bars, the scripts' bars, boss bars, pictures, the skill bar, level and XP, crosshair, minimap and a message feed on nine anchors, drag them in the preview, choose colours, sizes, fonts, shadows and corners. New script calls: `hud.set(key, value, max)`, `hud.message(text)`, `hud.show(id, on)`; texts show values with `{key}`.
+- **Free fonts and sounds** in the examples: Cinzel Decorative and Alegreya Sans (Ashen Keep), Orbitron and Rajdhani (Outpost Kestrel), all under the SIL Open Font License; menu clicks, inventory and level-up sounds by Kenney (CC0). Each project gets `CREDITS.txt` and the licences.
+- **Ashen Keep becomes an action RPG**: experience and loot from every enemy, the Bone Brute drops the Knight's Blade, the armoury an Iron Hauberk, the first shrine an Ember Ring, the Warden his Cleaver; ten levels; 11 talents in three columns teach Whirlwind, Shield Bash, War Cry, Ember Burst and Second Wind; armour, lifesteal, guard and stamina regeneration change the fight. Its HUD has a minimap, the loot feed, the skill bar and experience.
+- Outpost Kestrel has a tactical HUD (health and magazine at the bottom corners, minimap, messages).
+
+## From 0.18.0-beta
+
+Screens of your own, game options, loading screens, confirmations, hints and more menu looks.
+
+## Details of 0.18.0-beta
 
 - **Screens of your own** (Game menus > Screens): level select, difficulty, game over, a codex... each with a title, text, buttons and whether it pauses. Open one with a button ("Open a screen") or from a script: `menu.open("gameover")`, `menu.close()`, `menu.is_open`.
 - **Options of your game** (Game menus > Options): on/off, sliders and choices that appear on the in-game Options screen, kept per player. Scripts read them with `option("difficulty", "Normal")` (already set when `on start()` runs) and hear changes with `on option_changed(id, value)`. You can also choose which built-in parts (graphics, frame rate, volume, full screen, controls) the Options screen shows.

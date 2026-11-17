@@ -3,7 +3,6 @@
 script Director {
     var left = {}
     var won = false
-    var potions = 2
     var goal = "Clear the outer bailey"
 
     on start() {
@@ -30,20 +29,19 @@ script Director {
             "bailey" => {
                 goal = "The gate is open. Enter the courtyard"
                 banner("THE GATE OPENS", 2.5)
+                // the bailey's armoury: wear it from the inventory (I)
+                inventory.add("iron_hauberk")
             }
             "courtyard" => {
                 goal = "Enter the great hall"
                 banner("THE HALL AWAITS", 2.5)
+                inventory.add("ward_amulet")
             }
         }
     }
 
     on boss_wake() {
         goal = "Defeat the Ashen Warden"
-    }
-
-    on potions(count) {
-        potions = count
     }
 
     on victory() {
@@ -62,6 +60,6 @@ script Director {
     }
 
     on update(dt) {
-        hud(goal + "\nPotions (Q): " + potions)
+        hud(goal)
     }
 }
